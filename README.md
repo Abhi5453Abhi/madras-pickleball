@@ -9,6 +9,17 @@ logging in.
 - **`docs/RUNBOOK.md`** — accounts, tournament-morning checklist, what to do when it breaks.
 - `app/` — the Next.js application.
 
+## Run it
+
+```bash
+cd app
+npm install
+npm run dev     # http://localhost:3000
+```
+
+Node 20+ and nothing else — it brings up its own embedded Postgres on first run and seeds a venue,
+four courts and three accounts. Sign in as `saurabh` / `change-me-now`.
+
 ## The one-sentence version
 
 The only thing that knows four categories are sharing four courts: a live court board that answers

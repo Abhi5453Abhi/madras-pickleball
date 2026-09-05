@@ -14,20 +14,32 @@ One page. If the site is down and nobody has touched the code in six months, thi
 Roughly **₹1,500–2,500/month** all in. If the venue won't own these accounts, the site has no owner
 six months from now — that is the single most common way a project like this dies.
 
-## Local development
+## Running it on a laptop
+
+Node 20+ is the only requirement. **No database to install.**
 
 ```bash
 cd app
 npm install
-npm run db:migrate     # applies drizzle/*.sql
-npm run db:seed        # venue, 4 courts, starting accounts
 npm run dev            # http://localhost:3000
-npm run smoke          # end-to-end browser check
-npm run test           # unit tests for the draw engine and scoring rules
-npm run typecheck
 ```
 
-`.env` needs `DATABASE_URL` and `DIRECT_URL`. On Neon, `DATABASE_URL` must be the **pooled** host
+`npm run dev` applies migrations and seeds the venue, four courts and the starting accounts on
+first run. With no `DATABASE_URL` it uses an embedded Postgres (PGlite) kept in `app/.pglite/` —
+real Postgres, so the partial indexes and CHECK constraints behave exactly as they will in
+production. Delete that folder to start clean.
+
+Other commands:
+
+```bash
+npm run smoke          # end-to-end check driving a real browser
+npm run test           # unit tests for the draw engine and scoring rules
+npm run typecheck
+npm run db:generate    # after editing src/db/schema.ts
+```
+
+**Against a real Postgres** (staging or production) set `DATABASE_URL` and `DIRECT_URL` in
+`app/.env` and the app switches automatically. On Neon, `DATABASE_URL` must be the **pooled** host
 (`...-pooler...`) with `connection_limit=1`, and `DIRECT_URL` the direct host for migrations.
 Get this wrong and connections exhaust under exactly the load that matters.
 
