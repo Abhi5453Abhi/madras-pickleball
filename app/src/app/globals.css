@@ -1,0 +1,109 @@
+@import 'tailwindcss';
+
+/*
+ * Madras Pickleball design tokens — SPEC D3.
+ * Written as constraints, not adjectives: legible at 1m in direct sun, one-handed,
+ * assuming a 20% brightness loss through a screen protector.
+ *
+ * Green means one thing only: LIVE. Amber = waiting. Grey = done.
+ * The accent is terracotta, not lime — yellow-greens have the lowest contrast
+ * against white and wash out first under glare.
+ */
+
+@theme {
+  /* ink + interactive */
+  --color-ink: #0e3a5e;
+  --color-ink-2: #1a4f78;
+  --color-link: #1565c0;
+  --color-link-hi: #0d4ea0;
+
+  /* the one accent */
+  --color-accent: #e2582b;
+  --color-accent-soft: #fdece5;
+
+  /* status — reserved meanings */
+  --color-live: #16a34a;
+  --color-live-soft: #e7f7ed;
+  --color-waiting: #b45309;
+  --color-waiting-soft: #fdf3e3;
+  --color-done: #64748b;
+  --color-alert: #c0261c;
+  --color-alert-soft: #fdeceb;
+
+  /* surfaces */
+  --color-paper: #ffffff;
+  --color-ground: #f6f7f9;
+  --color-line: #e2e6ec;
+  --color-line-strong: #cbd3dd;
+  --color-muted: #5b6775;
+
+  /* scoreboard + display view: hue, not shade, so it survives colour-vision deficiency */
+  --color-board: #0b0f14;
+  --color-board-2: #151c25;
+  --color-side-a: #2563eb;
+  --color-side-b: #ea580c;
+  /* light-mode variants of the same pair, defined once so there is one orange */
+  --color-side-a-lite: #dbe6fd;
+  --color-side-b-lite: #fde6d6;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  /*
+   * Barlow Semi Condensed is the intended score face. Google Fonts is not
+   * reachable from this build environment, so the stack falls back to the
+   * narrowest system faces; drop the woff2 into /public/fonts and point
+   * --font-score at it to switch (see docs/RUNBOOK.md).
+   */
+  --font-score:
+    'Barlow Semi Condensed', 'Roboto Condensed', 'Archivo Narrow', 'Liberation Sans Narrow',
+    ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  height: 100%;
+  color-scheme: light;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  min-height: 100%;
+  background: var(--color-ground);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  /* Anywhere a number updates live, tabular figures stop the layout twitching. */
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Numbers that change while you watch them. */
+.num {
+  font-family: var(--font-score);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Courtside and TV surfaces opt into the dark ground explicitly. */
+.board {
+  background: var(--color-board);
+  color: #fff;
+  color-scheme: dark;
+}
+
+/* Hit targets: 56px minimum, 64 preferred — glare, sweat and motion (SPEC A5). */
+.tap {
+  min-height: 56px;
+  min-width: 56px;
+}
+
+.tap-lg {
+  min-height: 64px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
