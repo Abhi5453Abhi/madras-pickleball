@@ -4,37 +4,37 @@ Tournament site for a single pickleball venue: an organiser runs several tournam
 on its own courts, and enters every score; players sign up from a link and follow the results
 without logging in.
 
-- **`docs/SPEC.md`** — the build spec. Read this first; it explains why things are the way they are.
-- `docs/SPEC-v1.md`, `-v2.md`, `-v3.md` — the reasoning trail through three review rounds.
 - **`docs/RUNBOOK.md`** — accounts, tournament-morning checklist, what to do when it breaks.
-- `app/` — the Next.js application.
+- `docs/GO-API.ts` — the contract between the server and the screens: one call per function.
+- `docs/SPEC.md` and the `SPEC-v*.md` trail — how the product was decided; `docs/GO-BRIEF.md` —
+  how the port was built.
+- `server/` — the Go server: the API, the database setup, and the built web app, in one binary.
+- `web/` — the React app (Vite). `web/walks/` are the browser walks that prove the whole thing.
+- `app/` — the earlier Next.js version, kept until the Go one has run its first tournament.
 
-## Run it
+## Run it on a laptop
+
+Go 1.24, Node 22 and a Postgres. Nothing else.
 
 ```bash
-cd app
-npm install
-cd ..
-npm run dev     # http://localhost:3000 — works from the repo root too
+cd web && npm install && cd ..
+make server        # the Go server on :8080 (DB=postgres://… to point it somewhere else)
+make web           # in another terminal: Vite on :5173, proxying /api to :8080
 ```
 
-Node 22 or 24 and nothing else — it brings up its own embedded Postgres on first run and seeds a venue
-with four courts and one organiser. Sign in at `/login` with the temporary PIN `123456` and choose
-your own.
+The server creates its tables and seeds the venue, four courts and one organiser on first start.
+Sign in at `/login` with the temporary PIN `123456` and choose your own.
 
-If you already have `DATABASE_URL` exported in your shell for another project, it takes precedence
-and this app will try to use that server. Force its own database with `MPB_DB=embedded npm run dev`.
+`make build` builds the web app into the binary (`bin/mpb`); `make check` runs everything:
+`go vet`, the Go tests (set `MPB_TEST_DATABASE_URL` for the database ones), `tsc`, and the web
+build. The browser walks: `node web/walks/stage1.mjs` and friends against a running server.
 
 ## Deploying
 
-Deployed with no `DATABASE_URL` it runs as a demo: an embedded database per instance that resets
-when the host recycles it, seeded with a sample Sunday, PIN `123456`.
-
-For real use give it a Postgres: on Vercel, open the project → **Storage** → **Create Database** →
-**Neon**, and connect it to the project. That sets `DATABASE_URL` by itself; the next deployment
-creates the tables, the venue's four courts and one organiser (temporary PIN `123456`, replaced on
-first sign-in). Nothing to run from a laptop. Any other Postgres works the same way — set
-`DATABASE_URL` to its **pooled** connection string in the host's environment.
+One container (`Dockerfile`), one environment variable. On Google Cloud Run, "continuously deploy
+from a repository" with the Dockerfile at the repo root, region Singapore, and `DATABASE_URL` set
+to a Postgres (Neon's pooled connection string) — every push to `main` then deploys. The runbook
+has the step-by-step.
 
 ## The one-sentence version
 

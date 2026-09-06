@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	neturl "net/url"
 	"sort"
 	"strings"
 	"time"
@@ -20,7 +21,7 @@ import (
 // Open connects with a pool sized for one small container. Neon's pooled
 // host allows few connections per client; five is plenty for twenty people.
 func Open(url string) (*sql.DB, error) {
-	d, err := sql.Open("postgres", url)
+	d, err := sql.Open("postgres", cleanURL(url))
 	if err != nil {
 		return nil, err
 	}
@@ -34,6 +35,26 @@ func Open(url string) (*sql.DB, error) {
 		return nil, fmt.Errorf("db: cannot reach the database: %w", err)
 	}
 	return d, nil
+}
+
+// cleanURL makes a hosted database's connection string usable by lib/pq:
+// Neon's strings carry `channel_binding=require`, which the driver would
+// pass to the server as a setting it does not have, and a remote host with
+// no sslmode named gets `require` — nothing here should ever travel in the
+// clear.
+func cleanURL(raw string) string {
+	u, err := neturl.Parse(raw)
+	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") {
+		return raw
+	}
+	q := u.Query()
+	q.Del("channel_binding")
+	host := u.Hostname()
+	if q.Get("sslmode") == "" && host != "localhost" && host != "127.0.0.1" && host != "" {
+		q.Set("sslmode", "require")
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // Migrate applies every migrations/*.sql the database has not seen, in

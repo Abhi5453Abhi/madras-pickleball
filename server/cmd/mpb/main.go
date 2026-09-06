@@ -18,12 +18,30 @@ import (
 	"mpb/internal/core"
 	"mpb/internal/db"
 	"mpb/internal/modules"
+	"mpb/internal/pin"
 	"mpb/internal/rpc"
 	"mpb/internal/web"
 )
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	// `mpb -hash 482913` prints the hash of a PIN and exits — for the runbook's
+	// "an organiser has forgotten their PIN" fix, done by hand on the database.
+	if len(os.Args) == 3 && os.Args[1] == "-hash" {
+		p := pin.Normalize(os.Args[2])
+		if p == "" {
+			log.Error("a PIN is six digits")
+			os.Exit(2)
+		}
+		h, err := pin.Hash(p)
+		if err != nil {
+			log.Error("hash", "err", err)
+			os.Exit(1)
+		}
+		os.Stdout.WriteString(h + "\n")
+		return
+	}
 
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
