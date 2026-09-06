@@ -6,7 +6,7 @@ import { useRpc } from '@/api/use-rpc'
 import { useVersionPoll } from '@/api/use-version'
 import { Card, Notice, Tag, TeamName } from '@/components/ui'
 import { venueDate, venueTime } from '@/lib/time'
-import { courtsLabel } from '@/lib/words'
+import { courtsLabel, cutWords, poolTables } from '@/lib/words'
 import { PublicLoading, useTitle } from '@/lib/page'
 import { CourtCard, Eyebrow, Masthead } from './court-card'
 import { NotFound } from './not-found'
@@ -51,17 +51,22 @@ export function PublicTournamentPage() {
 
   const { table, cut } = data
   const unit = data.discipline === 'doubles' ? 'Pair' : 'Player'
+  // Eight pairs or more are drawn into pools, and `cut` go through from EACH
+  // pool — so there is a table, and a cut line, per pool. A league comes back
+  // as one unnamed table and renders as it always did.
+  const pools = poolTables(table)
   // A pair who pulled out keeps its row for the record but takes no place in
   // the knockout — the draw is built without them, so the cut line has to be
   // drawn without them too, or the page promises a final to a pair who have
   // gone home.
-  const goesThrough = new Set(
-    table
-      .filter((r) => !r.withdrawn)
-      .slice(0, cut)
-      .map((r) => r.teamId),
-  )
-  const lastThrough = [...goesThrough].pop() ?? null
+  const goesThrough = new Set<string>()
+  const lastThrough = new Set<string>()
+  for (const pool of pools) {
+    const through = pool.rows.filter((r) => !r.withdrawn).slice(0, cut)
+    for (const r of through) goesThrough.add(r.teamId)
+    const last = through[through.length - 1]
+    if (last) lastThrough.add(last.teamId)
+  }
   const signupsOpen = t.status === 'setup' && !t.registrationClosedAt
 
   const playedCount = data.matches.filter((m) => m.state === 'final').length
@@ -213,58 +218,66 @@ export function PublicTournamentPage() {
         {phase !== 'setup' && table.length ? (
           <section className="flex flex-col gap-3">
             <Eyebrow>{phase === 'finished' ? 'Final table' : 'Table'}</Eyebrow>
-            <Card className="overflow-hidden">
-              <table className="w-full">
-                <thead>
-                  <tr className="text-left text-meta text-text-3">
-                    <th className="w-8 py-2 pl-4 font-semibold" scope="col">
-                      <span className="sr-only">Position</span>
-                    </th>
-                    <th className="py-2 font-semibold" scope="col">
-                      {unit}
-                    </th>
-                    <th className="py-2 pl-3 text-right font-semibold" scope="col">
-                      Won
-                    </th>
-                    <th className="py-2 pr-4 pl-3 text-right font-semibold" scope="col">
-                      Points
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {table.map((r, i) => {
-                    const through = goesThrough.has(r.teamId) && phase !== 'finished'
-                    return (
-                      <RowWithCut
-                        key={r.teamId}
-                        through={through}
-                        divider={phase !== 'finished' && r.teamId === lastThrough}
-                        cut={cut}
-                      >
-                        <td
-                          className={clsx(
-                            'num py-2.5 pl-4 text-meta',
-                            through ? 'font-bold text-accent' : 'text-text-3',
-                          )}
-                        >
-                          {i + 1}
-                        </td>
-                        <td className={clsx('py-2.5 text-row', r.withdrawn ? 'text-text-3' : 'text-text')}>
-                          {r.name}
-                          {r.withdrawn ? (
-                            <span className="block text-meta font-normal text-text-3">pulled out</span>
-                          ) : r.note ? (
-                            <span className="block text-meta font-normal text-text-3">{r.note}</span>
-                          ) : null}
-                        </td>
-                        <td className="num py-2.5 pl-3 text-right text-row text-text">{r.won}</td>
-                        <td className="num py-2.5 pr-4 pl-3 text-right text-row text-text">{r.pointsFor}</td>
-                      </RowWithCut>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </Card>
+            {pools.map((pool) => (
+              <div key={pool.name ?? 'league'} className="flex flex-col gap-2">
+                {/* Only a pooled draw is named: one league is just "the table". */}
+                {pool.name ? (
+                  <h3 className="font-score text-eyebrow text-text-2 uppercase">{pool.name}</h3>
+                ) : null}
+                <Card className="overflow-hidden">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="text-left text-meta text-text-3">
+                        <th className="w-8 py-2 pl-4 font-semibold" scope="col">
+                          <span className="sr-only">Position</span>
+                        </th>
+                        <th className="py-2 font-semibold" scope="col">
+                          {unit}
+                        </th>
+                        <th className="py-2 pl-3 text-right font-semibold" scope="col">
+                          Won
+                        </th>
+                        <th className="py-2 pr-4 pl-3 text-right font-semibold" scope="col">
+                          Points
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pool.rows.map((r, i) => {
+                        const through = goesThrough.has(r.teamId) && phase !== 'finished'
+                        return (
+                          <RowWithCut
+                            key={r.teamId}
+                            through={through}
+                            divider={phase !== 'finished' && lastThrough.has(r.teamId)}
+                            label={cutWords(cut, pools.length)}
+                          >
+                            <td
+                              className={clsx(
+                                'num py-2.5 pl-4 text-meta',
+                                through ? 'font-bold text-accent' : 'text-text-3',
+                              )}
+                            >
+                              {i + 1}
+                            </td>
+                            <td className={clsx('py-2.5 text-row', r.withdrawn ? 'text-text-3' : 'text-text')}>
+                              {r.name}
+                              {r.withdrawn ? (
+                                <span className="block text-meta font-normal text-text-3">pulled out</span>
+                              ) : r.note ? (
+                                <span className="block text-meta font-normal text-text-3">{r.note}</span>
+                              ) : null}
+                            </td>
+                            <td className="num py-2.5 pl-3 text-right text-row text-text">{r.won}</td>
+                            <td className="num py-2.5 pr-4 pl-3 text-right text-row text-text">{r.pointsFor}</td>
+                          </RowWithCut>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </Card>
+              </div>
+            ))}
             {phase === 'running' ? (
               <p className="text-meta text-text-3">Level on wins? Most points scored goes through.</p>
             ) : null}
@@ -332,13 +345,14 @@ export function PublicTournamentPage() {
 function RowWithCut({
   through,
   divider,
-  cut,
+  label,
   children,
 }: {
   through: boolean
   /** The cut line sits under this row. */
   divider: boolean
-  cut: number
+  /** What the cut line says — "Top 2 play the final", "Top 2 go through". */
+  label: string
   children: ReactNode
 }) {
   return (
@@ -350,7 +364,7 @@ function RowWithCut({
             colSpan={4}
             className="border-t border-dashed border-line-key py-1.5 text-center font-score text-eyebrow text-accent uppercase"
           >
-            Top {cut} {cut === 2 ? 'play the final' : 'go through'}
+            {label}
           </td>
         </tr>
       ) : null}

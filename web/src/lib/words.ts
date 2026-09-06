@@ -58,3 +58,31 @@ export function courtsLabel(names: string[]) {
   if (names.length > 1 && nums.every(Boolean)) return `Courts ${nums.join(', ')}`
   return names.join(', ')
 }
+
+/**
+ * The table, one entry per pool. Eight pairs or more are drawn into pools and
+ * the cut goes through from EACH of them, so the screens draw one table per
+ * pool rather than one merged list that puts a qualified pair below the line.
+ * The server sends the rows pool by pool in draw order, so this only has to
+ * keep the order it was given. A league is a single entry whose name is null,
+ * and renders exactly as it always did.
+ */
+export function poolTables<T extends { group: string | null }>(rows: T[]) {
+  const out: Array<{ name: string | null; rows: T[] }> = []
+  for (const row of rows) {
+    const last = out[out.length - 1]
+    if (last && last.name === row.group) last.rows.push(row)
+    else out.push({ name: row.group, rows: [row] })
+  }
+  return out
+}
+
+/**
+ * The line under the cut. One table of four with a final: the top two play it,
+ * and saying so is the clearest thing on the screen. Two pools: the top two of
+ * each are through to a knockout nobody has been drawn into yet, so "go
+ * through" is all that is true.
+ */
+export function cutWords(cut: number, tables: number) {
+  return `Top ${cut} ${cut === 2 && tables === 1 ? 'play the final' : 'go through'}`
+}

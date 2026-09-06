@@ -58,6 +58,9 @@ function Schedule({ slug, h, reloadHub }: { slug: string; h: Hub; reloadHub: () 
   const canStart = h.phase === 'setup' && all.length > 0 && mine.length > 0
   const finished = h.phase === 'finished'
   const semis = t.finalsStage === 'semis_and_final'
+  // Eight pairs or more are drawn into pools whatever the format says, and a
+  // knockout slot then waits on a named pool, not on "the table".
+  const pools = poolsOf(all)
 
   // "16 matches on 2 courts · about 4 hours · done by 17:40 if you start now"
   // — the one number that decides whether the day fits.
@@ -241,11 +244,11 @@ function Schedule({ slug, h, reloadHub }: { slug: string; h: Hub; reloadHub: () 
                       <span className="num w-6 shrink-0 text-meta text-text-3">{i + 1}</span>
                       <span className="min-w-0 flex-1 text-row text-text">
                         <span className={m.teamAId ? 'font-semibold' : 'font-normal text-text-3'}>
-                          {m.teamAId ? shortTeam(names[m.teamAId]) : slotWords(m, 'A', semis)}
+                          {m.teamAId ? shortTeam(names[m.teamAId]) : slotWords(m, 'A', semis, pools)}
                         </span>
                         <span className="mx-1.5 text-meta font-normal text-text-3">v</span>
                         <span className={m.teamBId ? 'font-semibold' : 'font-normal text-text-3'}>
-                          {m.teamBId ? shortTeam(names[m.teamBId]) : slotWords(m, 'B', semis)}
+                          {m.teamBId ? shortTeam(names[m.teamBId]) : slotWords(m, 'B', semis, pools)}
                         </span>
                       </span>
                       {m.roundName ? (
@@ -279,11 +282,42 @@ function shortTeam(name: string | null | undefined) {
 }
 
 /**
+ * The pools, in draw order, read off the group matches' round names — the draw
+ * writes them as "Pool A · Round 1". A single league's rounds are just
+ * "Round 1", so it comes back empty and the words below stay the league's.
+ */
+function poolsOf(all: Match[]) {
+  const out: string[] = []
+  for (const m of all) {
+    if (m.stage !== 'group' || !m.roundName) continue
+    const [name, round] = m.roundName.split(' · ')
+    if (round && !out.includes(name)) out.push(name)
+  }
+  return out
+}
+
+/**
  * Who plays a knockout match before the table has decided it. Mirrors the
  * shape of the draw: a lone final is 1st v 2nd; semis are 1st v 4th and 2nd v
  * 3rd, and their final is the two winners.
+ *
+ * With pools there is no such thing as "1st in table" — there are two tables,
+ * and which one a pair is in decides who they play. The draw sends the winner
+ * of each pool against the runner-up of the next one round the ring, and every
+ * round above that waits on the two matches below it.
  */
-function slotWords(m: Pick<Match, 'roundName' | 'seq'>, side: 'A' | 'B', semis: boolean) {
+function slotWords(m: Pick<Match, 'roundName' | 'seq'>, side: 'A' | 'B', semis: boolean, pools: string[]) {
+  if (pools.length > 1) {
+    const fromTheTables = pools.length === 2 ? 'Semi-final' : 'Quarter-final'
+    if (m.roundName === fromTheTables) {
+      return side === 'A'
+        ? `1st in ${pools[m.seq % pools.length]}`
+        : `2nd in ${pools[(m.seq + 1) % pools.length]}`
+    }
+    const below = m.roundName === 'Final' ? 'semi' : m.roundName === 'Semi-final' ? 'quarter' : null
+    if (below) return `Winner of ${below} ${m.seq * 2 + (side === 'A' ? 1 : 2)}`
+    return 'To be decided'
+  }
   if (m.roundName === 'Semi-final') {
     return m.seq === 0
       ? side === 'A'

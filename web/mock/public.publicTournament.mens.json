@@ -498,6 +498,7 @@
   "table": [
     {
       "teamId": "tm_1",
+      "group": null,
       "name": "Karthik Subramanian / Sathish Kumar",
       "players": [
         "Karthik Subramanian",
@@ -510,6 +511,7 @@
     },
     {
       "teamId": "tm_4",
+      "group": null,
       "name": "Deepak Raj / Bala Murugan",
       "players": [
         "Deepak Raj",
@@ -522,6 +524,7 @@
     },
     {
       "teamId": "tm_5",
+      "group": null,
       "name": "Suresh Babu / Manoj Pillai",
       "players": [
         "Suresh Babu",
@@ -534,6 +537,7 @@
     },
     {
       "teamId": "tm_2",
+      "group": null,
       "name": "Hari Venkatesh / Naveen Krishnan",
       "players": [
         "Hari Venkatesh",
@@ -546,6 +550,7 @@
     },
     {
       "teamId": "tm_3",
+      "group": null,
       "name": "Arun Prakash / Ganesh Iyer",
       "players": [
         "Arun Prakash",
@@ -558,6 +563,7 @@
     },
     {
       "teamId": "tm_6",
+      "group": null,
       "name": "Ravi Shankar / Meera Nair",
       "players": [
         "Ravi Shankar",
