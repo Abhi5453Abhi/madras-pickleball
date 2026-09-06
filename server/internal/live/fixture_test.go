@@ -9,12 +9,15 @@ package live
 // fixture that quietly stops resembling the product.
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -24,6 +27,7 @@ import (
 	"mpb/internal/db"
 	"mpb/internal/engine"
 	"mpb/internal/ids"
+	"mpb/internal/rpc"
 	"mpb/internal/store"
 )
 
@@ -104,7 +108,7 @@ type fixtureOpts struct {
 	// tournament on the same day starts further along.
 	Courts    int
 	CourtFrom int
-	Status string // setup | live | completed
+	Status    string // setup | live | completed
 	// Pools splits the teams (8 or more), like the real draw does.
 	Pools bool
 }
@@ -387,4 +391,59 @@ func mustJSON(t *testing.T, v any) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// standings is the table as the engine reads it, for tests that check what a
+// result did to it.
+func (f *fixture) standings(t *testing.T) []engine.TeamRow {
+	t.Helper()
+	input, err := store.StandingsMatches(context.Background(), f.D.DB, f.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return engine.Standings(f.Teams, input, engine.PointsScoredFirst)
+}
+
+func (f *fixture) teamNames(t *testing.T) map[string]string {
+	t.Helper()
+	names, err := store.TeamNames(context.Background(), f.D.DB, f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return names
+}
+
+// ── calling an RPC the way a phone does ───────────────────────────────────
+
+// api builds the router this package registers into, with the RPC handler
+// mounted where the server mounts it.
+func api(t *testing.T, d *core.Deps) *http.ServeMux {
+	t.Helper()
+	mux := http.NewServeMux()
+	reg := rpc.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	Register(mux, reg, d)
+	mux.Handle("/api/rpc/{name}", reg.Handler())
+	return mux
+}
+
+// call posts an RPC as a signed-in organiser and decodes the reply. A status
+// other than 200 fails the test: a refusal is a 200 with {ok:false}.
+func call(t *testing.T, mux *http.ServeMux, name string, in any, out any) {
+	t.Helper()
+	body, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/api/rpc/"+name, bytes.NewReader(body))
+	req = req.WithContext(rpc.WithUser(req.Context(), &rpc.User{ID: "usr_test", Name: "Organiser", Role: "owner"}))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s answered %d: %s", name, rec.Code, rec.Body.String())
+	}
+	if out != nil {
+		if err := json.Unmarshal(rec.Body.Bytes(), out); err != nil {
+			t.Fatalf("%s: %v (%s)", name, err, rec.Body.String())
+		}
+	}
 }
