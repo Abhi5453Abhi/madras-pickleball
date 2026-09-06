@@ -6,3 +6,9 @@ node_modules/
 .pglite/
 # the root package.json is only a shortcut wrapper; the real lockfile is app/
 /package-lock.json
+# the Go binary embeds the built web app; the build is not source
+/server/assets/dist/*
+!/server/assets/dist/.gitkeep
+/web/node_modules/
+/web/dist/
+/bin/

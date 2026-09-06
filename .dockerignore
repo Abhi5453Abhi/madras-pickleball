@@ -1,0 +1,6 @@
+.git
+app
+web/node_modules
+server/assets/dist
+docs/*.md
+*.md
