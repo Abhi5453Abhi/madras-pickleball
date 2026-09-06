@@ -28,6 +28,10 @@ type teamIn struct {
 	TeamID       string `json:"teamId"`
 }
 
+type tournamentIn struct {
+	TournamentID string `json:"tournamentId"`
+}
+
 // ── who's pulled out ──────────────────────────────────────────────────────
 
 type withdrawEffectOut struct {
@@ -770,7 +774,7 @@ func registerChaos(reg *rpc.Registry, d *core.Deps) {
 		func(ctx context.Context, in teamIn) (reinstateOut, error) { return reinstateTeam(ctx, d, in) })
 
 	rpc.Register(reg, "chaos.substitutionOptions", rpc.Organiser,
-		func(ctx context.Context, in teamIn) ([]substituteTarget, error) {
+		func(ctx context.Context, in tournamentIn) ([]substituteTarget, error) {
 			t, err := store.TournamentByID(ctx, d.DB, d.Venue.ID, in.TournamentID)
 			if err != nil {
 				return nil, rpc.NotFound("That tournament no longer exists.")
@@ -785,7 +789,7 @@ func registerChaos(reg *rpc.Registry, d *core.Deps) {
 		func(ctx context.Context, in pauseIn) (noteOut, error) { return pauseDay(ctx, d, in) })
 
 	rpc.Register(reg, "chaos.resumeDay", rpc.Organiser,
-		func(ctx context.Context, in teamIn) (noteOut, error) { return resumeDay(ctx, d, in.TournamentID) })
+		func(ctx context.Context, in tournamentIn) (noteOut, error) { return resumeDay(ctx, d, in.TournamentID) })
 
 	rpc.Register(reg, "chaos.shortenFormat", rpc.Organiser,
 		func(ctx context.Context, in shortenIn) (noteOut, error) { return shortenFormat(ctx, d, in) })
