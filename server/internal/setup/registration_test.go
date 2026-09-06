@@ -456,3 +456,38 @@ func TestOneBrowserGettingItWrongIsSlowedDown(t *testing.T) {
 		t.Fatalf("a different browser: %+v", res)
 	}
 }
+
+func TestTheSameNameFromTheSameBrowserIsTheSamePerson(t *testing.T) {
+	h := newHarness(t)
+	tourney := h.create(createEventIn{Name: "Men's Doubles"})
+	token := h.link(tourney.ID)
+
+	// Hari signs up with no phone at all, then reloads and sends it again.
+	if res := h.signUp(token, "Hari Venkatesh", "", "Naveen Krishnan", "device-hari-abc"); !res.OK || res.AlreadyIn {
+		t.Fatalf("first sign-up: %+v", res)
+	}
+	if res := h.signUp(token, "Hari Venkatesh", "", "", "device-hari-abc"); !res.OK || !res.AlreadyIn {
+		t.Fatalf("the same browser sending the same name again: %+v", res)
+	}
+	if got := len(h.roster(tourney.ID)); got != 1 {
+		t.Fatalf("one row, not two, got %d", got)
+	}
+
+	// The same name from a DIFFERENT browser is a second person until the
+	// organiser says otherwise — two Karthiks in one group is not unusual.
+	if res := h.signUp(token, "Hari Venkatesh", "", "", "device-someone-else"); !res.OK || res.AlreadyIn {
+		t.Fatalf("a different browser: %+v", res)
+	}
+	roster, err := listRoster(h.ctx, h.Deps, tournamentIDIn{TournamentID: tourney.ID})
+	if err != nil {
+		t.Fatalf("listRoster: %v", err)
+	}
+	if len(roster) != 2 || roster[1].DuplicateOf == nil {
+		t.Fatalf("on the list with a flag for the organiser: %+v", roster)
+	}
+
+	// A device id that is not one the form would make is simply ignored.
+	if res := h.signUp(token, "Bala Murugan", "", "", "no"); !res.OK || res.AlreadyIn {
+		t.Fatalf("a junk device id: %+v", res)
+	}
+}

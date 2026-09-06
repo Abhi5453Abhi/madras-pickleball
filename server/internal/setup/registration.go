@@ -314,6 +314,10 @@ type addInput struct {
 	phone       string
 	partnerWish string
 	source      string // link | hand
+	// device is the browser a public sign-up came from, so the same name from
+	// the same phone is one person coming back. Empty for anything the
+	// organiser types.
+	device string
 }
 
 type addResult struct {
@@ -473,9 +477,11 @@ func addPlayer(ctx context.Context, tx *sql.Tx, d *core.Deps, t *store.Tournamen
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `
-		insert into tournament_players (id, tournament_id, player_id, source, partner_wish, partner_player_id, created_at)
-		values ($1,$2,$3,$4,$5,$6, clock_timestamp())`,
-		ids.New("tp"), t.ID, id, in.source, nullable(partnerWish), partnerPlayerID); err != nil {
+		insert into tournament_players (id, tournament_id, player_id, source, partner_wish, partner_player_id,
+		                                device_id, created_at)
+		values ($1,$2,$3,$4,$5,$6,$7, clock_timestamp())`,
+		ids.New("tp"), t.ID, id, in.source, nullable(partnerWish), partnerPlayerID,
+		nullable(in.device)); err != nil {
 		return addResult{}, err
 	}
 	for _, tpID := range namedMe {
@@ -628,6 +634,23 @@ func nameOnList(ctx context.Context, q core.Querier, tournamentID, nameKey strin
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// rosterRowForDevice is the tournament_players id of a row with this name
+// that came from this browser, or "".
+func rosterRowForDevice(ctx context.Context, q core.Querier, tournamentID, nameKey, device string) (string, error) {
+	if nameKey == "" || device == "" {
+		return "", nil
+	}
+	var id string
+	err := q.QueryRowContext(ctx, `
+		select tp.id from tournament_players tp join players p on p.id = tp.player_id
+		where tp.tournament_id = $1 and tp.device_id = $2 and p.name_key = $3
+		order by tp.created_at limit 1`, tournamentID, device, nameKey).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
 }
 
 func listedNameFor(ctx context.Context, q core.Querier, tournamentID, nameKey string) (string, error) {
@@ -1086,6 +1109,22 @@ func submitRegistration(ctx context.Context, d *core.Deps, in submitIn) (submitO
 				}
 			}
 		}
+		if mine == nil && device != "" {
+			// The same name from the same browser is somebody reloading, or
+			// coming back to add a partner. The same name from a DIFFERENT
+			// browser goes on with a flag instead: two Karthiks in one group
+			// is not unusual, and the organiser knows which is which.
+			same, err := rosterRowForDevice(ctx, tx, locked.ID, nameKey, device)
+			if err != nil {
+				return err
+			}
+			for i := range roster {
+				if same != "" && roster[i].ID == same {
+					mine = &roster[i]
+					break
+				}
+			}
+		}
 		if mine != nil {
 			// Coming back to say who they are playing with is the one edit
 			// worth taking.
@@ -1113,7 +1152,7 @@ func submitRegistration(ctx context.Context, d *core.Deps, in submitIn) (submitO
 			return nil
 		}
 		res, err := addPlayer(ctx, tx, d, locked, addInput{
-			name: name, phone: phone, partnerWish: partner, source: "link"})
+			name: name, phone: phone, partnerWish: partner, source: "link", device: device})
 		if err != nil {
 			return err
 		}
