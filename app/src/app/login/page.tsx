@@ -1,7 +1,8 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { currentUser } from '@/lib/auth'
-import { Card, CourtMark, NetRule } from '@/components/ui'
+import { Card, CourtMark, NetRule, Notice } from '@/components/ui'
+import { isDemoDeployment } from '@/db'
 import { LoginForm } from './login-form'
 import { ensureReady } from '@/server/bootstrap'
 
@@ -30,6 +31,13 @@ export default async function LoginPage(props: PageProps<'/login'>) {
         <h1 className="text-title text-text">Organiser</h1>
         <p className="mt-1.5 text-body text-text-2">Your six-digit PIN.</p>
       </div>
+
+      {isDemoDeployment ? (
+        <Notice tone="waiting" title="Demo copy">
+          This copy has no database of its own: it starts with a sample Sunday and wipes itself
+          when the host recycles it. The PIN is 123456. For real use, set DATABASE_URL.
+        </Notice>
+      ) : null}
 
       <Card className="p-4">
         <LoginForm next={typeof next === 'string' ? next : undefined} />

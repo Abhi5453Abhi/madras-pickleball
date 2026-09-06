@@ -94,7 +94,9 @@ async function seedCore() {
       role: 'super_admin' as const,
       passwordHash: digest,
       pinHash: digest,
-      mustChangePassword: !process.env.MPB_SEED_PIN,
+      // A demo copy resets itself, so a forced change would be asked for
+      // every time; its PIN is on the sign-in page instead.
+      mustChangePassword: !process.env.MPB_SEED_PIN && !isDemoDeployment,
     })
   }
   // Accounts from before PIN sign-in get a temporary PIN; umpire accounts
