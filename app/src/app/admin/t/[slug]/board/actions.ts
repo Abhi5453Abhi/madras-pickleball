@@ -23,6 +23,9 @@ export async function placeMatch(formData: FormData) {
       after: { courtId },
     })
     revalidatePath(`/admin/t/${slug}/board`)
+    // The tournament page's attention block offers the same free courts the
+    // same matches; leaving it stale meant tapping Send there twice.
+    revalidatePath(`/admin/t/${slug}`)
     return
   }
 
@@ -51,4 +54,5 @@ export async function takeOffCourt(formData: FormData) {
     entityId: matchId,
   })
   revalidatePath(`/admin/t/${slug}/board`)
+  revalidatePath(`/admin/t/${slug}`)
 }

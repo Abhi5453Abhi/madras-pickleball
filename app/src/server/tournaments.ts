@@ -1,6 +1,6 @@
 import 'server-only'
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
-import { db } from '@/db'
+import { db, mapCase, transact } from '@/db'
 import {
   categories,
   categoryPlayers,
@@ -51,18 +51,22 @@ export async function createTournament(input: {
   description?: string | null
 }) {
   const venue = await getVenue()
-  const id = newId('trn')
-  await db.insert(tournaments).values({
-    id,
-    name: input.name,
-    slug: slugify(input.name),
-    venueId: venue.id,
-    startDate: input.startDate,
-    endDate: input.endDate ?? input.startDate,
-    description: input.description ?? null,
-    status: 'draft',
-  })
-  return (await db.select().from(tournaments).where(eq(tournaments.id, id)).limit(1))[0]
+  const [row] = await db
+    .insert(tournaments)
+    .values({
+      id: newId('trn'),
+      name: input.name,
+      slug: slugify(input.name),
+      venueId: venue.id,
+      startDate: input.startDate,
+      endDate: input.endDate ?? input.startDate,
+      description: input.description ?? null,
+      status: 'draft',
+    })
+    // The row that was written, from the write itself — reading it back was a
+    // second round trip to learn what we had just sent.
+    .returning()
+  return row
 }
 
 export async function getTournamentBySlug(slug: string) {
@@ -110,6 +114,10 @@ export async function importPlayers(
   const byPhone = new Map(roster.filter((r) => r.phoneKey).map((r) => [r.phoneKey!, r.id]))
 
   const playerIds: string[] = []
+  // Collected, not written one at a time: a pasted list is forty names, and
+  // forty inserts is forty round trips. The maps above still do the in-batch
+  // dedupe, so a name that appears twice in one paste is still one player.
+  const fresh: Array<typeof players.$inferInsert> = []
 
   for (const row of rows) {
     const name = row.name.trim()
@@ -122,29 +130,25 @@ export async function importPlayers(
 
     if (!playerId) {
       playerId = newId('ply')
-      await db.insert(players).values({
-        id: playerId,
-        name,
-        nameKey,
-        phone: row.phone ?? null,
-        phoneKey,
-      })
+      fresh.push({ id: playerId, name, nameKey, phone: row.phone ?? null, phoneKey })
       byName.set(nameKey, playerId)
       if (phoneKey) byPhone.set(phoneKey, playerId)
     }
     playerIds.push(playerId)
   }
 
-  if (playerIds.length) {
-    await db
-      .insert(tournamentPlayers)
-      .values(
-        playerIds.map((playerId) => ({ id: newId('tp'), tournamentId, playerId })),
-      )
-      .onConflictDoNothing()
-  }
-
-  await bumpStreamVersion(tournamentId)
+  // All of it or none of it: a half-imported paste leaves the organiser
+  // guessing which names took.
+  await transact(async (tx) => {
+    if (fresh.length) await tx.insert(players).values(fresh)
+    if (playerIds.length) {
+      await tx
+        .insert(tournamentPlayers)
+        .values(playerIds.map((playerId) => ({ id: newId('tp'), tournamentId, playerId })))
+        .onConflictDoNothing()
+    }
+    await bumpStreamVersion(tournamentId, tx)
+  })
   return playerIds
 }
 
@@ -173,23 +177,23 @@ export async function createCategory(input: {
   gender: 'mens' | 'womens' | 'mixed' | 'any'
   finalsStage?: 'none' | 'final_only' | 'semis_and_final'
 }) {
-  const existing = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(categories)
-    .where(eq(categories.tournamentId, input.tournamentId))
-
   const id = newId('cat')
-  await db.insert(categories).values({
-    id,
-    tournamentId: input.tournamentId,
-    name: input.name,
-    discipline: input.discipline,
-    gender: input.gender,
-    finalsStage: input.finalsStage ?? 'final_only',
-    seq: existing[0]?.n ?? 0,
-    rngSeed: newId('seed'),
+  await transact(async (tx) => {
+    await tx.insert(categories).values({
+      id,
+      tournamentId: input.tournamentId,
+      name: input.name,
+      discipline: input.discipline,
+      gender: input.gender,
+      finalsStage: input.finalsStage ?? 'final_only',
+      // Counted inside the insert rather than read first: one round trip
+      // instead of two, and two admins adding a category at once can no longer
+      // both be told they are number three.
+      seq: sql`(select count(*)::int from ${categories} where ${categories.tournamentId} = ${input.tournamentId})`,
+      rngSeed: newId('seed'),
+    })
+    await bumpStreamVersion(input.tournamentId, tx)
   })
-  await bumpStreamVersion(input.tournamentId)
   return id
 }
 
@@ -206,13 +210,20 @@ export async function getCategory(categoryId: string) {
   return rows[0] ?? null
 }
 
+/**
+ * Replace the entry list. One transaction: the window between the delete and
+ * the insert is a category with nobody in it, and a draw generated in that
+ * window is a draw with no teams.
+ */
 export async function setCategoryPlayers(categoryId: string, playerIds: string[]) {
-  await db.delete(categoryPlayers).where(eq(categoryPlayers.categoryId, categoryId))
-  if (playerIds.length) {
-    await db.insert(categoryPlayers).values(
-      playerIds.map((playerId) => ({ id: newId('cp'), categoryId, playerId })),
-    )
-  }
+  await transact(async (tx) => {
+    await tx.delete(categoryPlayers).where(eq(categoryPlayers.categoryId, categoryId))
+    if (playerIds.length) {
+      await tx.insert(categoryPlayers).values(
+        playerIds.map((playerId) => ({ id: newId('cp'), categoryId, playerId })),
+      )
+    }
+  })
 }
 
 export async function listCategoryPlayers(categoryId: string) {
@@ -234,28 +245,44 @@ function teamName(names: string[]) {
   return names.join(' / ')
 }
 
+/**
+ * Build the whole set of teams for a category in three statements, inside one
+ * transaction. Team-by-team it was two round trips per pair — and a failure
+ * halfway left the category with the old teams deleted and half the new ones
+ * written, which is a draw nobody can play.
+ */
 export async function createTeams(
   categoryId: string,
   pairs: string[][],
   namesById: Map<string, string>,
 ) {
-  await db.delete(teams).where(eq(teams.categoryId, categoryId))
   const created: string[] = []
+  const teamRows: Array<typeof teams.$inferInsert> = []
+  const memberRows: Array<typeof teamPlayers.$inferInsert> = []
+
   let seed = 1
   for (const pair of pairs) {
     if (pair.length === 0) continue
     const id = newId('tm')
-    await db.insert(teams).values({
+    teamRows.push({
       id,
       categoryId,
       name: teamName(pair.map((p) => namesById.get(p) ?? '?')),
       seed: seed++,
     })
-    await db
-      .insert(teamPlayers)
-      .values(pair.map((playerId, position) => ({ teamId: id, playerId, position })))
+    for (const [position, playerId] of pair.entries()) {
+      memberRows.push({ teamId: id, playerId, position })
+    }
     created.push(id)
   }
+
+  await transact(async (tx) => {
+    await tx.delete(teams).where(eq(teams.categoryId, categoryId))
+    if (teamRows.length) {
+      await tx.insert(teams).values(teamRows)
+      await tx.insert(teamPlayers).values(memberRows)
+    }
+  })
   return created
 }
 
@@ -305,7 +332,7 @@ export async function listTeams(categoryId: string) {
 
 // ──────────────────────────── draw ────────────────────────────
 
-async function resolveSource(
+function resolveSource(
   source: SlotSource,
   keyToMatchId: Map<string, string>,
   groupIdByName: Map<string, string>,
@@ -337,48 +364,41 @@ async function resolveSource(
 /**
  * Persist a plan. Slots that are already known resolve immediately and the
  * match becomes `ready`; the rest wait on a group table or an earlier result.
+ *
+ * The whole draw goes down as seven statements inside one transaction. It used
+ * to be one insert per match and two per match slot — a hundred round trips for
+ * a thirty-one match draw, which on a serverless host is the organiser watching
+ * a spinner for several seconds. Worse, a failure in the middle left a category
+ * with its old draw deleted and half a new one written, and there is no screen
+ * in the product that can explain that state to anybody.
  */
 export async function persistDraw(categoryId: string, tournamentId: string, plan: DrawPlan) {
-  await db.delete(matches).where(eq(matches.categoryId, categoryId))
-  await db.delete(groups).where(eq(groups.categoryId, categoryId))
-
-  // The qualification line on both tables is drawn at `advance_per_group`, and
-  // nothing ever wrote it — so it sat at its default of 2 while a
-  // semis-and-final draw calls four teams through. The public table told 3rd
-  // and 4th they were out, and then the board called them to a semi-final.
-  const advance = Math.max(...plan.groups.map((g) => g.advanceCount), 0)
-  await db
-    .update(categories)
-    .set({ advancePerGroup: advance })
-    .where(eq(categories.id, categoryId))
-
   const groupIdByName = new Map<string, string>()
+  const groupRows: Array<typeof groups.$inferInsert> = []
+  const teamGroup: Array<readonly [string, string]> = []
+
   for (const [i, g] of plan.groups.entries()) {
     const id = newId('grp')
     groupIdByName.set(g.name, id)
-    await db.insert(groups).values({
-      id,
-      categoryId,
-      name: g.name,
-      advanceCount: g.advanceCount,
-      sortOrder: i,
-    })
-    if (g.teamIds.length) {
-      await db.update(teams).set({ groupId: id }).where(inArray(teams.id, g.teamIds))
-    }
+    groupRows.push({ id, categoryId, name: g.name, advanceCount: g.advanceCount, sortOrder: i })
+    for (const teamId of g.teamIds) teamGroup.push([teamId, id])
   }
 
   const keyToMatchId = new Map<string, string>()
   for (const m of plan.matches) keyToMatchId.set(m.key, newId('mch'))
 
+  const now = new Date()
+  const matchRows: Array<typeof matches.$inferInsert> = []
+  const slotRows: Array<typeof matchSlots.$inferInsert> = []
+
   for (const m of plan.matches) {
     const id = keyToMatchId.get(m.key)!
-    const a = await resolveSource(m.slotA, keyToMatchId, groupIdByName)
-    const b = await resolveSource(m.slotB, keyToMatchId, groupIdByName)
+    const a = resolveSource(m.slotA, keyToMatchId, groupIdByName)
+    const b = resolveSource(m.slotB, keyToMatchId, groupIdByName)
     const teamAId = 'resolvedTeamId' in a ? a.resolvedTeamId : null
     const teamBId = 'resolvedTeamId' in b ? b.resolvedTeamId : null
 
-    await db.insert(matches).values({
+    matchRows.push({
       id,
       categoryId,
       tournamentId,
@@ -396,7 +416,7 @@ export async function persistDraw(categoryId: string, tournamentId: string, plan
       ['A', a],
       ['B', b],
     ] as const) {
-      await db.insert(matchSlots).values({
+      slotRows.push({
         id: newId('slt'),
         matchId: id,
         slot,
@@ -405,23 +425,46 @@ export async function persistDraw(categoryId: string, tournamentId: string, plan
         sourceGroupId: 'sourceGroupId' in src ? src.sourceGroupId : null,
         sourceRank: 'sourceRank' in src ? src.sourceRank : null,
         resolvedTeamId: 'resolvedTeamId' in src ? src.resolvedTeamId : null,
-        resolvedAt: 'resolvedTeamId' in src ? new Date() : null,
+        resolvedAt: 'resolvedTeamId' in src ? now : null,
       })
     }
   }
 
-  await db
-    .update(categories)
-    .set({
-      status: 'draw_locked',
-      drawLockedAt: new Date(),
-      drawVersion: sql`${categories.drawVersion} + 1`,
-      seedOrder: plan.groups.flatMap((g) => g.teamIds),
-      updatedAt: new Date(),
-    })
-    .where(eq(categories.id, categoryId))
+  // The qualification line on both tables is drawn at `advance_per_group`, and
+  // nothing ever wrote it — so it sat at its default of 2 while a
+  // semis-and-final draw calls four teams through. The public table told 3rd
+  // and 4th they were out, and then the board called them to a semi-final.
+  const advance = Math.max(...plan.groups.map((g) => g.advanceCount), 0)
 
-  await bumpStreamVersion(tournamentId)
+  await transact(async (tx) => {
+    await tx.delete(matches).where(eq(matches.categoryId, categoryId))
+    await tx.delete(groups).where(eq(groups.categoryId, categoryId))
+
+    if (groupRows.length) await tx.insert(groups).values(groupRows)
+    if (teamGroup.length) {
+      await tx
+        .update(teams)
+        .set({ groupId: mapCase(teams.id, teamGroup) })
+        .where(inArray(teams.id, teamGroup.map(([teamId]) => teamId)))
+    }
+    if (matchRows.length) await tx.insert(matches).values(matchRows)
+    if (slotRows.length) await tx.insert(matchSlots).values(slotRows)
+
+    await tx
+      .update(categories)
+      .set({
+        advancePerGroup: advance,
+        status: 'draw_locked',
+        drawLockedAt: now,
+        drawVersion: sql`${categories.drawVersion} + 1`,
+        seedOrder: plan.groups.flatMap((g) => g.teamIds),
+        updatedAt: now,
+      })
+      .where(eq(categories.id, categoryId))
+
+    await bumpStreamVersion(tournamentId, tx)
+  })
+
   return keyToMatchId.size
 }
 
@@ -470,27 +513,40 @@ export async function listMatches(tournamentId: string) {
 
 /** Standings for one category, straight from the ledger (SPEC A6). */
 export async function standingsFor(categoryId: string) {
-  const category = await getCategory(categoryId)
+  // Four independent reads — the table needs all of them and none of them needs
+  // any of the others, so they go out together. The games are scoped by joining
+  // back to the category rather than by a list of match ids, which is what
+  // takes them off the end of the chain.
+  const [category, teamRows, matchRows, gameRows] = await Promise.all([
+    getCategory(categoryId),
+    listTeams(categoryId),
+    db
+      .select({
+        id: matches.id,
+        teamAId: matches.teamAId,
+        teamBId: matches.teamBId,
+        winnerTeamId: matches.winnerTeamId,
+        resultState: matches.resultState,
+        reportedAt: matches.reportedAt,
+        resultType: matches.resultType,
+      })
+      .from(matches)
+      .where(and(eq(matches.categoryId, categoryId), eq(matches.stage, 'group'))),
+    db
+      .select({
+        matchId: games.matchId,
+        gameNo: games.gameNo,
+        scoreA: games.scoreA,
+        scoreB: games.scoreB,
+        excludeFromDiff: games.excludeFromDiff,
+        timeCapped: games.timeCapped,
+      })
+      .from(games)
+      .innerJoin(matches, eq(matches.id, games.matchId))
+      .where(and(eq(matches.categoryId, categoryId), eq(matches.stage, 'group'))),
+  ])
   if (!category) return { rows: [], rule: 'points_scored_first' as const, teams: [] }
 
-  const teamRows = await listTeams(categoryId)
-  const matchRows = await db
-    .select({
-      id: matches.id,
-      teamAId: matches.teamAId,
-      teamBId: matches.teamBId,
-      winnerTeamId: matches.winnerTeamId,
-      resultState: matches.resultState,
-      reportedAt: matches.reportedAt,
-      resultType: matches.resultType,
-    })
-    .from(matches)
-    .where(and(eq(matches.categoryId, categoryId), eq(matches.stage, 'group')))
-
-  const ids = matchRows.map((m) => m.id)
-  const gameRows = ids.length
-    ? await db.select().from(games).where(inArray(games.matchId, ids))
-    : []
   const gamesByMatch = new Map<string, typeof gameRows>()
   for (const g of gameRows) {
     const list = gamesByMatch.get(g.matchId) ?? []

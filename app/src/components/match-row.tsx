@@ -1,5 +1,6 @@
 import { clsx } from 'clsx'
-import { StatusSpine, type Status } from './ui'
+import type { ReactNode } from 'react'
+import { StatusPill, StatusSpine, type Status } from './ui'
 
 export type MatchRowProps = {
   nameA: string | null
@@ -13,7 +14,12 @@ export type MatchRowProps = {
   hasScore: boolean
   state: Status
   stateLabel: string
+  /** Numerals — the scoreline. Rendered in the condensed face. */
   meta?: string
+  /** Words — category, round, court. Rendered in the UI face, never condensed. */
+  sub?: ReactNode
+  /** A Tag or two: "Not confirmed yet", "Under review". */
+  note?: ReactNode
 }
 
 /**
@@ -21,6 +27,10 @@ export type MatchRowProps = {
  * The two game counts sit on the same baselines as the two names, so the row is
  * itself a small scoreboard: a score is numerals, a state is a pill, and
  * peripheral vision can sort a list of forty without reading any of it.
+ *
+ * Names WRAP rather than truncate. "Karthik Subramanian / Sathish Kumar" is a
+ * real entry here, and truncating it to "Karthik Subramanian / Sat…" hides the
+ * half a player is looking for. Two lines is bounded; a lost name is not.
  */
 export function MatchRow(props: MatchRowProps) {
   const { winnerSide, hasScore } = props
@@ -28,37 +38,41 @@ export function MatchRow(props: MatchRowProps) {
   const bWon = winnerSide === 'B'
 
   return (
-    <div className="relative flex min-h-[72px] items-center gap-3 px-4 py-3">
+    <div className="relative flex min-h-[76px] items-center gap-3 px-4 py-3">
       <StatusSpine state={props.state} />
       <div className="min-w-0 flex-1">
+        {props.sub ? <p className="mb-1 text-meta text-text-3">{props.sub}</p> : null}
         <p
           className={clsx(
-            'truncate text-row',
+            'line-clamp-2 text-row break-words',
             hasScore && !aWon ? 'text-text-3' : 'text-text',
             aWon && 'font-bold',
           )}
         >
           {props.nameA ?? props.placeholderA ?? 'To be decided'}
+          {aWon ? <span className="sr-only"> — won</span> : null}
         </p>
         <p
           className={clsx(
-            'truncate text-row',
+            'line-clamp-2 text-row break-words',
             hasScore && !bWon ? 'text-text-3' : 'text-text',
             bWon && 'font-bold',
           )}
         >
           {props.nameB ?? props.placeholderB ?? 'To be decided'}
+          {bWon ? <span className="sr-only"> — won</span> : null}
         </p>
         {props.meta ? (
-          <p className="num mt-0.5 truncate text-meta text-text-3">{props.meta}</p>
+          <p className="num mt-1 text-meta text-text-3">{props.meta}</p>
         ) : null}
+        {props.note ? <p className="mt-1.5 flex flex-wrap gap-1.5">{props.note}</p> : null}
       </div>
 
       {hasScore ? (
         <div className="num flex shrink-0 flex-col items-end">
           <span
             className={clsx(
-              'text-[24px] leading-[22px] font-bold',
+              'text-[26px] leading-[24px] font-bold',
               aWon ? 'text-text' : 'text-text-3',
             )}
           >
@@ -66,7 +80,7 @@ export function MatchRow(props: MatchRowProps) {
           </span>
           <span
             className={clsx(
-              'text-[24px] leading-[22px] font-bold',
+              'text-[26px] leading-[24px] font-bold',
               bWon ? 'text-text' : 'text-text-3',
             )}
           >
@@ -74,14 +88,7 @@ export function MatchRow(props: MatchRowProps) {
           </span>
         </div>
       ) : (
-        <span
-          className={clsx(
-            'font-score shrink-0 rounded-full px-3 py-1 text-eyebrow uppercase',
-            props.state === 'ready' ? 'bg-ink text-white' : 'bg-done-soft text-text-2',
-          )}
-        >
-          {props.stateLabel}
-        </span>
+        <StatusPill state={props.state}>{props.stateLabel}</StatusPill>
       )}
     </div>
   )

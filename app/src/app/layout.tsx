@@ -13,9 +13,13 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
 }
 
+/**
+ * `en-IN`: the venue is in Chennai, the copy is British English, and the names
+ * on every screen are Tamil. It is what a screen reader needs to say them.
+ */
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="h-full">
+    <html lang="en-IN" className="h-full">
       <body className="min-h-full antialiased">{children}</body>
     </html>
   )

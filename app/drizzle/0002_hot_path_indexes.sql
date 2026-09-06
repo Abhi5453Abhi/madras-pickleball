@@ -1,0 +1,2 @@
+CREATE INDEX "matches_tournament_result_idx" ON "matches" USING btree ("tournament_id","result_state");--> statement-breakpoint
+CREATE INDEX "token_attempts_failed_idx" ON "token_attempts" USING btree ("at") WHERE succeeded = false;

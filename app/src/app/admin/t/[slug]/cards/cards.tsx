@@ -12,15 +12,22 @@ const COURT_DOT: Record<string, string> = {
   violet: 'bg-court-violet',
 }
 
-function CardFace({ card, origin }: { card: Card; origin: string }) {
+function CardFace({ card }: { card: Card }) {
   const [svg, setSvg] = useState('')
-  const url = `${origin}/c/${card.raw}`
 
+  // The origin is read in here rather than held in the parent's state: a card
+  // only ever exists after the organiser has tapped Make, so there is no first
+  // paint to keep in step, and lifting it out meant a setState in an effect
+  // body on every render of the screen.
   useEffect(() => {
-    QRCode.toString(url, { type: 'svg', margin: 0, errorCorrectionLevel: 'M' })
+    QRCode.toString(`${window.location.origin}/c/${card.raw}`, {
+      type: 'svg',
+      margin: 0,
+      errorCorrectionLevel: 'M',
+    })
       .then(setSvg)
       .catch(() => setSvg(''))
-  }, [url])
+  }, [card.raw])
 
   return (
     <article className="break-inside-avoid rounded-card border-2 border-line-strong bg-paper p-5">
@@ -50,9 +57,7 @@ function CardFace({ card, origin }: { card: Card; origin: string }) {
 export function Cards({ slug }: { slug: string }) {
   const [state, action, pending] = useActionState(makeCards, { cards: [] } as CardsState)
   const [revokeState, revokeAction] = useActionState(revokeCards, { cards: [] } as CardsState)
-  const [origin, setOrigin] = useState('')
-
-  useEffect(() => setOrigin(window.location.origin), [])
+  const [armed, setArmed] = useState(false)
 
   return (
     <div className="flex flex-col gap-5">
@@ -69,15 +74,44 @@ export function Cards({ slug }: { slug: string }) {
           <input type="hidden" name="slug" value={slug} />
           <Button disabled={pending}>{pending ? 'Making them…' : 'Make the cards'}</Button>
         </form>
-        <form action={revokeAction}>
-          <input type="hidden" name="slug" value={slug} />
-          <Button variant="secondary">Revoke all</Button>
-        </form>
         {state.cards.length ? (
           <Button variant="secondary" type="button" onClick={() => window.print()}>
             Print
           </Button>
         ) : null}
+      </div>
+
+      {/* Revoking mid-day stops every phone at every net post from entering a
+          score, and there is no undo — the codes are gone. Two taps, and the
+          second one says so. */}
+      <div className="print:hidden">
+        {armed ? (
+          <form action={revokeAction} className="flex flex-col gap-2">
+            <input type="hidden" name="slug" value={slug} />
+            <p className="rounded-control bg-alert-soft px-3.5 py-3 text-body font-medium text-alert">
+              Every card taped to a net post stops working immediately, and nobody can enter a score
+              until you print new ones. Do this when the QR has been posted somewhere it shouldn’t
+              be.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" className="flex-1 basis-[9rem]">
+                Yes — retire every card
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                className="flex-1 basis-[9rem]"
+                onClick={() => setArmed(false)}
+              >
+                Leave them
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <Button variant="secondary" type="button" onClick={() => setArmed(true)}>
+            Revoke all the cards
+          </Button>
+        )}
       </div>
 
       {state.cards.length ? (
@@ -88,14 +122,15 @@ export function Cards({ slug }: { slug: string }) {
           </p>
           <div className="grid gap-4 sm:grid-cols-2">
             {state.cards.map((c) => (
-              <CardFace key={c.raw} card={c} origin={origin} />
+              <CardFace key={c.raw} card={c} />
             ))}
           </div>
         </>
       ) : (
         <p className="rounded-card border border-line-strong bg-paper p-4 text-body text-text-2 print:hidden">
-          Making the cards prints a fresh code for every court and retires any old ones. Laminate
-          them and cable-tie one to each net post.
+          Making the cards prints a fresh code for every court and <strong>retires any old ones</strong> —
+          so do it once, before the first match, not halfway through the day. Laminate them and
+          cable-tie one to each net post.
         </p>
       )}
     </div>

@@ -1,4 +1,5 @@
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm'
+import { cache } from 'react'
+import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 import { db } from '@/db'
 import {
   categories,
@@ -12,7 +13,7 @@ import {
   tournaments,
 } from '@/db/schema'
 import { standings } from '@/lib/standings'
-import { isProvisional, projectedState } from './scoring'
+import { AUTO_CONFIRM_MINUTES, isProvisional, projectedState } from './scoring'
 
 /**
  * Public reads — SPEC A8/A9.
@@ -47,6 +48,9 @@ export type PublicMatch = {
   winnerSide: 'A' | 'B' | null
   scoreLine: string | null
   startedAt: Date | null
+  endedAt: Date | null
+  /** So a no-show doesn't render as a match somebody actually played. */
+  resultType: 'normal' | 'bye' | 'walkover' | 'retired' | 'cancelled'
 }
 
 /**
@@ -70,24 +74,67 @@ export function composeVersion(
   return Number(streamVersion) + settled
 }
 
-/** What the poll endpoint answers. Unpublished tournaments are not public. */
+/**
+ * The instant a `reported` result stops counting as provisional. Both halves of
+ * the version number are derived from this one value — the page counts rows in
+ * JS, the poll endpoint counts them in SQL, and taking the boundary from the
+ * application clock in both is what keeps the two answers identical. Reading
+ * the database's `now()` instead would make the pair disagree by whatever the
+ * two servers' clocks disagree by.
+ */
+function settledBefore(): Date {
+  return new Date(Date.now() - AUTO_CONFIRM_MINUTES * 60_000)
+}
+
+/**
+ * What the poll endpoint answers. Unpublished tournaments are not public.
+ *
+ * One round trip, not two: forty phones ask this every five seconds, so it is
+ * the most-executed query in the venue. The settled count is a correlated
+ * aggregate rather than a row-by-row fetch of every reported match — the same
+ * arithmetic `composeVersion` does, over the same boundary, without shipping
+ * the rows.
+ */
 export async function publicVersion(slug: string): Promise<number | null> {
+  const cutoff = settledBefore()
   const [row] = await db
-    .select({ id: tournaments.id, v: tournaments.streamVersion, publishedAt: tournaments.publishedAt })
+    .select({
+      v: tournaments.streamVersion,
+      publishedAt: tournaments.publishedAt,
+      // Written out rather than composed from column references: drizzle drops
+      // the table prefix on a column inside a raw fragment, and a correlated
+      // subquery is exactly where the prefix carries the meaning.
+      settled: sql<number>`(
+        select count(*)::int from "matches"
+        where "matches"."tournament_id" = "tournaments"."id"
+          and "matches"."result_state" = 'reported'
+          and "matches"."reported_at" is not null
+          and "matches"."reported_at" <= ${cutoff.toISOString()}::timestamptz
+      )`,
+    })
     .from(tournaments)
     .where(and(eq(tournaments.slug, slug), isNull(tournaments.deletedAt)))
     .limit(1)
   if (!row || !row.publishedAt) return null
 
-  const rows = await db
-    .select({ resultState: matches.resultState, reportedAt: matches.reportedAt })
-    .from(matches)
-    .where(and(eq(matches.tournamentId, row.id), eq(matches.resultState, 'reported')))
-
-  return composeVersion(row.v, rows)
+  return Number(row.v) + row.settled
 }
 
-export async function publicTournament(slug: string) {
+/**
+ * Everything the public page shows, in two round trips.
+ *
+ * Memoised per request because Next calls this twice for one page view — once
+ * for `generateMetadata` and once for the render. Without the cache every
+ * spectator's refresh cost the database two full passes over the tournament.
+ *
+ * Inside, only the tournament lookup has to happen first; the seven reads that
+ * hang off it are independent of each other and are issued together, so the
+ * driver pipelines them down the single connection instead of paying a round
+ * trip each. None of them is keyed off a list of ids fetched by an earlier one:
+ * every one is scoped by joining back to the tournament, which is what lets
+ * them go out at the same time.
+ */
+export const publicTournament = cache(async function publicTournament(slug: string) {
   const [tournament] = await db
     .select()
     .from(tournaments)
@@ -95,26 +142,95 @@ export async function publicTournament(slug: string) {
     .limit(1)
   if (!tournament || !tournament.publishedAt) return null
 
-  const cats = await db
-    .select()
-    .from(categories)
-    .where(and(eq(categories.tournamentId, tournament.id), isNull(categories.deletedAt)))
-    .orderBy(asc(categories.seq))
+  const [cats, teamRows, memberRows, matchRows, gameRows, courtRows, closedRows] =
+    await Promise.all([
+      db
+        .select()
+        .from(categories)
+        .where(and(eq(categories.tournamentId, tournament.id), isNull(categories.deletedAt)))
+        .orderBy(asc(categories.seq)),
 
-  const teamRows = await db
-    .select({ id: teams.id, name: teams.name, categoryId: teams.categoryId })
-    .from(teams)
-    .innerJoin(categories, eq(categories.id, teams.categoryId))
-    .where(eq(categories.tournamentId, tournament.id))
-  const teamName = new Map(teamRows.map((t) => [t.id, t.name]))
+      db
+        .select({
+          id: teams.id,
+          name: teams.name,
+          categoryId: teams.categoryId,
+          status: teams.status,
+        })
+        .from(teams)
+        .innerJoin(categories, eq(categories.id, teams.categoryId))
+        .where(eq(categories.tournamentId, tournament.id)),
 
-  const memberRows = teamRows.length
-    ? await db
+      // Ordered by position, not left to the query plan. `team_players.position`
+      // is what "Ravi / Priya" was generated from, so a team whose two names
+      // come back the other way round reads as a different pair to the person
+      // looking for themselves on the page.
+      db
         .select({ teamId: teamPlayers.teamId, name: players.name })
         .from(teamPlayers)
         .innerJoin(players, eq(players.id, teamPlayers.playerId))
-        .where(inArray(teamPlayers.teamId, teamRows.map((t) => t.id)))
-    : []
+        .innerJoin(teams, eq(teams.id, teamPlayers.teamId))
+        .innerJoin(categories, eq(categories.id, teams.categoryId))
+        .where(eq(categories.tournamentId, tournament.id))
+        .orderBy(asc(teamPlayers.position)),
+
+      // Named columns, not the whole row: a match carries forty columns of
+      // scheduling, dispute and audit state that the public page never reads.
+      db
+        .select({
+          m: {
+            id: matches.id,
+            categoryId: matches.categoryId,
+            stage: matches.stage,
+            roundName: matches.roundName,
+            teamAId: matches.teamAId,
+            teamBId: matches.teamBId,
+            status: matches.status,
+            resultState: matches.resultState,
+            resultType: matches.resultType,
+            reportedAt: matches.reportedAt,
+            winnerTeamId: matches.winnerTeamId,
+            gamesWonA: matches.gamesWonA,
+            gamesWonB: matches.gamesWonB,
+            startedAt: matches.startedAt,
+            endedAt: matches.endedAt,
+          },
+          categoryName: categories.name,
+          courtName: courts.name,
+          courtColor: courts.colorKey,
+        })
+        .from(matches)
+        .innerJoin(categories, eq(categories.id, matches.categoryId))
+        .leftJoin(courts, eq(courts.id, matches.courtId))
+        .where(eq(matches.tournamentId, tournament.id))
+        .orderBy(asc(matches.roundIndex), asc(matches.seq)),
+
+      db
+        .select({
+          matchId: games.matchId,
+          scoreA: games.scoreA,
+          scoreB: games.scoreB,
+          excludeFromDiff: games.excludeFromDiff,
+          timeCapped: games.timeCapped,
+        })
+        .from(games)
+        .innerJoin(matches, eq(matches.id, games.matchId))
+        .where(eq(matches.tournamentId, tournament.id))
+        .orderBy(asc(games.gameNo)),
+
+      db.select({ id: courts.id }).from(courts).where(eq(courts.active, true)),
+
+      db
+        .select({ courtId: courtClosures.courtId })
+        .from(courtClosures)
+        .where(and(eq(courtClosures.tournamentId, tournament.id), isNull(courtClosures.until))),
+    ])
+
+  const teamName = new Map(teamRows.map((t) => [t.id, t.name]))
+  const withdrawnTeams = new Set(
+    teamRows.filter((t) => t.status === 'withdrawn' || t.status === 'disqualified').map((t) => t.id),
+  )
+
   const membersByTeam = new Map<string, string[]>()
   for (const m of memberRows) {
     const list = membersByTeam.get(m.teamId) ?? []
@@ -122,26 +238,6 @@ export async function publicTournament(slug: string) {
     membersByTeam.set(m.teamId, list)
   }
 
-  const matchRows = await db
-    .select({
-      m: matches,
-      categoryName: categories.name,
-      courtName: courts.name,
-      courtColor: courts.colorKey,
-    })
-    .from(matches)
-    .innerJoin(categories, eq(categories.id, matches.categoryId))
-    .leftJoin(courts, eq(courts.id, matches.courtId))
-    .where(eq(matches.tournamentId, tournament.id))
-    .orderBy(asc(matches.roundIndex), asc(matches.seq))
-
-  const gameRows = matchRows.length
-    ? await db
-        .select()
-        .from(games)
-        .where(inArray(games.matchId, matchRows.map((r) => r.m.id)))
-        .orderBy(asc(games.gameNo))
-    : []
   const gamesByMatch = new Map<string, typeof gameRows>()
   for (const g of gameRows) {
     const list = gamesByMatch.get(g.matchId) ?? []
@@ -149,8 +245,15 @@ export async function publicTournament(slug: string) {
     gamesByMatch.set(g.matchId, list)
   }
 
+  // Projected once per match rather than three times: it is read here, again
+  // when the group tables are built, and again when they are filtered.
+  const stateByMatch = new Map<string, PublicMatch['state']>()
+  for (const r of matchRows) {
+    stateByMatch.set(r.m.id, projectedState(r.m) as PublicMatch['state'])
+  }
+
   const toPublicMatch = (r: (typeof matchRows)[number]): PublicMatch => {
-    const state = projectedState(r.m) as PublicMatch['state']
+    const state = stateByMatch.get(r.m.id)!
     const gs = gamesByMatch.get(r.m.id) ?? []
     // A contested score is never published — showing either version to forty
     // people is how you get an argument (SPEC A5).
@@ -181,22 +284,39 @@ export async function publicTournament(slug: string) {
             : null,
       scoreLine: showScore && gs.length ? gs.map((g) => `${g.scoreA}–${g.scoreB}`).join(', ') : null,
       startedAt: r.m.startedAt,
+      endedAt: r.m.endedAt,
+      resultType: r.m.resultType as PublicMatch['resultType'],
     }
   }
 
   const allMatches = matchRows.map(toPublicMatch)
 
+  // One pass to bucket teams and group matches by category, instead of a filter
+  // over every team and every match once per category.
+  const teamIdsByCategory = new Map<string, string[]>()
+  for (const t of teamRows) {
+    const list = teamIdsByCategory.get(t.categoryId) ?? []
+    list.push(t.id)
+    teamIdsByCategory.set(t.categoryId, list)
+  }
+
   const tables = cats.map((c) => {
-    const catTeams = teamRows.filter((t) => t.categoryId === c.id).map((t) => t.id)
+    const catTeams = teamIdsByCategory.get(c.id) ?? []
     const input = matchRows
-      .filter((r) => r.m.categoryId === c.id && r.m.stage === 'group' && r.m.teamAId && r.m.teamBId)
-      .filter((r) => projectedState(r.m) !== 'none')
+      .filter(
+        (r) =>
+          r.m.categoryId === c.id &&
+          r.m.stage === 'group' &&
+          r.m.teamAId &&
+          r.m.teamBId &&
+          stateByMatch.get(r.m.id) !== 'none',
+      )
       .map((r) => ({
         matchId: r.m.id,
         teamAId: r.m.teamAId!,
         teamBId: r.m.teamBId!,
         winnerTeamId: r.m.winnerTeamId,
-        state: projectedState(r.m) as 'final' | 'reported' | 'disputed' | 'voided',
+        state: stateByMatch.get(r.m.id) as 'final' | 'reported' | 'disputed' | 'voided',
         resultType: r.m.resultType as 'normal' | 'bye' | 'walkover' | 'retired' | 'cancelled',
         games: (gamesByMatch.get(r.m.id) ?? []).map((g) => ({
           scoreA: g.scoreA,
@@ -207,10 +327,22 @@ export async function publicTournament(slug: string) {
       }))
     return {
       category: c,
-      rows: standings(catTeams, input, c.tiebreakRule),
+      // A pair who pulled out are still in the table — their played matches
+      // stand — but a row that reads as "hasn't played yet" when they have
+      // gone home is the kind of thing that gets argued about at the desk.
+      rows: standings(catTeams, input, c.tiebreakRule).map((row) => ({
+        ...row,
+        withdrawn: withdrawnTeams.has(row.teamId),
+      })),
       advance: c.finalsStage === 'none' ? 0 : c.advancePerGroup,
     }
   })
+
+  // How many courts are actually running. "You're 5 matches away" counted every
+  // unplayed match in the venue, including the ones that will run beside yours
+  // on the other three courts.
+  const closedIds = new Set(closedRows.map((c) => c.courtId))
+  const courtsInPlay = Math.max(1, courtRows.filter((c) => !closedIds.has(c.id)).length)
 
   return {
     tournament,
@@ -222,28 +354,13 @@ export async function publicTournament(slug: string) {
     upNext: allMatches.filter((m) => m.status === 'ready' && m.state === 'none').slice(0, 6),
     results: allMatches.filter((m) => m.state === 'final' || m.state === 'reported'),
     tables,
-    courtsInPlay: await openCourtCount(tournament.id),
+    courtsInPlay,
     streamVersion: composeVersion(
       tournament.streamVersion,
       matchRows.map((r) => ({ resultState: r.m.resultState, reportedAt: r.m.reportedAt })),
     ),
   }
-}
-
-/**
- * How many courts are actually running. "You're 5 matches away" counted every
- * unplayed match in the venue, including the ones that will run beside yours on
- * the other three courts.
- */
-async function openCourtCount(tournamentId: string): Promise<number> {
-  const all = await db.select({ id: courts.id }).from(courts).where(eq(courts.active, true))
-  const closed = await db
-    .select({ courtId: courtClosures.courtId })
-    .from(courtClosures)
-    .where(and(eq(courtClosures.tournamentId, tournamentId), isNull(courtClosures.until)))
-  const closedIds = new Set(closed.map((c) => c.courtId))
-  return Math.max(1, all.filter((c) => !closedIds.has(c.id)).length)
-}
+})
 
 /** Everyone in this tournament, for "Find my match". */
 export async function publicPlayers(tournamentId: string) {

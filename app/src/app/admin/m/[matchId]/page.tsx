@@ -6,7 +6,9 @@ import { atLeast, requireUser } from '@/lib/auth'
 import { getMatchForScoring, projectedState } from '@/server/scoring'
 import { AdminEntry } from './entry'
 import { useSubmission } from './actions'
-import { Notice, Panel, SectionHead } from '@/components/ui'
+import Link from 'next/link'
+import { Notice, Panel, SectionHead, TeamName } from '@/components/ui'
+import { SECONDARY_LINK } from '../../_ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,12 +44,21 @@ export default async function AdminMatchPage(props: PageProps<'/admin/m/[matchId
   if (hasResult && !atLeast(user, 'admin')) {
     return (
       <div className="flex flex-col gap-4">
-        <h1 className="text-title text-text">
-          {loaded.nameA} v {loaded.nameB}
+        <p className="font-score text-eyebrow text-accent uppercase">
+          {loaded.category.name}
+          {loaded.match.roundName ? ` · ${loaded.match.roundName}` : ''}
+        </p>
+        <h1>
+          <TeamName name={loaded.nameA} size="section" />
+          <span className="block text-meta text-text-3">v</span>
+          <TeamName name={loaded.nameB} size="section" />
         </h1>
         <Notice tone="info">
           {STATE_WORDS[state] ?? 'A result is already in'}. Ask the organiser if it needs changing.
         </Notice>
+        <Link href="/umpire" className={SECONDARY_LINK}>
+          Back to your matches
+        </Link>
       </div>
     )
   }
@@ -118,6 +129,8 @@ export default async function AdminMatchPage(props: PageProps<'/admin/m/[matchId
       </section>
     ) : null
 
+  const back = atLeast(user, 'admin') ? `/admin/t/${tournament?.slug ?? ''}/board` : '/umpire'
+
   return (
     <div className="flex flex-col gap-7">
       {disputePanel}
@@ -133,10 +146,15 @@ export default async function AdminMatchPage(props: PageProps<'/admin/m/[matchId
       nameB={loaded.nameB ?? '—'}
       rules={loaded.rules}
       existing={existing}
-      back={
-        atLeast(user, 'admin') ? `/admin/t/${tournament?.slug ?? ''}/board` : '/umpire'
-      }
+      back={back}
       />
+
+      {/* An organiser arrives here from the escape hatch to LOOK at a score as
+          often as to change one, and leaving with the browser button loses the
+          scroll position on the page they came from. */}
+      <Link href={back as never} className={SECONDARY_LINK}>
+        {atLeast(user, 'admin') ? 'Back to the court board' : 'Back to your matches'}
+      </Link>
     </div>
   )
 }

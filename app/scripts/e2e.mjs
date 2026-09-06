@@ -115,13 +115,27 @@ const anon = await browser.newContext({ viewport: { width: 390, height: 844 } })
 const court = await anon.newPage()
 // Find which code belongs to the live court by trying each.
 let scored = false
+// The winning score is pre-selected once a side is picked, so the middle tap
+// is only needed when the target isn't the one we want. Chips carry a spoken
+// accessible name ("Hal Eight / Eve Five scored 7"), so they are matched on
+// their visible text rather than by role name.
+const chip = (p, n) => p.locator('button').filter({ hasText: new RegExp(`^${n}$`) }).first()
+
 const playGame = async (p, winnerLabel, winnerScore, loserScore) => {
-  await p.getByRole('button', { name: winnerLabel, exact: true }).first().click()
-  await p.waitForTimeout(400)
-  await p.getByRole('button', { name: String(winnerScore), exact: true }).first().click()
-  await p.waitForTimeout(400)
-  await p.getByRole('button', { name: String(loserScore), exact: true }).first().click()
-  await p.waitForTimeout(700)
+  await p.locator('button').filter({ hasText: winnerLabel }).first().click()
+  await p.waitForTimeout(500)
+  const target = chip(p, winnerScore)
+  if ((await target.count()) && (await target.getAttribute('aria-pressed')) !== 'true') {
+    await target.click()
+    await p.waitForTimeout(400)
+  }
+  const loser = chip(p, loserScore)
+  if (!(await loser.count())) {
+    console.log('   DEBUG body:', (await p.innerText('body')).slice(0, 900))
+    throw new Error(`no chip for ${loserScore}`)
+  }
+  await loser.click()
+  await p.waitForTimeout(800)
 }
 
 for (const code of codes) {
@@ -144,29 +158,37 @@ ok('the QR opens the scoreboard with no login', scored)
 
 if (scored) {
   const t = await court.innerText('body')
-  ok('it asks which side is submitting', /Who’s submitting|Who's submitting/.test(t), t.slice(0, 160))
-  const submitLabels = await court.$$eval('button[aria-pressed]', (els) =>
-    els.map((e) => e.textContent?.trim() ?? '').filter(Boolean),
+  ok(
+    'it asks which side is sending it',
+    /putting this in|submitting|Hold your own name/i.test(t),
+    t.slice(0, 300),
   )
-  if (submitLabels[0]) {
-    await court.getByRole('button', { name: submitLabels[0], exact: true }).first().click()
-    await court.waitForTimeout(300)
-  }
-  const hold = await court.$('button:has-text("Hold to submit")')
-  if (hold) {
-    await hold.focus()
+  // Submitting-side and commitment are one control: a hold button per team.
+  const holds = await court.$$('button:has-text("Hold")')
+  ok('there is something to hold', holds.length > 0, t.slice(0, 300))
+  if (holds.length) {
+    await holds[0].focus()
     await court.keyboard.press('Enter')
-    await court.waitForTimeout(2500)
+    await court.waitForTimeout(3000)
   }
   const after = await court.innerText('body')
-  ok('the score lands and asks the other side', /Hand the phone over|That’s right/.test(after), after.slice(0, 200))
+  ok(
+    'the score lands and asks the other pair',
+    /Hand the phone|That’s right|That's right|already in/i.test(after),
+    after.slice(0, 400),
+  )
 }
 
 console.log('\n6. it reaches the table and the public page')
 await page.goto(`${BASE}/admin/t/${slug}`)
 text = await body()
 ok('the table counts a played match', /\b1\b/.test(text) && !/Pld[\s\S]{0,80}0\s+0\s+0[\s\S]{0,40}0\s+0\s+0[\s\S]{0,40}0\s+0\s+0[\s\S]{0,40}0\s+0\s+0/.test(text))
-ok('the tiebreak rule is printed', /total points scored/.test(text))
+// The rule lives in a disclosure now — said once, where someone losing an
+// argument will look — so read the DOM, not just what is on screen.
+ok(
+  'the tiebreak rule is printed',
+  /total points scored/.test(await page.evaluate(() => document.body.textContent ?? '')),
+)
 
 await page.goto(`${BASE}/t/${slug}`)
 text = await body()

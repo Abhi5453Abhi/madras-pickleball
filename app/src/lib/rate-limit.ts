@@ -72,29 +72,35 @@ export async function recordLoginAttempt(identifier: string, ipHash: string | nu
 const TOKEN_FAIL_PER_MIN = 10
 const TOKEN_FAIL_PER_HOUR = 100
 
+/**
+ * One pass over the last hour of failures answers both questions: the per-IP
+ * window is a minute, which is inside the hour the global window already scans.
+ * Two round trips in front of every QR scan is a cost the venue pays on the
+ * busiest minute of the day, for an answer one query can give.
+ */
 export async function checkTokenLookupAllowed(ipHash: string | null) {
   const minuteAgo = new Date(Date.now() - 60_000)
   const hourAgo = new Date(Date.now() - 3_600_000)
 
-  const [{ n: globalHour }] = await db
-    .select({ n: sql<number>`count(*)::int` })
+  const [{ globalHour, perIp }] = await db
+    .select({
+      globalHour: sql<number>`count(*)::int`,
+      // The timestamp goes in as an explicit ISO string: a bare Date inside a
+      // raw fragment carries no type for the driver to serialise it with.
+      perIp: ipHash
+        ? sql<number>`count(*) filter (
+            where ${tokenAttempts.ipHash} = ${ipHash}
+              and ${tokenAttempts.at} >= ${minuteAgo.toISOString()}::timestamptz
+          )::int`
+        : sql<number>`0::int`,
+    })
     .from(tokenAttempts)
     .where(and(eq(tokenAttempts.succeeded, false), gte(tokenAttempts.at, hourAgo)))
-  if (globalHour >= TOKEN_FAIL_PER_HOUR) return { allowed: false as const, scope: 'global' as const }
 
-  if (ipHash) {
-    const [{ n: perIp }] = await db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(tokenAttempts)
-      .where(
-        and(
-          eq(tokenAttempts.ipHash, ipHash),
-          eq(tokenAttempts.succeeded, false),
-          gte(tokenAttempts.at, minuteAgo),
-        ),
-      )
-    if (perIp >= TOKEN_FAIL_PER_MIN) return { allowed: false as const, scope: 'ip' as const }
-  }
+  // Order matters: a global lockout is reported as global even when the same
+  // IP would also have tripped its own cap.
+  if (globalHour >= TOKEN_FAIL_PER_HOUR) return { allowed: false as const, scope: 'global' as const }
+  if (ipHash && perIp >= TOKEN_FAIL_PER_MIN) return { allowed: false as const, scope: 'ip' as const }
 
   return { allowed: true as const }
 }

@@ -160,9 +160,21 @@ function headToHead(a: string, b: string, matches: StandingsMatch[]): number {
   return bWins - aWins // negative sorts `a` first
 }
 
-type Step = { label: string; compare: (x: TeamRow, y: TeamRow) => number }
+type Step = {
+  label: string
+  compare: (x: TeamRow, y: TeamRow) => number
+  /** A specific sentence for this row, when the label alone isn't enough. */
+  describe?: (row: TeamRow) => string
+}
 
-const byWinRatio: Step = { label: 'record', compare: (x, y) => y.winRatio - x.winRatio }
+const byWinRatio: Step = {
+  label: 'record',
+  compare: (x, y) => y.winRatio - x.winRatio,
+  // Mid-tournament two teams can both have three wins from different numbers
+  // of matches, and "3 wins above 3 wins" with no explanation is exactly the
+  // thing someone comes to the desk about. Say which record.
+  describe: (r) => `3 played, ${r.won} won`.replace('3 played', `${r.played} played`),
+}
 const byPointsScored: Step = {
   label: 'total points scored',
   compare: (x, y) => y.pointsFor - x.pointsFor,
@@ -197,7 +209,7 @@ function orderGroup(
     if (buckets.length > 1) {
       return buckets.flatMap((b) =>
         b.length === 1
-          ? tag(b, step.label)
+          ? tag(b, step.label, step)
           : orderGroup(b, allMatches, rule, depth + 1),
       )
     }
@@ -244,7 +256,7 @@ function orderGroup(
     const buckets = bucket(sorted, step.compare)
     if (buckets.length > 1) {
       return buckets.flatMap((b) =>
-        b.length === 1 ? tag(b, step.label) : orderGroup(b, allMatches, rule, depth + 1),
+        b.length === 1 ? tag(b, step.label, step) : orderGroup(b, allMatches, rule, depth + 1),
       )
     }
   }
@@ -262,8 +274,11 @@ function bucket(sorted: TeamRow[], compare: (x: TeamRow, y: TeamRow) => number):
   return out
 }
 
-function tag(rows: TeamRow[], label: string): TeamRow[] {
-  return rows.map((r) => ({ ...r, reason: r.reason ?? label }))
+function tag(rows: TeamRow[], label: string, step?: Step): TeamRow[] {
+  return rows.map((r) => ({
+    ...r,
+    reason: r.reason ?? (step?.describe ? `${label} — ${step.describe(r)}` : label),
+  }))
 }
 
 export function standings(

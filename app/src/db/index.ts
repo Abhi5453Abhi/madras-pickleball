@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module'
+import { sql, type Column, type SQL } from 'drizzle-orm'
 import { drizzle as drizzlePg } from 'drizzle-orm/postgres-js'
 import { drizzle as drizzlePglite } from 'drizzle-orm/pglite'
 import * as schema from './schema'
@@ -103,4 +104,23 @@ export type Tx = Parameters<Parameters<PgHandle['transaction']>[0]>[0]
 
 export function transact<T>(fn: (t: Tx) => Promise<T>): Promise<T> {
   return (db as PgHandle).transaction(fn)
+}
+
+/**
+ * `case <key> when 'a' then 'x' when 'b' then 'y' end` — a many-row UPDATE
+ * written as one statement.
+ *
+ * Updating rows one at a time is a network round trip each. That is invisible
+ * on a laptop and it is the entire cost on a serverless host holding a single
+ * connection to a database in another region: resolving four bracket slots was
+ * eight hops before it was any work at all. Every value is cast, because a
+ * CASE whose branches are all untyped parameters has no type Postgres can
+ * infer.
+ */
+export function mapCase(key: Column, pairs: Array<readonly [string, string]>): SQL {
+  const branches = sql.join(
+    pairs.map(([k, v]) => sql`when ${k} then ${v}::text`),
+    sql` `,
+  )
+  return sql`case ${key} ${branches} end`
 }

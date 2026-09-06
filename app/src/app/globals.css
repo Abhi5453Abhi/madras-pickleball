@@ -53,7 +53,10 @@
   /* ── text ── */
   --color-text: #10151b;
   --color-text-2: #414d5c;
-  --color-text-3: #6b7889;
+  /* Nudged darker: at #6b7889 a 14px section subtitle on the page's own grey
+     ground measured 3.97:1, which is under AA for normal text, and this is the
+     colour every "in the order they'll be called" line uses. Now 4.5:1. */
+  --color-text-3: #636f80;
   --color-on-ink: #ffffff;
   --color-on-ink-2: #b9cde0;
 
@@ -67,12 +70,18 @@
   --color-accent-hi: #b23a13;
   --color-accent-line: #e2582b;
   --color-accent-soft: #fcebe4;
+  /* The same terracotta, lightened by exactly as much as it takes to clear
+     4.5:1 on the ink band — #e2582b on #0e3a5e is 3.2:1, which is a brand
+     eyebrow nobody in the sun can read. Only ever used ON ink. */
+  --color-accent-on-ink: #ff8a5c;
 
   /* ── status: three, reserved, always paired with a word ── */
   --color-live: #16a34a;
   --color-live-text: #0f7b37;
   --color-live-soft: #e3f6ea;
-  --color-waiting: #b45309;
+  /* 4.45:1 on its own soft tint was one hundredth under AA for the 14px
+     "Not confirmed yet" tag. Now 4.8:1. */
+  --color-waiting: #ad4f08;
   --color-waiting-soft: #fbf0dc;
   --color-done: #6b7889;
   --color-done-soft: #edf0f4;
@@ -246,4 +255,71 @@ body {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/*
+ * One visible focus treatment for the whole site. Half the interactive things
+ * here are labels and summaries, which get no ring from a utility class, and a
+ * keyboard user on the public page was landing on invisible targets.
+ */
+/* Text fields are left out on purpose: they already carry their own ring, and
+   an unlayered outline here would override the `outline-none` that goes with
+   it and draw both. */
+:where(a, button, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--color-link);
+  outline-offset: 2px;
+}
+
+/*
+ * `details` is the only progressive disclosure that works with JavaScript off,
+ * survives find-in-page, and is keyboard-operable for free. It is styled as a
+ * row, not as a browser widget.
+ */
+summary {
+  list-style: none;
+  cursor: pointer;
+}
+summary::-webkit-details-marker {
+  display: none;
+}
+details[open] > summary .chev {
+  transform: rotate(180deg);
+}
+.chev {
+  transition: transform 0.15s ease;
+}
+
+/*
+ * Category switcher — three pool tables stacked is most of why the public page
+ * was forty screens long, and nobody reads a category they are not in.
+ *
+ * A radio group plus `:has()`, so it works on first paint with no JavaScript,
+ * and the labels stay a real radiogroup for a screen reader. The DEFAULT is
+ * every panel visible: where `:has()` is unsupported the page degrades to the
+ * long list it used to be, rather than to a blank space.
+ */
+.switch:has([data-tab]:checked) [data-panel] {
+  display: none;
+}
+.switch:has([data-tab='0']:checked) [data-panel='0'],
+.switch:has([data-tab='1']:checked) [data-panel='1'],
+.switch:has([data-tab='2']:checked) [data-panel='2'],
+.switch:has([data-tab='3']:checked) [data-panel='3'],
+.switch:has([data-tab='4']:checked) [data-panel='4'],
+.switch:has([data-tab='5']:checked) [data-panel='5'] {
+  display: block;
+}
+
+/* The radio itself is off-screen, so its focus ring has to land on the label. */
+.switch input[data-tab]:focus-visible + label {
+  outline: 3px solid var(--color-link);
+  outline-offset: 2px;
+}
+
+/*
+ * An anchored jump ("show my table") must not land the heading under the top
+ * edge of the viewport.
+ */
+[id] {
+  scroll-margin-top: 12px;
 }

@@ -10,6 +10,13 @@ export function CourtEntry(props: Omit<ScoreEntryProps, 'onSubmit' | 'authoritat
     <ScoreEntry
       {...props}
       authoritative={false}
+      /**
+       * Best-of-3 means a pair can put game 1 in, walk off for a drink, and
+       * come back after game 2 — and until this key existed nothing was stored
+       * anywhere until submit. Scoped to the match, so the next pair on this
+       * court never inherits it.
+       */
+      persistKey={`mpb.court.draft.${props.matchId}`}
       onSubmit={async (payload) => {
         const res = await courtSubmit({
           matchId: props.matchId,

@@ -28,6 +28,7 @@ export async function confirmAll(formData: FormData) {
     after: { confirmed: n },
   })
   revalidatePath(`/admin/t/${slug}/results`)
+  revalidatePath(`/admin/t/${slug}`)
 }
 
 /** No-show → walkover. Never a typed 11-0: that would corrupt the tiebreak. */
@@ -66,6 +67,7 @@ export async function markNoShow(formData: FormData) {
   })
   revalidatePath(`/admin/t/${slug}/results`)
   revalidatePath(`/admin/t/${slug}/board`)
+  revalidatePath(`/admin/t/${slug}`)
 }
 
 /** Court out of action — the queue and the finish estimate recompute. */

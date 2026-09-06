@@ -2,10 +2,12 @@ import { clsx } from 'clsx'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
-import { CourtSwatch, NetRule, Notice, StatusPill } from '@/components/ui'
+import { CourtSwatch, Disclosure, NetRule, Notice, Panel, StatusPill } from '@/components/ui'
 import { elapsedLabel, formatDuration, venueTime } from '@/lib/time'
 import { boardData, type BoardCourt, type BoardMatch } from '@/server/board'
 import { getTournamentBySlug } from '@/server/tournaments'
+import { Confirm } from '../../../_ui'
+import { offersForFreeCourts } from '../suggestions'
 import { placeMatch, takeOffCourt } from './actions'
 
 export const dynamic = 'force-dynamic'
@@ -16,6 +18,17 @@ function Sides({ a, b, dim }: { a: string | null; b: string | null; dim?: boolea
       <p className="text-row">{a ?? 'To be decided'}</p>
       <p className="text-row">{b ?? 'To be decided'}</p>
     </div>
+  )
+}
+
+/** Category and round, on every row. Two identical rows in different categories
+ *  is the difference between "why is this here twice" and a legible queue. */
+function Where({ m }: { m: BoardMatch }) {
+  return (
+    <p className="mt-1 text-meta text-text-3">
+      {m.categoryName}
+      {m.roundName ? ` · ${m.roundName}` : ''}
+    </p>
   )
 }
 
@@ -32,8 +45,15 @@ function CourtCard({
     return (
       <article data-court className="hatched rounded-card border border-dashed border-line-strong bg-sunken">
         <div className="px-4 py-3">
-          <span className="font-score text-eyebrow text-text-3 uppercase">{court.name}</span>
+          <div className="flex items-center gap-2">
+            <CourtSwatch colorKey={court.colorKey} />
+            <span className="font-score text-eyebrow text-text-3 uppercase">{court.name}</span>
+            <StatusPill state="waiting">Out of action</StatusPill>
+          </div>
           <p className="mt-1 text-row text-text-2">{court.closedReason}</p>
+          <Link href={`/admin/t/${slug}`} className="mt-1 inline-block text-meta font-semibold text-link">
+            Put it back
+          </Link>
         </div>
       </article>
     )
@@ -70,33 +90,38 @@ function CourtCard({
         </div>
         <div className="mt-2 px-4">
           <Sides a={court.live.nameA} b={court.live.nameB} />
-          <p className="mt-1 text-meta text-text-3">
-            {court.live.categoryName}
-            {court.live.roundName ? ` · ${court.live.roundName}` : ''}
-          </p>
+          <Where m={court.live} />
           {stale ? (
             <p className="mt-1.5 text-meta font-semibold text-waiting">
               On for {court.live.overrunMinutes} min — nobody has given a score.
             </p>
           ) : null}
         </div>
-        <div className="flex gap-2 p-3 pt-3">
+        {/* The confirm goes full width once it is open, so its sentence is not
+            squeezed into the third of the row the closed button occupies. */}
+        <div className="flex flex-wrap gap-2 p-3">
           <Link
             href={`/admin/m/${court.live.id}`}
             className={clsx(
-              'tap-lg flex flex-1 items-center justify-center rounded-control text-[18px] font-bold text-white',
+              'tap-lg flex flex-1 basis-[9rem] items-center justify-center rounded-control text-[18px] font-bold text-white',
               stale ? 'bg-accent shadow-key' : 'bg-ink',
             )}
           >
             {stale ? 'Enter it for them' : 'Enter the score'}
           </Link>
-          <form action={takeOffCourt}>
-            <input type="hidden" name="matchId" value={court.live.id} />
-            <input type="hidden" name="slug" value={slug} />
-            <button className="tap-lg rounded-control border border-line-strong bg-paper px-4 text-[17px] font-semibold text-text">
-              Off court
-            </button>
-          </form>
+          <Confirm
+            className="shrink-0 [&[open]]:w-full [&[open]]:basis-full"
+            label="Off court"
+            question={`${court.name} goes back to free and this match comes off it with no score. Nothing is lost — send it out again whenever you like.`}
+          >
+            <form action={takeOffCourt}>
+              <input type="hidden" name="matchId" value={court.live.id} />
+              <input type="hidden" name="slug" value={slug} />
+              <button className="tap-lg w-full rounded-control bg-ink px-4 text-[18px] font-bold text-white">
+                Take it off {court.name}
+              </button>
+            </form>
+          </Confirm>
         </div>
       </article>
     )
@@ -122,10 +147,7 @@ function CourtCard({
         <>
           <div className="mt-2 px-4">
             <Sides a={firstPlaceable.nameA} b={firstPlaceable.nameB} />
-            <p className="mt-1 text-meta text-text-3">
-              {firstPlaceable.categoryName}
-              {firstPlaceable.roundName ? ` · ${firstPlaceable.roundName}` : ''}
-            </p>
+            <Where m={firstPlaceable} />
           </div>
           <div className="p-3 pt-3">
             <form action={placeMatch}>
@@ -159,30 +181,20 @@ export default async function BoardPage(props: PageProps<'/admin/t/[slug]/board'
   const blocked = data.queue.filter((m) => m.ready && m.blockedBy)
   const freeCourts = data.courts.filter((c) => !c.closed && !c.live)
 
-  // Each free court is offered a DIFFERENT match — and never one that shares a
-  // player with a match already offered somewhere else. Handing court 1 and
-  // court 2 two matches that both contain Ravi meant the organiser tapped both
-  // and the second was refused, which is the exact collision the board exists
-  // to prevent.
-  const suggestion = new Map<string, (typeof placeable)[number]>()
-  const chosen = new Set<string>()
-  const spokenFor = new Set<string>()
-  for (const c of freeCourts) {
-    const pick = placeable.find(
-      (m) => !chosen.has(m.id) && !m.playerIds.some((p) => spokenFor.has(p)),
-    )
-    if (!pick) continue
-    suggestion.set(c.id, pick)
-    chosen.add(pick.id)
-    for (const p of pick.playerIds) spokenFor.add(p)
-  }
-  const suggestedIds = chosen
+  const suggestion = offersForFreeCourts(data)
+  const suggestedIds = new Set([...suggestion.values()].map((m) => m.id))
+  const upNext = placeable.filter((m) => !suggestedIds.has(m.id))
 
   return (
     <div className="flex flex-col gap-6 pb-24">
       <header>
         <p className="font-score text-eyebrow text-accent uppercase">Court board</p>
-        <h1 className="mt-1 text-title text-text">{tournament.name}</h1>
+        <h1 className="mt-1">
+          <Link href={`/admin/t/${slug}`} className="text-title text-text">
+            {tournament.name}
+            <span aria-hidden className="text-text-3"> ›</span>
+          </Link>
+        </h1>
       </header>
 
       {err ? <Notice>{String(err)}</Notice> : null}
@@ -205,12 +217,16 @@ export default async function BoardPage(props: PageProps<'/admin/t/[slug]/board'
         </div>
         <NetRule className="mt-2" />
         <ul className="mt-3 flex flex-col gap-2">
-          {placeable.filter((m) => !suggestedIds.has(m.id)).slice(0, 6).map((m) => (
+          {upNext.slice(0, 6).map((m) => (
             <li
               key={m.id}
               className="flex flex-wrap items-center gap-3 rounded-card border border-line-strong bg-paper px-4 py-3 shadow-card"
             >
-              <Sides a={m.nameA} b={m.nameB} />
+              <div className="min-w-[9rem] flex-1">
+                <p className="text-row">{m.nameA ?? 'To be decided'}</p>
+                <p className="text-row">{m.nameB ?? 'To be decided'}</p>
+                <Where m={m} />
+              </div>
               <form action={placeMatch} className="ml-auto shrink-0">
                 <input type="hidden" name="matchId" value={m.id} />
                 <input type="hidden" name="courtId" value={freeCourts[0]?.id ?? ''} />
@@ -228,37 +244,50 @@ export default async function BoardPage(props: PageProps<'/admin/t/[slug]/board'
           {blocked.map((m) => (
             <li
               key={m.id}
-              className="flex flex-wrap items-center gap-3 rounded-card border border-line-strong bg-sunken px-4 py-3"
+              className="rounded-card border border-line-strong bg-sunken px-4 py-3"
             >
               <Sides a={m.nameA} b={m.nameB} dim />
-              {/* The reason is the affordance, not a separate error line. */}
-              <span className="ml-auto shrink-0 text-right text-meta font-semibold text-text-2">
-                {m.blockedBy}
-              </span>
+              <Where m={m} />
+              {/* The reason is the affordance, not a separate error message.
+                  On its own line, because "Karthik Subramanian is on Court 3"
+                  does not fit beside two names that already wrap. */}
+              <p className="mt-1 text-meta font-semibold text-text-2">{m.blockedBy}</p>
             </li>
           ))}
-
-          {/* Never hidden: a match the board knows about but doesn't list is a
-              header that says 7 to play above a list of 4. */}
-          {data.waiting.map((m) => (
-            <li
-              key={m.id}
-              className="flex flex-wrap items-center gap-3 rounded-card border border-dashed border-line-strong bg-sunken px-4 py-3"
-            >
-              <Sides a={m.nameA} b={m.nameB} dim />
-              <span className="ml-auto shrink-0 text-right text-meta text-text-3">
-                {m.roundName ? `${m.roundName} · ` : ''}
-                {m.waitingOn}
-              </span>
-            </li>
-          ))}
-
-          {placeable.length === 0 && blocked.length === 0 && data.waiting.length === 0 ? (
-            <li className="rounded-card border border-line-strong bg-paper px-4 py-6 text-center text-body text-text-2">
-              Every match has been played.
-            </li>
-          ) : null}
         </ul>
+
+        {/* Never hidden — a match the board knows about but doesn't list is a
+            header that says 7 to play above a list of 4. But three identical
+            "To be decided / To be decided" cards, one per category and none of
+            them saying which, was a third of this screen saying nothing. The
+            count stays on the summary and the rows stay in the document. */}
+        {data.waiting.length ? (
+          <Disclosure
+            className="mt-2"
+            summary={`${data.waiting.length} more, once earlier matches finish`}
+            meta="Nothing to do about these yet"
+          >
+            <Panel>
+              <ul className="divide-y divide-line">
+                {data.waiting.map((m) => (
+                  <li key={m.id} className="px-4 py-3">
+                    <p className="text-row text-text-2">
+                      {m.categoryName}
+                      {m.roundName ? ` · ${m.roundName}` : ''}
+                    </p>
+                    <p className="mt-0.5 text-meta text-text-3">{m.waitingOn}</p>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          </Disclosure>
+        ) : null}
+
+        {placeable.length === 0 && blocked.length === 0 && data.waiting.length === 0 ? (
+          <p className="mt-3 rounded-card border border-line-strong bg-paper px-4 py-6 text-center text-body text-text-2">
+            Every match has been played.
+          </p>
+        ) : null}
       </section>
 
       <div className="fixed inset-x-0 bottom-0 z-10 border-t border-line-strong bg-paper px-4 py-3 shadow-dock">

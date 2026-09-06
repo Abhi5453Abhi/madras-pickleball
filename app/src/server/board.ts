@@ -1,6 +1,6 @@
 import 'server-only'
-import { and, eq, inArray, sql } from 'drizzle-orm'
-import { db } from '@/db'
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import { db, transact } from '@/db'
 import {
   categories,
   courts,
@@ -11,10 +11,11 @@ import {
   teamPlayers,
   teams,
   tournaments,
+  venues,
 } from '@/db/schema'
 import { bumpStreamVersion } from '@/lib/stream'
 import { estimateDay, minutesPerMatch } from '@/lib/estimate'
-import { getVenue } from './tournaments'
+import { VENUE_SLUG, getVenue } from './tournaments'
 
 /**
  * The court board — SPEC A4.
@@ -87,24 +88,12 @@ export type BoardData = {
  */
 const OVERRUN_FACTOR = 1.6
 
-async function playersByMatch(matchIds: string[]) {
-  if (matchIds.length === 0) return new Map<string, Array<{ id: string; name: string }>>()
-  const rows = await db
-    .select({
-      matchId: matches.id,
-      playerId: players.id,
-      playerName: players.name,
-    })
-    .from(matches)
-    .innerJoin(
-      teams,
-      sql`${teams.id} = ${matches.teamAId} or ${teams.id} = ${matches.teamBId}`,
-    )
-    .innerJoin(teamPlayers, eq(teamPlayers.teamId, teams.id))
-    .innerJoin(players, eq(players.id, teamPlayers.playerId))
-    .where(inArray(matches.id, matchIds))
+type Roster = Map<string, Array<{ id: string; name: string }>>
 
-  const out = new Map<string, Array<{ id: string; name: string }>>()
+function groupRoster(
+  rows: Array<{ matchId: string; playerId: string; playerName: string }>,
+): Roster {
+  const out: Roster = new Map()
   for (const r of rows) {
     const list = out.get(r.matchId) ?? []
     list.push({ id: r.playerId, name: r.playerName })
@@ -113,71 +102,155 @@ async function playersByMatch(matchIds: string[]) {
   return out
 }
 
-export async function boardData(tournamentId: string): Promise<BoardData> {
-  const venue = await getVenue()
-  const [tournament] = await db
-    .select()
-    .from(tournaments)
-    .where(eq(tournaments.id, tournamentId))
-    .limit(1)
+const rosterColumns = {
+  matchId: matches.id,
+  playerId: players.id,
+  playerName: players.name,
+}
 
-  const courtRows = await db
-    .select()
-    .from(courts)
-    .where(and(eq(courts.venueId, venue.id), eq(courts.active, true)))
-    .orderBy(courts.sortOrder)
+/**
+ * Side A first, then B, each in the order the pair was entered.
+ *
+ * Left to the query plan this is arbitrary, and it decides which name the board
+ * prints in "Meera Krishnamurthy is on Court 1" when both halves of a pair are
+ * double-booked. A blocker that names a different person each time the page
+ * reloads is not something an organiser can act on. Written out rather than
+ * built from column references because drizzle drops the table prefix inside a
+ * raw fragment, and this one spans three tables.
+ */
+const ROSTER_ORDER = sql`case when "teams"."id" = "matches"."team_a_id" then 0 else 1 end`
 
-  const closures = await db
-    .select()
-    .from(courtClosures)
-    .where(eq(courtClosures.tournamentId, tournamentId))
-  const closedByCourt = new Map(
-    closures.filter((c) => !c.until).map((c) => [c.courtId, c.reason ?? 'Out of action']),
+async function playersByMatch(matchIds: string[]): Promise<Roster> {
+  if (matchIds.length === 0) return new Map()
+  return groupRoster(
+    await db
+      .select(rosterColumns)
+      .from(matches)
+      .innerJoin(teams, sql`${teams.id} = ${matches.teamAId} or ${teams.id} = ${matches.teamBId}`)
+      .innerJoin(teamPlayers, eq(teamPlayers.teamId, teams.id))
+      .innerJoin(players, eq(players.id, teamPlayers.playerId))
+      .where(inArray(matches.id, matchIds))
+      .orderBy(ROSTER_ORDER, teamPlayers.position),
   )
+}
 
-  const rows = await db
-    .select({
-      id: matches.id,
-      categoryId: matches.categoryId,
-      categoryName: categories.name,
-      roundName: matches.roundName,
-      teamAId: matches.teamAId,
-      teamBId: matches.teamBId,
-      status: matches.status,
-      resultState: matches.resultState,
-      courtId: matches.courtId,
-      startedAt: matches.startedAt,
-      endedAt: matches.endedAt,
-      version: matches.version,
-      bestOf: categories.bestOf,
-      pointsToWin: categories.pointsToWin,
-    })
-    .from(matches)
-    .innerJoin(categories, eq(categories.id, matches.categoryId))
-    .where(eq(matches.tournamentId, tournamentId))
-    .orderBy(matches.roundIndex, matches.seq)
+/**
+ * The board's whole payload in one round trip.
+ *
+ * Every read here is scoped by the tournament rather than by a list of ids that
+ * an earlier read produced, which is what lets all eight go out together and be
+ * pipelined down the single connection a serverless instance gets. Chained
+ * queries cost a network hop each, and eight hops is the difference between a
+ * board that answers instantly and one an organiser waits on with four courts
+ * standing idle.
+ */
+export async function boardData(tournamentId: string): Promise<BoardData> {
+  // The first entry is deliberately dropped: getVenue is here only because it
+  // throws when the venue was never seeded, which is a setup mistake that
+  // should say so rather than render an empty board. Its id is not needed —
+  // the courts query joins the venue by slug itself.
+  const [, tournament, courtRows, closures, rows, teamNameRows, rosterRows, slotRows] =
+    await Promise.all([
+      getVenue(),
 
-  const teamNames = new Map(
-    (
-      await db
+      db
+        .select()
+        .from(tournaments)
+        .where(eq(tournaments.id, tournamentId))
+        .limit(1)
+        .then((r) => r[0]),
+
+      // Joined to the venue by slug rather than waiting for getVenue's id, so
+      // this does not need a second round trip.
+      db
+        .select({
+          id: courts.id,
+          name: courts.name,
+          colorKey: courts.colorKey,
+          sortOrder: courts.sortOrder,
+        })
+        .from(courts)
+        .innerJoin(venues, eq(venues.id, courts.venueId))
+        .where(and(eq(venues.slug, VENUE_SLUG), eq(courts.active, true)))
+        .orderBy(courts.sortOrder),
+
+      db
+        .select({ courtId: courtClosures.courtId, reason: courtClosures.reason })
+        .from(courtClosures)
+        .where(and(eq(courtClosures.tournamentId, tournamentId), isNull(courtClosures.until))),
+
+      db
+        .select({
+          id: matches.id,
+          categoryId: matches.categoryId,
+          categoryName: categories.name,
+          roundName: matches.roundName,
+          teamAId: matches.teamAId,
+          teamBId: matches.teamBId,
+          status: matches.status,
+          resultState: matches.resultState,
+          courtId: matches.courtId,
+          startedAt: matches.startedAt,
+          endedAt: matches.endedAt,
+          version: matches.version,
+          bestOf: categories.bestOf,
+          pointsToWin: categories.pointsToWin,
+        })
+        .from(matches)
+        .innerJoin(categories, eq(categories.id, matches.categoryId))
+        .where(eq(matches.tournamentId, tournamentId))
+        .orderBy(matches.roundIndex, matches.seq),
+
+      db
         .select({ id: teams.id, name: teams.name })
         .from(teams)
         .innerJoin(categories, eq(categories.id, teams.categoryId))
-        .where(eq(categories.tournamentId, tournamentId))
-    ).map((t) => [t.id, t.name]),
-  )
+        .where(eq(categories.tournamentId, tournamentId)),
 
-  const rosterByMatch = await playersByMatch(rows.map((r) => r.id))
-  const waitingByMatch = await waitingLabels(rows)
+      db
+        .select(rosterColumns)
+        .from(matches)
+        .innerJoin(teams, sql`${teams.id} = ${matches.teamAId} or ${teams.id} = ${matches.teamBId}`)
+        .innerJoin(teamPlayers, eq(teamPlayers.teamId, teams.id))
+        .innerJoin(players, eq(players.id, teamPlayers.playerId))
+        .where(eq(matches.tournamentId, tournamentId))
+        .orderBy(ROSTER_ORDER, teamPlayers.position),
+
+      // Only the matches that are still short of a side have anything to say
+      // about what they are waiting for.
+      db
+        .select({
+          matchId: matchSlots.matchId,
+          slot: matchSlots.slot,
+          sourceType: matchSlots.sourceType,
+          sourceMatchId: matchSlots.sourceMatchId,
+          sourceRank: matchSlots.sourceRank,
+        })
+        .from(matchSlots)
+        .innerJoin(matches, eq(matches.id, matchSlots.matchId))
+        .where(
+          and(
+            eq(matches.tournamentId, tournamentId),
+            or(isNull(matches.teamAId), isNull(matches.teamBId)),
+          ),
+        ),
+    ])
+
+  const closedByCourt = new Map(closures.map((c) => [c.courtId, c.reason ?? 'Out of action']))
+  const teamNames = new Map(teamNameRows.map((t) => [t.id, t.name]))
+  const rosterByMatch = groupRoster(rosterRows)
+  const waitingByMatch = waitingLabels(rows, slotRows)
+
+  const courtNames = new Map(courtRows.map((c) => [c.id, c.name]))
 
   // Who is physically on a court right now, across every category.
   const busy = new Map<string, string>() // playerId → court label
+  const liveByCourt = new Map<string, (typeof rows)[number]>()
   for (const r of rows) {
     if (r.status !== 'live') continue
-    const court = courtRows.find((c) => c.id === r.courtId)
-    for (const p of rosterByMatch.get(r.id) ?? []) {
-      busy.set(p.id, court ? court.name : 'another court')
-    }
+    if (r.courtId) liveByCourt.set(r.courtId, r)
+    const where = (r.courtId && courtNames.get(r.courtId)) || 'another court'
+    for (const p of rosterByMatch.get(r.id) ?? []) busy.set(p.id, where)
   }
 
   const now = Date.now()
@@ -236,7 +309,7 @@ export async function boardData(tournamentId: string): Promise<BoardData> {
   }
 
   const boardCourts: BoardCourt[] = courtRows.map((c) => {
-    const live = rows.find((r) => r.courtId === c.id && r.status === 'live')
+    const live = liveByCourt.get(c.id)
     const lastEnded = lastEndedByCourt.get(c.id)
     return {
       id: c.id,
@@ -303,38 +376,32 @@ export async function boardData(tournamentId: string): Promise<BoardData> {
  * "Winner of Semi-final 1", "2nd in Group B" — what an unready match is waiting
  * for. The board used to drop these rows entirely, so the header said 7 to play
  * above a list of 4.
+ *
+ * Pure: the round name of the source match is already in the board's own match
+ * list — every slot source is a match in the same category, and therefore the
+ * same tournament — so looking it up cost a second query for nothing.
  */
-async function waitingLabels(
+function waitingLabels(
   rows: Array<{ id: string; teamAId: string | null; teamBId: string | null; roundName: string | null }>,
+  slots: Array<{
+    matchId: string
+    slot: string
+    sourceType: string
+    sourceMatchId: string | null
+    sourceRank: number | null
+  }>,
 ) {
   const out = new Map<string, string>()
-  const unready = rows.filter((r) => !r.teamAId || !r.teamBId)
-  if (unready.length === 0) return out
-
-  const slots = await db
-    .select()
-    .from(matchSlots)
-    .where(inArray(matchSlots.matchId, unready.map((r) => r.id)))
   if (slots.length === 0) return out
 
-  const sourceIds = [...new Set(slots.map((s) => s.sourceMatchId).filter(Boolean) as string[])]
-  const sourceNames = new Map(
-    sourceIds.length
-      ? (
-          await db
-            .select({ id: matches.id, roundName: matches.roundName })
-            .from(matches)
-            .where(inArray(matches.id, sourceIds))
-        ).map((m) => [m.id, m.roundName ?? 'an earlier match'])
-      : [],
-  )
+  const byId = new Map(rows.map((r) => [r.id, r]))
 
   const ordinal = (n: number) =>
     n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`
 
   const bySlotMatch = new Map<string, string[]>()
   for (const s of slots) {
-    const row = unready.find((r) => r.id === s.matchId)
+    const row = byId.get(s.matchId)
     if (!row) continue
     // Only describe the side that is actually still empty.
     const filled = s.slot === 'A' ? row.teamAId : row.teamBId
@@ -342,9 +409,9 @@ async function waitingLabels(
 
     let label: string | null = null
     if (s.sourceType === 'winner_of' && s.sourceMatchId) {
-      label = `winner of ${sourceNames.get(s.sourceMatchId) ?? 'an earlier match'}`
+      label = `winner of ${byId.get(s.sourceMatchId)?.roundName ?? 'an earlier match'}`
     } else if (s.sourceType === 'loser_of' && s.sourceMatchId) {
-      label = `loser of ${sourceNames.get(s.sourceMatchId) ?? 'an earlier match'}`
+      label = `loser of ${byId.get(s.sourceMatchId)?.roundName ?? 'an earlier match'}`
     } else if (s.sourceType === 'group_rank' && s.sourceRank) {
       label = `${ordinal(s.sourceRank)} in the group`
     }
@@ -355,7 +422,14 @@ async function waitingLabels(
   }
 
   for (const [matchId, labels] of bySlotMatch) {
-    out.set(matchId, `Waiting for the ${labels.join(' and the ')}`)
+    // "Waiting for the 1st and 2nd in the group" — the shared tail is said
+    // once. The board prints this on a card, and the long form wrapped off it.
+    const tail = 'in the group'
+    const short =
+      labels.length === 2 && labels.every((l) => l.endsWith(tail))
+        ? `${labels.map((l) => l.slice(0, -tail.length).trim()).join(' and ')} ${tail}`
+        : labels.join(' and the ')
+    out.set(matchId, `Waiting for the ${short}`)
   }
   return out
 }
@@ -375,29 +449,39 @@ export async function sendToCourt(matchId: string, courtId: string, opts?: { for
     return { ok: false as const, error: 'This match already has a result.' }
   }
 
-  const [court] = await db.select().from(courts).where(eq(courts.id, courtId)).limit(1)
-  if (!court) return { ok: false as const, error: 'That court no longer exists.' }
+  // Three independent checks; the organiser is standing on a court waiting for
+  // the answer, so they go out together rather than one hop at a time.
+  const [court, closed, busyCourt] = await Promise.all([
+    db
+      .select({ name: courts.name })
+      .from(courts)
+      .where(eq(courts.id, courtId))
+      .limit(1)
+      .then((r) => r[0]),
+    db
+      .select({ id: courtClosures.id, reason: courtClosures.reason })
+      .from(courtClosures)
+      .where(
+        and(
+          eq(courtClosures.courtId, courtId),
+          eq(courtClosures.tournamentId, match.tournamentId),
+          isNull(courtClosures.until),
+        ),
+      )
+      .limit(1)
+      .then((r) => r[0]),
+    db
+      .select({ id: matches.id })
+      .from(matches)
+      .where(and(eq(matches.courtId, courtId), eq(matches.status, 'live')))
+      .limit(1)
+      .then((r) => r[0]),
+  ])
 
-  const [closed] = await db
-    .select({ id: courtClosures.id, reason: courtClosures.reason })
-    .from(courtClosures)
-    .where(
-      and(
-        eq(courtClosures.courtId, courtId),
-        eq(courtClosures.tournamentId, match.tournamentId),
-        sql`${courtClosures.until} is null`,
-      ),
-    )
-    .limit(1)
+  if (!court) return { ok: false as const, error: 'That court no longer exists.' }
   if (closed) {
     return { ok: false as const, error: `${court.name} is out of action — ${closed.reason ?? 'closed'}.` }
   }
-
-  const [busyCourt] = await db
-    .select({ id: matches.id })
-    .from(matches)
-    .where(and(eq(matches.courtId, courtId), eq(matches.status, 'live')))
-    .limit(1)
   if (busyCourt) {
     return { ok: false as const, error: 'That court already has a live match — end it first.' }
   }
@@ -410,34 +494,40 @@ export async function sendToCourt(matchId: string, courtId: string, opts?: { for
     if (conflict) return { ok: false as const, error: conflict }
   }
 
-  await db
-    .update(matches)
-    .set({
-      courtId,
-      status: 'live',
-      startedAt: new Date(),
-      version: sql`${matches.version} + 1`,
-      updatedAt: new Date(),
-    })
-    .where(eq(matches.id, matchId))
-
-  await bumpStreamVersion(match.tournamentId)
+  // One transaction: a match that went live without the board's version moving
+  // is a board that never refreshes.
+  await transact(async (tx) => {
+    await tx
+      .update(matches)
+      .set({
+        courtId,
+        status: 'live',
+        startedAt: new Date(),
+        version: sql`${matches.version} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(eq(matches.id, matchId))
+    await bumpStreamVersion(match.tournamentId, tx)
+  })
   return { ok: true as const }
 }
 
 /** Names the player, because "blocked" is not actionable and a name is. */
 export async function livePlayerConflict(tournamentId: string, matchId: string) {
-  const live = await db
-    .select({ id: matches.id, courtId: matches.courtId })
-    .from(matches)
-    .where(and(eq(matches.tournamentId, tournamentId), eq(matches.status, 'live')))
+  const [live, courtNames] = await Promise.all([
+    db
+      .select({ id: matches.id, courtId: matches.courtId })
+      .from(matches)
+      .where(and(eq(matches.tournamentId, tournamentId), eq(matches.status, 'live'))),
+    db
+      .select({ id: courts.id, name: courts.name })
+      .from(courts)
+      .then((rows) => new Map(rows.map((c) => [c.id, c.name]))),
+  ])
   if (live.length === 0) return null
 
   const rosters = await playersByMatch([matchId, ...live.map((m) => m.id)])
   const mine = new Set((rosters.get(matchId) ?? []).map((p) => p.id))
-  const courtNames = new Map(
-    (await db.select({ id: courts.id, name: courts.name }).from(courts)).map((c) => [c.id, c.name]),
-  )
 
   for (const other of live) {
     for (const p of rosters.get(other.id) ?? []) {
@@ -460,16 +550,18 @@ export async function clearCourt(matchId: string) {
   if (match.status !== 'live') {
     return { ok: false as const, error: 'That match isn’t on a court.' }
   }
-  await db
-    .update(matches)
-    .set({
-      status: 'ready',
-      courtId: null,
-      startedAt: null,
-      version: sql`${matches.version} + 1`,
-      updatedAt: new Date(),
-    })
-    .where(eq(matches.id, matchId))
-  await bumpStreamVersion(match.tournamentId)
+  await transact(async (tx) => {
+    await tx
+      .update(matches)
+      .set({
+        status: 'ready',
+        courtId: null,
+        startedAt: null,
+        version: sql`${matches.version} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(eq(matches.id, matchId))
+    await bumpStreamVersion(match.tournamentId, tx)
+  })
   return { ok: true as const }
 }

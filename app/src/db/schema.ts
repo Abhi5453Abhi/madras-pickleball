@@ -679,6 +679,12 @@ export const matches = pgTable(
     ),
     index('matches_stream_idx').on(t.tournamentId, t.updatedAt),
     index('matches_tournament_status_idx').on(t.tournamentId, t.status),
+    /**
+     * The poll endpoint runs `where tournament_id = ? and result_state = 'reported'`
+     * every few seconds on forty phones — the single most-executed query in the
+     * app, and the only one that had no index of its own.
+     */
+    index('matches_tournament_result_idx').on(t.tournamentId, t.resultState),
     index('matches_category_round_idx').on(t.categoryId, t.roundIndex, t.seq),
     index('matches_umpire_idx').on(t.umpireId, t.status),
     index('matches_court_idx').on(t.courtId, t.status),
@@ -950,7 +956,17 @@ export const tokenAttempts = pgTable(
     succeeded: boolean('succeeded').notNull().default(false),
     at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('token_attempts_ip_idx').on(t.ipHash, t.at), index('token_attempts_at_idx').on(t.at)],
+  (t) => [
+    index('token_attempts_ip_idx').on(t.ipHash, t.at),
+    index('token_attempts_at_idx').on(t.at),
+    /**
+     * The rate-limit gate in front of every QR scan counts the last hour of
+     * FAILURES. A whole tournament day of successful scans lives in this table
+     * too, and the plain index on `at` made the gate walk all of them: 7,431
+     * buffers to find three hundred rows. Partial, it is five.
+     */
+    index('token_attempts_failed_idx').on(t.at).where(sql`succeeded = false`),
+  ],
 )
 
 // ──────────────────────────────  audit  ──────────────────────────────

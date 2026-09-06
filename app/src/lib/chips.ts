@@ -27,6 +27,19 @@ export function winnerChips(rules: ScoringRules): { chips: number[]; more: numbe
   return { chips, more }
 }
 
+/**
+ * The winner's score the screen starts on — SPEC A5 asks for the target to be
+ * pre-selected, and it is right nine games in ten. It saves one tap per game,
+ * which on a best-of-3 is a fifth of the whole entry.
+ *
+ * It is only safe because the number is never hidden: the question that follows
+ * says it out loud ("11 to Meera / Nithya — and the other side?"), so the
+ * assumption is on screen at the moment of the tap that commits it.
+ */
+export function likelyWinnerScore(rules: ScoringRules): number {
+  return rules.pointsToWin
+}
+
 /** Given the winner's score, the scores the other side can legally have. */
 export function loserChips(rules: ScoringRules, winnerScore: number): number[] {
   const { pointsToWin, winBy, hardCap } = rules
@@ -54,4 +67,28 @@ export function anyLoserScores(winnerScore: number): number[] {
 
 export function explainSingleChip(rules: ScoringRules, winnerScore: number, loser: number): string {
   return `${winnerScore}–${loser} is the only way to reach ${winnerScore}.`
+}
+
+/**
+ * Soft validation, in the words of the day — SPEC A5.
+ *
+ * A score reached through "their score isn't here" is always recordable: a game
+ * that ended on an injury, a horn, or a pair who simply agreed to stop is real
+ * and an organiser must never be blocked from writing down what happened. But
+ * it is worth one sentence and one extra tap first, because the other reason
+ * that path gets used is a mis-tap.
+ *
+ * Returns null when the score is an ordinary legal finish.
+ */
+export function illegalReason(
+  rules: ScoringRules,
+  winnerScore: number,
+  loserScore: number,
+): string | null {
+  if (loserChips(rules, winnerScore).includes(loserScore)) return null
+  if (loserScore >= winnerScore) {
+    return `${winnerScore}–${loserScore} has nobody winning the game.`
+  }
+  const cap = rules.hardCap !== null ? `, cap at ${rules.hardCap}` : ''
+  return `${winnerScore}–${loserScore} isn’t a finished game here — first to ${rules.pointsToWin}, win by ${rules.winBy}${cap}.`
 }

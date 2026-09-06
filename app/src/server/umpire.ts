@@ -1,5 +1,6 @@
 import 'server-only'
 import { and, asc, eq, inArray, isNull, ne } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import { db } from '@/db'
 import { categories, courts, matches, teams, tournaments } from '@/db/schema'
 import { projectedState } from './scoring'
@@ -24,35 +25,41 @@ export type UmpireMatch = {
   state: string
 }
 
+/**
+ * One query. The tournament this match belongs to and the two sides' names are
+ * joins, not three chained lookups that each cost a network hop before an
+ * umpire sees the list of what they are scoring.
+ */
 export async function umpireQueue(): Promise<UmpireMatch[]> {
-  const running = await db
-    .select({ id: tournaments.id, name: tournaments.name })
-    .from(tournaments)
-    .where(and(isNull(tournaments.deletedAt), ne(tournaments.status, 'draft')))
-  if (running.length === 0) return []
+  const teamA = alias(teams, 'team_a')
+  const teamB = alias(teams, 'team_b')
 
   const rows = await db
     .select({
       id: matches.id,
-      tournamentId: matches.tournamentId,
+      tournamentName: tournaments.name,
       categoryName: categories.name,
       roundName: matches.roundName,
       courtName: courts.name,
       courtColor: courts.colorKey,
       teamAId: matches.teamAId,
       teamBId: matches.teamBId,
+      nameA: teamA.name,
+      nameB: teamB.name,
       status: matches.status,
       resultState: matches.resultState,
       reportedAt: matches.reportedAt,
-      roundIndex: matches.roundIndex,
-      seq: matches.seq,
     })
     .from(matches)
     .innerJoin(categories, eq(categories.id, matches.categoryId))
+    .innerJoin(tournaments, eq(tournaments.id, matches.tournamentId))
     .leftJoin(courts, eq(courts.id, matches.courtId))
+    .leftJoin(teamA, eq(teamA.id, matches.teamAId))
+    .leftJoin(teamB, eq(teamB.id, matches.teamBId))
     .where(
       and(
-        inArray(matches.tournamentId, running.map((t) => t.id)),
+        isNull(tournaments.deletedAt),
+        ne(tournaments.status, 'draft'),
         inArray(matches.status, ['live', 'ready']),
       ),
     )
@@ -61,31 +68,19 @@ export async function umpireQueue(): Promise<UmpireMatch[]> {
   const withTeams = rows.filter((r) => r.teamAId && r.teamBId)
   if (withTeams.length === 0) return []
 
-  const teamRows = await db
-    .select({ id: teams.id, name: teams.name })
-    .from(teams)
-    .where(
-      inArray(
-        teams.id,
-        [...new Set(withTeams.flatMap((r) => [r.teamAId!, r.teamBId!]))],
-      ),
-    )
-  const teamName = new Map(teamRows.map((t) => [t.id, t.name]))
-  const tName = new Map(running.map((t) => [t.id, t.name]))
-
   return withTeams
     // A result that is already in is not an umpire's business; corrections are
     // an organiser action and live behind the admin guard.
     .filter((r) => projectedState(r) === 'none')
     .map((r) => ({
       id: r.id,
-      tournamentName: tName.get(r.tournamentId) ?? '',
+      tournamentName: r.tournamentName,
       categoryName: r.categoryName,
       roundName: r.roundName,
       courtName: r.courtName ?? null,
       courtColor: r.courtColor ?? null,
-      nameA: teamName.get(r.teamAId!) ?? '—',
-      nameB: teamName.get(r.teamBId!) ?? '—',
+      nameA: r.nameA ?? '—',
+      nameB: r.nameB ?? '—',
       status: r.status,
       state: r.resultState,
     }))

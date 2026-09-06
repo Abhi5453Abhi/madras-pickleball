@@ -1,7 +1,7 @@
 import 'server-only'
 import { and, desc, eq, gt, inArray, isNotNull, or, sql } from 'drizzle-orm'
 import { cookies, headers } from 'next/headers'
-import { db } from '@/db'
+import { db, transact } from '@/db'
 import { courtSessions, courtTokens, courts, matches } from '@/db/schema'
 import { newCourtToken, normalizeCrockford, sha256Hex, newSessionToken, hashIp } from '@/lib/crypto'
 import { newId } from '@/lib/ids'
@@ -22,35 +22,56 @@ import { projectedState } from './scoring'
 
 export const COURT_COOKIE = 'mpb_court'
 
+/**
+ * Rotate every court's card at once.
+ *
+ * All of it in one transaction: half-rotated is the state where two courts have
+ * cards nobody printed and two have cards that no longer work, and the only way
+ * to find out is a pair standing at a net post with a QR that does nothing.
+ */
 export async function issueCourtTokens(tournamentId: string, expiresAt: Date) {
-  const courtRows = await db.select().from(courts).where(eq(courts.active, true))
-  const issued: Array<{ courtId: string; courtName: string; raw: string; prefix: string }> = []
+  const courtRows = await db
+    .select({ id: courts.id, name: courts.name })
+    .from(courts)
+    .where(eq(courts.active, true))
+  if (courtRows.length === 0) return []
 
-  for (const court of courtRows) {
-    await db
+  const at = new Date()
+  const label = at.toDateString()
+  const issued = courtRows.map((court) => {
+    const { raw, hash, prefix } = newCourtToken()
+    return { courtId: court.id, courtName: court.name, raw, prefix, hash }
+  })
+
+  await transact(async (tx) => {
+    await tx
       .update(courtTokens)
-      .set({ status: 'revoked', revokedAt: new Date(), revokedReason: 'rotated' })
+      .set({ status: 'revoked', revokedAt: at, revokedReason: 'rotated' })
       .where(
         and(
           eq(courtTokens.tournamentId, tournamentId),
-          eq(courtTokens.courtId, court.id),
+          inArray(
+            courtTokens.courtId,
+            courtRows.map((c) => c.id),
+          ),
           eq(courtTokens.status, 'active'),
         ),
       )
 
-    const { raw, hash, prefix } = newCourtToken()
-    await db.insert(courtTokens).values({
-      id: newId('ct'),
-      tournamentId,
-      courtId: court.id,
-      tokenHash: hash,
-      tokenPrefix: prefix,
-      label: `${court.name} — ${new Date().toDateString()}`,
-      expiresAt,
-    })
-    issued.push({ courtId: court.id, courtName: court.name, raw, prefix })
-  }
-  return issued
+    await tx.insert(courtTokens).values(
+      issued.map((t) => ({
+        id: newId('ct'),
+        tournamentId,
+        courtId: t.courtId,
+        tokenHash: t.hash,
+        tokenPrefix: t.prefix,
+        label: `${t.courtName} — ${label}`,
+        expiresAt,
+      })),
+    )
+  })
+
+  return issued.map(({ courtId, courtName, raw, prefix }) => ({ courtId, courtName, raw, prefix }))
 }
 
 export async function revokeAllCourtTokens(tournamentId: string) {
@@ -58,15 +79,17 @@ export async function revokeAllCourtTokens(tournamentId: string) {
     .select({ id: courtTokens.id })
     .from(courtTokens)
     .where(and(eq(courtTokens.tournamentId, tournamentId), eq(courtTokens.status, 'active')))
+  if (active.length === 0) return 0
 
-  for (const t of active) {
+  const ids = active.map((t) => t.id)
+  await transact(async (tx) => {
     // Killing the token kills every session issued from it, in the same breath.
-    await db.delete(courtSessions).where(eq(courtSessions.courtTokenId, t.id))
-    await db
+    await tx.delete(courtSessions).where(inArray(courtSessions.courtTokenId, ids))
+    await tx
       .update(courtTokens)
       .set({ status: 'revoked', revokedAt: new Date(), revokedReason: 'revoked by organiser' })
-      .where(eq(courtTokens.id, t.id))
-  }
+      .where(inArray(courtTokens.id, ids))
+  })
   return active.length
 }
 
@@ -99,26 +122,33 @@ export async function exchangeToken(raw: string): Promise<ExchangeResult> {
     )
     .limit(1)
 
-  await recordTokenAttempt('court', normalized.slice(0, 5), ipHash, !!token)
   // Identical response for "no such token" and "revoked", so it is not an oracle.
-  if (!token) return { ok: false, reason: 'unknown' }
+  if (!token) {
+    await recordTokenAttempt('court', normalized.slice(0, 5), ipHash, false)
+    return { ok: false, reason: 'unknown' }
+  }
 
   const deviceId = newId('dev')
   const { raw: sessionRaw, hash: sessionHash } = newSessionToken()
   const expiresAt = token.expiresAt
 
-  await db.insert(courtSessions).values({
-    idHash: sessionHash,
-    courtTokenId: token.id,
-    deviceId,
-    expiresAt,
-    ipHash,
-    userAgent: h.get('user-agent')?.slice(0, 256) ?? null,
-  })
-  await db
-    .update(courtTokens)
-    .set({ lastUsedAt: new Date(), useCount: sql`${courtTokens.useCount} + 1` })
-    .where(eq(courtTokens.id, token.id))
+  // Three independent writes on the path a player walks up to a net post and
+  // scans. None of them needs the others' answer.
+  await Promise.all([
+    recordTokenAttempt('court', normalized.slice(0, 5), ipHash, true),
+    db.insert(courtSessions).values({
+      idHash: sessionHash,
+      courtTokenId: token.id,
+      deviceId,
+      expiresAt,
+      ipHash,
+      userAgent: h.get('user-agent')?.slice(0, 256) ?? null,
+    }),
+    db
+      .update(courtTokens)
+      .set({ lastUsedAt: new Date(), useCount: sql`${courtTokens.useCount} + 1` })
+      .where(eq(courtTokens.id, token.id)),
+  ])
 
   const jar = await cookies()
   jar.set(COURT_COOKIE, sessionRaw, {
@@ -197,7 +227,10 @@ export async function scoreableMatches(ctx: CourtSessionContext) {
         ),
       ),
     )
-    .orderBy(desc(matches.startedAt))
+    // NULLS LAST: Postgres sorts nulls first on DESC, so a match that was
+    // never formally sent to a court jumped ahead of the one actually being
+    // played on it.
+    .orderBy(sql`${matches.startedAt} desc nulls last`)
 
   // A result that crossed the ten-minute mark is FINAL, even though nothing
   // wrote `final` to the row. Filtering on the stored state let a pair rescan

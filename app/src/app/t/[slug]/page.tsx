@@ -1,30 +1,71 @@
-import { clsx } from 'clsx'
 import { notFound } from 'next/navigation'
-import { CourtMark, NetRule, Panel, SectionHead, StatusPill } from '@/components/ui'
+import {
+  CourtMark,
+  CourtSwatch,
+  Disclosure,
+  EmptyState,
+  NetRule,
+  Notice,
+  Panel,
+  SectionHead,
+  Tag,
+  TeamName,
+} from '@/components/ui'
 import { MatchRow } from '@/components/match-row'
 import { FindMyMatch } from './find-my-match'
 import { LiveRefresh } from './live-refresh'
-import { venueDate } from '@/lib/time'
+import { Elapsed } from './elapsed'
+import { Results } from './results'
+import { Tables, type CategoryTable } from './tables'
+import { minutesBetween, venueDate } from '@/lib/time'
 import { tiebreakNote } from '@/lib/standings'
 import { publicPlayers, publicTournament } from '@/server/public'
 import { ensureReady } from '@/server/bootstrap'
 
 /**
- * The public page — SPEC A8. One scrolling page, not six tabs: tabs on a 390px
- * screen make a visitor pick a category before they get an answer.
+ * The public page — SPEC A8.
  *
- * No cookies are read anywhere in this tree, so the CDN keeps caching it.
+ * It answers four questions, in the order people actually have them:
+ *
+ *   1. When do I play, and where?   → Find my match, first, one line, big.
+ *   2. What's on right now?          → the live courts.
+ *   3. Did we go through?            → one table at a time, with the cut line.
+ *   4. What was that score?          → findable, not poured out.
+ *
+ * It used to be 14,600px tall on a 390px phone — forty screens — because it
+ * printed three full pool tables, thirty-nine results in one flat list, the
+ * same forty-word tiebreak paragraph three times, and then every player's name
+ * again at the bottom. Everything below is a consequence of cutting that down
+ * without hiding anything a player needs.
+ *
+ * Still server-rendered. The only client islands are the poll and the name
+ * picker; the category switcher is a radio group and CSS, so it works before
+ * any JavaScript arrives. No cookies are read anywhere in this tree, so the
+ * CDN keeps caching it.
  */
 export const dynamic = 'force-dynamic'
 
+/**
+ * WhatsApp is the distribution channel, so the link preview is the front door
+ * for most of the venue. It is built from data already fetched — no image host
+ * and nothing else to load.
+ */
 export async function generateMetadata(props: PageProps<'/t/[slug]'>) {
   const { slug } = await props.params
   const data = await publicTournament(slug)
+  const title = data ? `${data.tournament.name} · Madras Pickleball` : 'Madras Pickleball'
+  const description = data
+    ? `${venueDate(data.tournament.startDate)} — live scores, the order of play and your next match.`
+    : 'Live scores, the order of play and results.'
   return {
-    title: data ? `${data.tournament.name} · Madras Pickleball` : 'Madras Pickleball',
-    description: 'Live scores, the order of play and results.',
+    title,
+    description,
+    openGraph: { title, description, type: 'website' },
   }
 }
+
+const ORDINALS = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th']
+const ordinal = (i: number) => ORDINALS[i] ?? `${i + 1}th`
 
 export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
   await ensureReady()
@@ -33,222 +74,382 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
   if (!data) notFound()
 
   const roster = await publicPlayers(data.tournament.id)
-  const isLive = data.live.length > 0
+
+  const live = data.live
+  const underReview = data.matches.filter((m) => m.state === 'disputed')
+  // A cancelled match is not waiting for anybody, and counting it would leave
+  // "3 to play" on the page for the rest of the day.
+  const toPlay = data.matches.filter(
+    (m) => m.state === 'none' && m.status !== 'live' && m.status !== 'cancelled',
+  )
+  const upNext = data.upNext.slice(0, 4)
+  // A bye is a row in the ledger, not something anybody scrolls a results list
+  // to read. The player who sat out is told in Find my match, where it matters.
+  const results = data.results.filter((m) => m.resultType !== 'bye')
+  const started = results.length > 0 || live.length > 0 || underReview.length > 0
+  const finished = data.matches.length > 0 && toPlay.length === 0 && live.length === 0
+  // A finished day still moves: a provisional result settles ten minutes later
+  // and a dispute is resolved by hand. Stopping the poll before either has
+  // happened leaves "not confirmed yet" on every phone in the venue for good.
+  const settling = underReview.length > 0 || results.some((m) => m.provisional)
+
+  /** Which category table each team sits in, so "see my table" can open it. */
+  const tableFor: Record<string, { index: number; name: string }> = {}
+  data.tables.forEach((t, index) => {
+    for (const row of t.rows) tableFor[row.teamId] = { index, name: t.category.name }
+  })
+
+  const tables: CategoryTable[] = data.tables.map((t) => ({
+    id: t.category.id,
+    name: t.category.name,
+    advance: t.advance,
+    finalsStage: t.category.finalsStage,
+    tiebreakNote: tiebreakNote(t.category.tiebreakRule),
+    rows: t.rows.map((r) => ({
+      teamId: r.teamId,
+      name: data.teamName.get(r.teamId) ?? '—',
+      players: data.membersByTeam.get(r.teamId) ?? [],
+      played: r.played,
+      won: r.won,
+      pointsFor: r.pointsFor,
+      reason: r.reason,
+      provisional: r.provisional,
+      disputed: r.disputed,
+      withdrawn: r.withdrawn,
+    })),
+  }))
+
+  const dayLine = finished
+    ? `all ${data.matches.length} matches played`
+    : started
+      ? `${results.length} played · ${toPlay.length} to play`
+      : `${data.matches.length} matches to play`
 
   return (
     <div className="min-h-dvh bg-ground pb-16">
-      <LiveRefresh slug={slug} version={data.streamVersion} active={isLive} />
+      <LiveRefresh
+        slug={slug}
+        version={data.streamVersion}
+        mode={live.length ? 'live' : finished && !settling ? 'off' : 'idle'}
+      />
 
-      <header className="relative overflow-hidden bg-ink px-4 pt-6 pb-5 text-white">
-        <CourtMark className="pointer-events-none absolute -right-8 -bottom-10 w-56 text-white opacity-[0.07]" />
-        <p className="font-score text-eyebrow text-accent-line uppercase">Madras Pickleball</p>
-        <h1 className="mt-1 text-hero">{data.tournament.name}</h1>
-        <p className="num mt-1.5 text-body text-on-ink-2">
-          {venueDate(data.tournament.startDate)} · {roster.length} players ·{' '}
-          {data.matches.length} matches
-        </p>
-        {isLive ? (
-          <p className="mt-4 inline-flex items-center gap-2 rounded-control bg-white/15 px-4 py-2 text-[17px] font-semibold">
-            <span aria-hidden className="size-2.5 rounded-full bg-live" />
-            {data.live.length} live now
+      <header className="relative overflow-hidden bg-ink px-4 pt-6 pb-6 text-white">
+        <CourtMark className="pointer-events-none absolute -right-8 -bottom-12 w-56 text-white opacity-[0.07]" />
+        <div className="mx-auto w-full max-w-5xl">
+          {/* The same lockup as the site root. A 15px tracked eyebrow was the
+              right shape and the wrong size: on the ink band, above a 32px
+              headline, it read as a smudge. */}
+          <div className="flex items-center gap-2">
+            <CourtMark className="size-6 shrink-0 text-white" />
+            <span className="font-score text-[19px] font-bold tracking-[0.04em] text-accent-on-ink uppercase">
+              Madras Pickleball
+            </span>
+          </div>
+          <h1 className="mt-2 text-hero">{data.tournament.name}</h1>
+          <p className="num mt-1.5 text-body text-on-ink-2">
+            {venueDate(data.tournament.startDate)} · {roster.length} players · {dayLine}
           </p>
-        ) : null}
-        <div aria-hidden className="absolute inset-x-0 bottom-0 h-[3px] bg-accent-line" />
+          {live.length ? (
+            <p className="mt-4 inline-flex items-center gap-2 rounded-control bg-white/15 px-4 py-2 text-[17px] font-semibold">
+              <span aria-hidden className="size-2.5 rounded-full bg-live" />
+              {live.length === 1 ? '1 match live now' : `${live.length} matches live now`}
+            </p>
+          ) : null}
+        </div>
+        <NetRule className="absolute inset-x-0 bottom-0" />
       </header>
 
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 pt-6">
-        {data.live.length ? (
-          <section>
-            <div className="flex items-baseline gap-2">
-              <span aria-hidden className="size-2.5 self-center rounded-full bg-live" />
-              <h2 className="font-score text-eyebrow text-live-text uppercase">Live now</h2>
+      <div className="mx-auto w-full max-w-5xl px-4 pt-6">
+        <div className="flex flex-col gap-8 lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start lg:gap-x-8">
+          {/* 1 — the answer to the only question most people came with. */}
+          <div className="lg:col-start-2 lg:row-start-1">
+            <FindMyMatch
+              players={roster.map((p) => ({ id: p.id, name: p.name, teamIds: p.teamIds }))}
+              courtsInPlay={data.courtsInPlay}
+              tableFor={tableFor}
+              matches={data.matches.map((m, i) => ({
+                id: m.id,
+                teamAId: m.teamAId,
+                teamBId: m.teamBId,
+                nameA: m.nameA,
+                nameB: m.nameB,
+                courtName: m.courtName,
+                status: m.status,
+                state: m.state,
+                categoryName: m.categoryName,
+                roundName: m.roundName,
+                queuePosition: i,
+                scoreLine: m.scoreLine,
+                winnerSide: m.winnerSide,
+                resultType: m.resultType,
+              }))}
+            />
+          </div>
+
+          {/* 2 — what is happening right now, and the two states where nothing is. */}
+          <section className="lg:col-start-1 lg:row-start-1" aria-labelledby="oncourt">
+            <div>
+              <h2 id="oncourt" className="flex items-center gap-2.5 text-section text-text">
+                {live.length ? (
+                  <span aria-hidden className="size-2.5 shrink-0 rounded-full bg-live" />
+                ) : null}
+                On court now
+              </h2>
+              <div aria-hidden className="mt-1.5 h-[3px] w-10 rounded-full bg-accent-line" />
+              {live.length ? (
+                <p className="mt-1.5 text-meta text-text-3">
+                  <span className="font-semibold text-live-text">Live</span> — this page updates by
+                  itself
+                </p>
+              ) : null}
             </div>
-            <div className="mt-3 flex flex-col gap-3">
-              {data.live.map((m) => (
-                <article
-                  key={m.id}
-                  className="overflow-hidden rounded-card border border-line-strong bg-paper shadow-card"
-                >
-                  <div aria-hidden className="h-1 bg-live" />
-                  <div className="flex items-center gap-2 px-4 pt-3">
-                    <span className="font-score text-eyebrow text-text-2 uppercase">
-                      {m.courtName ?? 'On court'}
-                    </span>
-                    <span className="ml-auto text-meta text-text-3">{m.categoryName}</span>
-                  </div>
-                  <div className="px-4 pt-2 pb-4">
-                    <p className="truncate text-row text-text">{m.nameA}</p>
-                    <p className="truncate text-row text-text">{m.nameB}</p>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        ) : null}
 
-        <FindMyMatch
-          players={roster.map((p) => ({ id: p.id, name: p.name, teamIds: p.teamIds }))}
-          courtsInPlay={data.courtsInPlay}
-          matches={data.matches.map((m, i) => ({
-            id: m.id,
-            teamAId: m.teamAId,
-            teamBId: m.teamBId,
-            nameA: m.nameA,
-            nameB: m.nameB,
-            playersA: m.playersA,
-            playersB: m.playersB,
-            courtName: m.courtName,
-            status: m.status,
-            state: m.state,
-            categoryName: m.categoryName,
-            roundName: m.roundName,
-            queuePosition: i,
-            scoreLine: m.scoreLine,
-            winnerSide: m.winnerSide,
-          }))}
-        />
-
-        {data.upNext.length ? (
-          <section className="flex flex-col gap-4">
-            <SectionHead title="Up next" meta="in the order they'll be called" />
-            <Panel>
-              <ul className="divide-y divide-line">
-                {data.upNext.map((m, i) => (
-                  <li key={m.id}>
-                    <MatchRow
-                      nameA={m.nameA}
-                      nameB={m.nameB}
-                      gamesWonA={0}
-                      gamesWonB={0}
-                      winnerSide={null}
-                      hasScore={false}
-                      state={i === 0 ? 'ready' : 'waiting'}
-                      stateLabel={i === 0 ? 'Next' : `${i + 1}${i === 1 ? 'nd' : i === 2 ? 'rd' : 'th'}`}
-                      meta={`${m.categoryName}${m.roundName ? ` · ${m.roundName}` : ''}`}
-                    />
-                  </li>
-                ))}
-              </ul>
-            </Panel>
-          </section>
-        ) : null}
-
-        {data.tables.map((t) => (
-          <section key={t.category.id} className="flex flex-col gap-4">
-            <SectionHead title={t.category.name} meta={`${t.rows.length} teams`} />
-            <Panel>
-              <div className="font-score grid grid-cols-[22px_1fr_30px_30px_38px] items-center gap-2 bg-sunken px-4 py-2.5 text-eyebrow text-text-2 uppercase">
-                <span className="text-right">#</span>
-                <span>Team</span>
-                <span className="text-right">Pld</span>
-                <span className="text-right">Won</span>
-                <span className="text-right">Pts</span>
-              </div>
-              <ul className="divide-y divide-line">
-                {t.rows.map((row, idx) => (
-                  <li
-                    key={row.teamId}
-                    className={clsx(
-                      'relative grid min-h-[60px] grid-cols-[22px_1fr_30px_30px_38px] items-center gap-2 px-4 py-3',
-                      idx < t.advance &&
-                        'before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-accent-line',
-                    )}
+            <div className="mt-4 flex flex-col gap-3">
+              {live.length ? (
+                live.map((m) => (
+                  <article
+                    key={m.id}
+                    className="overflow-hidden rounded-card border border-line-strong bg-paper shadow-card"
                   >
-                    <span className="num text-right text-[20px] font-bold text-text">{idx + 1}</span>
-                    <span className="min-w-0">
-                      <span className="block text-row text-text">
-                        {data.teamName.get(row.teamId) ?? '—'}
+                    <div aria-hidden className="h-1 bg-live" />
+                    <div className="flex items-center gap-2 px-4 pt-3">
+                      {m.courtColor ? <CourtSwatch colorKey={m.courtColor} /> : null}
+                      <span className="font-score text-eyebrow text-text uppercase">
+                        {m.courtName ?? 'On court'}
                       </span>
-                      {row.provisional ? (
-                        <span className="block text-meta text-waiting">
-                          Provisional — a result is still to be confirmed
+                      <span className="ml-auto truncate text-meta text-text-3">
+                        {m.categoryName}
+                      </span>
+                    </div>
+                    <div className="px-4 pt-2.5 pb-3">
+                      <TeamName name={m.nameA} players={m.playersA} size="section" />
+                      {/* Two names above two names is four entries at a glance.
+                          The net rule with its post at one third, and a "v"
+                          standing in the gap, is the one mark that says these
+                          are two sides of one match. */}
+                      <div className="my-2.5 flex items-center gap-2.5">
+                        <span aria-hidden className="h-[3px] shrink-0 basis-[28%] bg-accent-line" />
+                        <span className="font-score text-[17px] leading-none font-bold text-text-2">
+                          v
                         </span>
-                      ) : null}
-                      {/* The rule doesn't stop the argument; the reason does.
-                          This was computed and then thrown away, so a player
-                          who missed the final on a tiebreak was shown a
-                          position with no explanation at all (SPEC A6). */}
-                      {row.reason && row.played > 0 ? (
-                        <span
-                          className={clsx(
-                            'block truncate text-meta',
-                            row.reason.startsWith('drawn') ? 'text-alert' : 'text-text-3',
-                          )}
-                        >
-                          {row.reason}
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className="num text-right text-num font-semibold text-text-3">
-                      {row.played}
-                    </span>
-                    <span className="num text-right text-num text-text">{row.won}</span>
-                    <span className="num text-right text-num font-semibold text-text-2">
-                      {row.pointsFor}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              <p className="border-t border-line bg-sunken px-4 py-3 text-meta text-text-2">
-                {tiebreakNote(t.category.tiebreakRule)}
+                        <span aria-hidden className="h-[3px] flex-1 bg-accent-line" />
+                      </div>
+                      <TeamName name={m.nameB} players={m.playersB} size="section" />
+                    </div>
+                    <p className="num border-t border-line bg-sunken px-4 py-2 text-meta text-text-2">
+                      {m.startedAt ? (
+                        <Elapsed
+                          startedAt={m.startedAt.getTime()}
+                          serverMinutes={minutesBetween(m.startedAt, new Date())}
+                        />
+                      ) : (
+                        'Just gone on'
+                      )}
+                    </p>
+                  </article>
+                ))
+              ) : finished ? (
+                <EmptyState title="That's the day" tone="accent">
+                  <p>Every match has been played. Final tables below.</p>
+                </EmptyState>
+              ) : started ? (
+                <EmptyState title="No match on court">
+                  <p>The next pair is being called. {toPlay.length} still to play.</p>
+                </EmptyState>
+              ) : (
+                <EmptyState title="Nothing has started yet" tone="accent">
+                  <p>
+                    {data.matches.length} matches across{' '}
+                    {data.categories.length === 1
+                      ? '1 category'
+                      : `${data.categories.length} categories`}
+                    .{' '}
+                    {upNext.length
+                      ? 'The first pairs are listed just below.'
+                      : 'The order of play goes up when the organiser opens the courts.'}
+                  </p>
+                </EmptyState>
+              )}
+            </div>
+          </section>
+
+          {/* 3 — the queue. */}
+          <section className="flex flex-col gap-4 lg:col-start-2 lg:row-start-2">
+            <SectionHead
+              title={started ? 'Up next' : 'First up'}
+              meta={upNext.length ? "in the order they'll be called" : undefined}
+            />
+            {upNext.length ? (
+              <Panel>
+                <ul className="divide-y divide-line">
+                  {upNext.map((m, i) => (
+                    <li key={m.id}>
+                      <MatchRow
+                        nameA={m.nameA}
+                        nameB={m.nameB}
+                        gamesWonA={0}
+                        gamesWonB={0}
+                        winnerSide={null}
+                        hasScore={false}
+                        state={i === 0 ? 'ready' : 'waiting'}
+                        stateLabel={i === 0 ? 'Next' : ordinal(i)}
+                        sub={`${m.categoryName}${m.roundName ? ` · ${m.roundName}` : ''}`}
+                      />
+                    </li>
+                  ))}
+                </ul>
+                {toPlay.length > upNext.length ? (
+                  <p className="border-t border-line bg-sunken px-4 py-2.5 text-meta text-text-2">
+                    and {toPlay.length - upNext.length} more after these
+                  </p>
+                ) : null}
+              </Panel>
+            ) : (
+              <EmptyState title="Nothing waiting">
+                <p>
+                  {finished
+                    ? 'Every match has been played.'
+                    : started
+                      ? 'Every match that can start is on a court.'
+                      : 'The order of play appears here once the organiser opens the courts.'}
+                </p>
+              </EmptyState>
+            )}
+          </section>
+
+          {/* 4 — tables, results, and the small print. */}
+          <div className="flex flex-col gap-8 lg:col-start-1 lg:row-start-2">
+            {underReview.length ? (
+              <section className="flex flex-col gap-3">
+                <Notice tone="alert">
+                  {underReview.length === 1
+                    ? 'One result is under review.'
+                    : `${underReview.length} results are under review.`}{' '}
+                  The two sides entered different scores. An organiser is sorting it out, and the
+                  score stays off this page until they have.
+                </Notice>
+                <Panel>
+                  <ul className="divide-y divide-line">
+                    {underReview.map((m) => (
+                      <li key={m.id}>
+                        <MatchRow
+                          nameA={m.nameA}
+                          nameB={m.nameB}
+                          gamesWonA={0}
+                          gamesWonB={0}
+                          winnerSide={null}
+                          hasScore={false}
+                          state="alert"
+                          stateLabel="Review"
+                          sub={`${m.categoryName}${m.roundName ? ` · ${m.roundName}` : ''}`}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                </Panel>
+              </section>
+            ) : null}
+
+            {finished ? <DayFinished tables={tables} categories={data.categories} /> : null}
+
+            <Tables tables={tables} />
+
+            {results.length ? (
+              <Results
+                results={results.map((m) => ({
+                  id: m.id,
+                  categoryName: m.categoryName,
+                  roundName: m.roundName,
+                  nameA: m.nameA,
+                  nameB: m.nameB,
+                  gamesWonA: m.gamesWonA,
+                  gamesWonB: m.gamesWonB,
+                  winnerSide: m.winnerSide,
+                  scoreLine: m.scoreLine,
+                  provisional: m.provisional,
+                  startedAt: m.startedAt,
+                  endedAt: m.endedAt,
+                  resultType: m.resultType,
+                }))}
+                categoryOrder={data.categories.map((c) => c.name)}
+              />
+            ) : (
+              <section className="flex flex-col gap-4">
+                <SectionHead title="Results" />
+                <EmptyState title="No results yet">
+                  <p>Scores appear here within seconds of a pair entering them on court.</p>
+                </EmptyState>
+              </section>
+            )}
+
+            <Disclosure
+              summary="Everyone playing today"
+              meta={`${roster.length} players · ${data.teamName.size} pairs`}
+            >
+              <div className="rounded-card border border-line-strong bg-paper p-4 shadow-card">
+                <ul className="columns-2 gap-4">
+                  {roster.map((p) => (
+                    <li key={p.id} className="break-inside-avoid py-1 text-body text-text">
+                      {p.name}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </Disclosure>
+
+            <div className="border-t border-line pt-4">
+              <p className="text-meta text-text-3">
+                This page updates itself — leave it open. Scores go final ten minutes after they are
+                entered, unless someone disputes them.
               </p>
-            </Panel>
-          </section>
-        ))}
-
-        {data.results.length ? (
-          <section className="flex flex-col gap-4">
-            <SectionHead title="Results" meta={`${data.results.length} played`} />
-            <Panel>
-              <ul className="divide-y divide-line">
-                {data.results.map((m) => (
-                  <li key={m.id}>
-                    <MatchRow
-                      nameA={m.nameA}
-                      nameB={m.nameB}
-                      gamesWonA={m.gamesWonA}
-                      gamesWonB={m.gamesWonB}
-                      winnerSide={m.winnerSide}
-                      hasScore
-                      state={m.provisional ? 'waiting' : 'done'}
-                      stateLabel="Final"
-                      meta={
-                        m.scoreLine
-                          ? `${m.scoreLine}${m.provisional ? ' · unconfirmed' : ''}`
-                          : undefined
-                      }
-                    />
-                  </li>
-                ))}
-              </ul>
-            </Panel>
-          </section>
-        ) : null}
-
-        {data.matches.some((m) => m.state === 'disputed') ? (
-          <p className="rounded-control bg-alert-soft px-4 py-3 text-body text-alert">
-            One result is under review. An organiser is sorting it out.
-          </p>
-        ) : null}
-
-        <section className="flex flex-col gap-4">
-          <SectionHead title="Teams" meta={`${data.teamName.size} in total`} />
-          <Panel>
-            <ul className="divide-y divide-line">
-              {[...data.teamName.entries()].map(([id, name]) => (
-                <li key={id} className="flex min-h-[56px] items-center px-4 text-row text-text">
-                  <span className="truncate">{name}</span>
-                </li>
-              ))}
-            </ul>
-          </Panel>
-        </section>
-
-        <NetRule />
-        <p className="text-meta text-text-3">
-          Scores go final 10 minutes after they’re entered unless someone disputes them.
-        </p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * The end state. Most visits to a tournament page happen after it is over, and
+ * "no matches waiting" is not what someone opening it that evening came for.
+ */
+function DayFinished({
+  tables,
+  categories,
+}: {
+  tables: CategoryTable[]
+  categories: Array<{ id: string; name: string; winnerTeamId: string | null }>
+}) {
+  const rows = tables
+    .map((t) => {
+      const top = t.rows[0]
+      if (!top) return null
+      const declared = categories.find((c) => c.id === t.id)?.winnerTeamId
+      return { table: t, top, won: declared === top.teamId }
+    })
+    .filter((r): r is { table: CategoryTable; top: CategoryTable['rows'][number]; won: boolean } =>
+      Boolean(r),
+    )
+
+  if (!rows.length) return null
+
+  return (
+    <section className="flex flex-col gap-4">
+      <SectionHead title="How it finished" meta="the day is done" />
+      <Panel>
+        <ul className="divide-y divide-line">
+          {rows.map(({ table, top, won }) => (
+            <li key={table.id} className="flex items-center gap-3 px-4 py-3.5">
+              <span className="min-w-0 flex-1">
+                <span className="block text-meta text-text-3">{table.name}</span>
+                <TeamName name={top.name} players={top.players} />
+              </span>
+              <Tag tone="accent">{won ? 'Winner' : 'Top of the table'}</Tag>
+            </li>
+          ))}
+        </ul>
+      </Panel>
+    </section>
   )
 }

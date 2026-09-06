@@ -1,38 +1,49 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { currentUser } from '@/lib/auth'
-import { Card } from '@/components/ui'
+import { Card, CourtMark, NetRule } from '@/components/ui'
 import { LoginForm } from './login-form'
 import { ensureReady } from '@/server/bootstrap'
 
 export const metadata = { title: 'Sign in · Madras Pickleball' }
 
+/**
+ * The only screen in the product that a person reaches without knowing what
+ * this is. It carries the brand band because it is the front door — and it says
+ * plainly that scorers do not belong here, because the most common way to end
+ * up on this page is scanning a court card that has expired.
+ */
 export default async function LoginPage() {
   await ensureReady()
   if (await currentUser()) redirect('/admin')
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-sm flex-col justify-center gap-5 p-6">
+    <main className="mx-auto flex min-h-dvh w-full max-w-sm flex-col justify-center gap-6 p-6">
       <div>
-        <p className="text-xs font-semibold tracking-widest text-accent uppercase">
-          Madras Pickleball
-        </p>
-        <h1 className="mt-1 text-2xl font-bold text-ink">Organiser sign in</h1>
-        <p className="mt-1 text-sm text-muted">
-          Scorers don&apos;t need an account — scan the QR on the net post.
+        <div className="flex items-center gap-2.5 text-ink">
+          <CourtMark className="size-8" />
+          <span className="font-score text-[19px] font-bold tracking-[0.02em] text-text">
+            Madras Pickleball
+          </span>
+        </div>
+        <NetRule className="mt-3 mb-4" />
+        <h1 className="text-title text-text">Organiser sign in</h1>
+        <p className="mt-1.5 text-body text-text-2">
+          Scorers don&rsquo;t need an account — scan the QR taped to the net post and the score goes
+          in from there.
         </p>
       </div>
 
-      <Card>
+      <Card className="p-4">
         <LoginForm />
       </Card>
 
-      <p className="text-center text-sm text-muted">
-        Forgotten it? Ask the venue owner to reset it for you.{' '}
-        <Link href="/" className="font-medium text-link">
-          Back to scores
+      <div className="text-center text-meta text-text-2">
+        <p>Forgotten it? The venue owner can reset it for you.</p>
+        <Link href="/" className="tap mt-1 inline-flex items-center px-2 font-semibold text-link">
+          Back to the scores
         </Link>
-      </p>
+      </div>
     </main>
   )
 }

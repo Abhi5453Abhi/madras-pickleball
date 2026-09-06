@@ -6,7 +6,6 @@ import { db } from '@/db'
 import { tournaments } from '@/db/schema'
 import { requireUser } from '@/lib/auth'
 import { parsePlayerList } from '@/lib/parse-players'
-import { newId } from '@/lib/ids'
 import { recordAudit } from '@/lib/audit'
 import {
   createCategory,

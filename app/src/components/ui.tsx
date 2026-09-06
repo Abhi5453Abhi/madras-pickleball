@@ -117,7 +117,7 @@ export function Notice({
       className={clsx(
         'rounded-control px-3.5 py-3 text-body font-medium',
         tone === 'alert' && 'bg-alert-soft text-alert',
-        tone === 'info' && 'bg-accent-soft text-accent',
+        tone === 'info' && 'bg-accent-soft text-accent-hi',
         tone === 'waiting' && 'bg-waiting-soft text-waiting',
       )}
     >
@@ -233,4 +233,157 @@ export function statusWords(status: string): { label: string; state: Status } {
     default:
       return { label: 'Waiting', state: 'waiting' }
   }
+}
+
+/**
+ * A team is two people, and at this venue their names are long: "Karthik
+ * Subramanian / Sathish Kumar" is 35 characters and wraps mid-name at 390px,
+ * which reads as one mangled string rather than as two players. Stacking the
+ * two names is the same information, one fewer act of decoding, and it makes
+ * the row height predictable instead of dependent on whose name it is.
+ */
+export function splitTeam(name: string | null | undefined): string[] {
+  if (!name) return []
+  return name
+    .split(/\s+\/\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+export function TeamName({
+  name,
+  players,
+  className,
+  muted,
+  size = 'row',
+}: {
+  name: string | null
+  /** Preferred when the caller has them — the team name is only a join of these. */
+  players?: string[]
+  className?: string
+  muted?: boolean
+  /** `section` for the live court cards, which are read from further away. */
+  size?: 'row' | 'section'
+}) {
+  const parts = players?.length ? players : splitTeam(name)
+  if (!parts.length)
+    return <span className={clsx('text-row text-text-3', className)}>To be decided</span>
+  return (
+    <span className={clsx('block', className)}>
+      {parts.map((p, i) => (
+        <span
+          key={`${p}-${i}`}
+          className={clsx(
+            'block break-words',
+            size === 'section' ? 'text-section' : 'text-row',
+            muted ? 'text-text-3' : 'text-text',
+          )}
+        >
+          {p}
+        </span>
+      ))}
+    </span>
+  )
+}
+
+type TagTone = 'neutral' | 'waiting' | 'alert' | 'accent' | 'live'
+
+const TAG: Record<TagTone, string> = {
+  neutral: 'border-line-strong bg-sunken text-text-2',
+  waiting: 'border-waiting/35 bg-waiting-soft text-waiting',
+  alert: 'border-alert/35 bg-alert-soft text-alert',
+  // accent-hi, not accent: terracotta on its own soft tint is 4.1:1, and a
+  // 14px tag is not large text.
+  accent: 'border-accent/35 bg-accent-soft text-accent-hi',
+  live: 'border-live/35 bg-live-soft text-live-text',
+}
+
+/**
+ * A row-level note — "Not confirmed yet", "Under review", "Through". Smaller
+ * than a StatusPill and it wraps with the text it belongs to, which a pill
+ * pinned to the right edge cannot do next to a name that already wraps.
+ *
+ * 14px is the floor: the accent is never allowed below it.
+ */
+export function Tag({ tone = 'neutral', children }: { tone?: TagTone; children: ReactNode }) {
+  return (
+    <span
+      className={clsx(
+        'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-meta font-semibold',
+        TAG[tone],
+      )}
+    >
+      {children}
+    </span>
+  )
+}
+
+function Chevron() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden className="chev size-5 shrink-0" fill="none">
+      <path d="M5 8l5 5 5-5" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+/**
+ * "Show the rest" that costs nothing when it is closed and needs no JavaScript
+ * to open. The content stays in the document, so find-in-page and a screen
+ * reader's own search still reach it.
+ */
+export function Disclosure({
+  summary,
+  meta,
+  children,
+  className,
+  id,
+}: {
+  summary: string
+  meta?: string
+  children: ReactNode
+  className?: string
+  id?: string
+}) {
+  return (
+    <details id={id} className={clsx('group', className)}>
+      <summary className="tap flex items-center gap-3 rounded-control border border-line-strong bg-paper px-4 text-left shadow-card">
+        <span className="min-w-0 flex-1">
+          <span className="block text-row text-text">{summary}</span>
+          {meta ? <span className="block text-meta text-text-3">{meta}</span> : null}
+        </span>
+        <span aria-hidden className="text-text-2">
+          <Chevron />
+        </span>
+      </summary>
+      <div className="pt-3">{children}</div>
+    </details>
+  )
+}
+
+/**
+ * Most visits to this page happen before the first match and after the last
+ * one, so an empty state is the main state, not an afterthought.
+ */
+export function EmptyState({
+  title,
+  children,
+  tone = 'quiet',
+}: {
+  title: string
+  children?: ReactNode
+  tone?: 'quiet' | 'accent'
+}) {
+  return (
+    <div
+      className={clsx(
+        'rounded-card border px-4 py-5',
+        tone === 'accent'
+          ? 'border-accent/30 bg-accent-soft'
+          : 'hatched border-line-strong bg-paper',
+      )}
+    >
+      <p className="text-section text-text">{title}</p>
+      {children ? <div className="mt-1.5 text-body text-text-2">{children}</div> : null}
+    </div>
+  )
 }

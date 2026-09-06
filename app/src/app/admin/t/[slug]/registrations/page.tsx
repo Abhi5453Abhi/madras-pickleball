@@ -1,15 +1,21 @@
+import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
-import { Button, Panel, SectionHead, StatusPill } from '@/components/ui'
+import { EmptyState, Panel, SectionHead, Tag } from '@/components/ui'
 import { venueDate } from '@/lib/time'
-import {
-  currentRegistrationToken,
-  listPendingRegistrations,
-} from '@/server/registration'
+import { currentRegistrationToken, listPendingRegistrations } from '@/server/registration'
 import { getTournamentBySlug, listCategories } from '@/server/tournaments'
+import { Confirm, ROW_BUTTON, SECONDARY_LINK } from '../../../_ui'
 import { approve, closeLink, makePair, reject } from './actions'
 import { LinkPanel } from './link-panel'
 
+/**
+ * Sign-ups — SPEC A2. A form, not an account: no password, nothing to remember,
+ * and nothing lands in the draw until the organiser says so.
+ *
+ * The order is the order they need attention: people waiting, then pairs that
+ * can be formed with one tap, then everyone already in.
+ */
 export const dynamic = 'force-dynamic'
 
 export default async function RegistrationsPage(props: PageProps<'/admin/t/[slug]/registrations'>) {
@@ -29,12 +35,25 @@ export default async function RegistrationsPage(props: PageProps<'/admin/t/[slug
   const rejected = rows.filter((r) => r.status === 'rejected')
   const approvedById = new Map(approved.map((r) => [r.id, r]))
 
+  // A doubles player with nobody naming them back is the case the organiser has
+  // to do something about — by hand, or by pairing the rest at random.
+  const needsPartner = approved.filter(
+    (r) =>
+      !r.mutualWith &&
+      cats.some((c) => c.discipline !== 'singles' && r.categoryIds.includes(c.id)),
+  )
+
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-7">
       <header>
         <p className="font-score text-eyebrow text-accent uppercase">Sign-ups</p>
-        <h1 className="mt-1 text-title text-text">{tournament.name}</h1>
-        <p className="num mt-1 text-meta text-text-3">
+        <h1 className="mt-1">
+          <Link href={`/admin/t/${slug}`} className="text-title text-text">
+            {tournament.name}
+            <span aria-hidden className="text-text-3"> ›</span>
+          </Link>
+        </h1>
+        <p className="num mt-1.5 text-meta text-text-3">
           {venueDate(tournament.startDate)} · {pending.length} waiting · {approved.length} in
         </p>
       </header>
@@ -42,12 +61,17 @@ export default async function RegistrationsPage(props: PageProps<'/admin/t/[slug
       <LinkPanel slug={slug} hasActive={!!token} />
 
       {token ? (
-        <form action={closeLink}>
-          <input type="hidden" name="slug" value={slug} />
-          <button className="tap text-left text-body font-medium text-link">
-            Close sign-ups
-          </button>
-        </form>
+        <Confirm
+          label="Close sign-ups"
+          question="The link stops working for everybody holding it, straight away. Anyone who has already filled it in stays on this screen, and you can still add people by hand."
+        >
+          <form action={closeLink}>
+            <input type="hidden" name="slug" value={slug} />
+            <button className="tap-lg w-full rounded-control bg-ink px-4 text-[18px] font-bold text-white">
+              Close the link
+            </button>
+          </form>
+        </Confirm>
       ) : null}
 
       <section className="flex flex-col gap-3">
@@ -59,57 +83,99 @@ export default async function RegistrationsPage(props: PageProps<'/admin/t/[slug
           <Panel>
             <ul className="divide-y divide-line">
               {pending.map((r) => (
-                <li key={r.id} className="flex flex-col gap-2 px-4 py-3">
-                  <div className="flex flex-wrap items-baseline gap-2">
+                <li key={r.id} className="flex flex-col gap-2.5 px-4 py-3.5">
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                     <span className="text-row text-text">{r.name}</span>
                     {r.phone ? <span className="num text-meta text-text-3">{r.phone}</span> : null}
-                    {r.looksLike ? (
-                      <StatusPill state="waiting">Played here before</StatusPill>
-                    ) : null}
                   </div>
                   <p className="text-meta text-text-2">
                     {r.categoryNames.join(' · ') || 'No category picked'}
                     {r.partnerName ? ` · with ${r.partnerName}` : ' · needs a partner'}
-                    {r.mutualWith ? ' — they named each other' : ''}
                   </p>
+                  {r.looksLike || r.mutualWith ? (
+                    <p className="flex flex-wrap gap-1.5">
+                      {r.looksLike ? (
+                        <Tag tone="waiting">Looks like {r.looksLike.name}, who has played here</Tag>
+                      ) : null}
+                      {r.mutualWith ? <Tag tone="accent">They named each other</Tag> : null}
+                    </p>
+                  ) : null}
+
                   <div className="flex flex-wrap gap-2">
-                    <form action={approve}>
+                    <form action={approve} className="flex-1 basis-[10rem]">
                       <input type="hidden" name="slug" value={slug} />
                       <input type="hidden" name="id" value={r.id} />
                       {r.looksLike ? (
                         <input type="hidden" name="linkPlayerId" value={r.looksLike.id} />
                       ) : null}
-                      <Button className="tap px-4 text-[16px]">
-                        {r.looksLike ? `Add — same as ${r.looksLike.name}` : 'Add to the roster'}
-                      </Button>
-                    </form>
-                    {r.looksLike ? (
-                      <form action={approve}>
-                        <input type="hidden" name="slug" value={slug} />
-                        <input type="hidden" name="id" value={r.id} />
-                        <Button variant="secondary" className="tap px-4 text-[16px]">
-                          Different person
-                        </Button>
-                      </form>
-                    ) : null}
-                    <form action={reject}>
-                      <input type="hidden" name="slug" value={slug} />
-                      <input type="hidden" name="id" value={r.id} />
-                      <button className="tap rounded-control px-3 text-[16px] font-semibold text-text-3">
-                        Not playing
+                      <button className={`${ROW_BUTTON} w-full`}>
+                        {r.looksLike ? 'Same person — add' : 'Add to the roster'}
                       </button>
                     </form>
+
+                    {r.looksLike ? (
+                      <form action={approve} className="flex-1 basis-[10rem]">
+                        <input type="hidden" name="slug" value={slug} />
+                        <input type="hidden" name="id" value={r.id} />
+                        <button className={`${SECONDARY_LINK} w-full`}>
+                          Different person — add anyway
+                        </button>
+                      </form>
+                    ) : null}
+
+                    <Confirm
+                      className="flex-1 basis-[8rem] [&[open]]:basis-full"
+                      label="Not playing"
+                      question={`${r.name} comes off this list and does not go on the roster. If they turn up anyway, they can fill the same link in again.`}
+                    >
+                      <form action={reject}>
+                        <input type="hidden" name="slug" value={slug} />
+                        <input type="hidden" name="id" value={r.id} />
+                        <button className="tap-lg w-full rounded-control bg-ink px-4 text-[18px] font-bold text-white">
+                          Take {r.name} off
+                        </button>
+                      </form>
+                    </Confirm>
                   </div>
                 </li>
               ))}
             </ul>
           </Panel>
         ) : (
-          <p className="text-body text-text-2">
-            {token ? 'Nobody new since you last looked.' : 'Make a link and share it to start.'}
-          </p>
+          <EmptyState title={token ? 'Nobody new since you last looked' : 'No link yet'}>
+            <p>
+              {token
+                ? 'The link is live. Anything that comes in lands here for you to wave through.'
+                : 'Make the link above and drop it in the group chat — they put in their name, what they want to play, and who they’re playing with.'}
+            </p>
+          </EmptyState>
         )}
       </section>
+
+      {needsPartner.length ? (
+        <section className="flex flex-col gap-3">
+          <SectionHead
+            title="Needs a partner"
+            meta={`${needsPartner.length} on the roster with nobody named back`}
+          />
+          <Panel>
+            <ul className="divide-y divide-line">
+              {needsPartner.map((r) => (
+                <li key={r.id} className="px-4 py-3">
+                  <p className="text-row text-text">{r.name}</p>
+                  <p className="mt-0.5 text-meta text-text-3">
+                    {r.categoryNames.join(' · ')}
+                    {r.partnerName ? ` · named ${r.partnerName}, who hasn’t signed up` : ''}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </Panel>
+          <p className="text-meta text-text-2">
+            Pair them by hand on the tournament page, or let Quick Play pair the rest at random.
+          </p>
+        </section>
+      ) : null}
 
       {approved.length ? (
         <section className="flex flex-col gap-3">
@@ -136,19 +202,25 @@ export default async function RegistrationsPage(props: PageProps<'/admin/t/[slug
                       <p className="text-meta text-text-3">{r.categoryNames.join(' · ')}</p>
                     </div>
                     {offerPair && partner && sharedCategory && r.playerId && partner.playerId ? (
-                      <form action={makePair} className="ml-auto shrink-0">
-                        <input type="hidden" name="slug" value={slug} />
-                        <input type="hidden" name="categoryId" value={sharedCategory.id} />
-                        <input
-                          type="hidden"
-                          name="playerIds"
-                          value={`${r.playerId},${partner.playerId}`}
-                        />
-                        <input type="hidden" name="names" value={`${r.name}|${partner.name}`} />
-                        <Button variant="secondary" className="tap px-4 text-[16px]">
-                          Team them up with {partner.name}
-                        </Button>
-                      </form>
+                      <Confirm
+                        className="ml-auto shrink-0 [&[open]]:w-full"
+                        label={`Team up with ${partner.name}`}
+                        question={`${r.name} and ${partner.name} become one pair in ${sharedCategory.name}. If the draw is already made, it does not change on its own.`}
+                      >
+                        <form action={makePair}>
+                          <input type="hidden" name="slug" value={slug} />
+                          <input type="hidden" name="categoryId" value={sharedCategory.id} />
+                          <input
+                            type="hidden"
+                            name="playerIds"
+                            value={`${r.playerId},${partner.playerId}`}
+                          />
+                          <input type="hidden" name="names" value={`${r.name}|${partner.name}`} />
+                          <button className="tap-lg w-full rounded-control bg-ink px-4 text-[18px] font-bold text-white">
+                            Make the pair
+                          </button>
+                        </form>
+                      </Confirm>
                     ) : null}
                   </li>
                 )
@@ -159,7 +231,9 @@ export default async function RegistrationsPage(props: PageProps<'/admin/t/[slug
       ) : null}
 
       {rejected.length ? (
-        <p className="text-meta text-text-3">{rejected.length} marked as not playing.</p>
+        <p className="text-meta text-text-3">
+          {rejected.length} marked as not playing. They can sign up again on the same link.
+        </p>
       ) : null}
     </div>
   )

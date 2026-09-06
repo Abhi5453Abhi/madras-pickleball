@@ -16,6 +16,17 @@ export type CourtPayload = {
   submittingTeamId: string | null
 }
 
+/**
+ * `retry` means send the same thing again — a dropped connection, a lock, a
+ * score the engine wants a second look at. `reload` means the world moved and
+ * the screen is looking at the wrong match. The difference decides which button
+ * the pair standing on the court is offered, so it is computed rather than
+ * guessed from the wording of an error.
+ */
+export type CourtSubmitResult =
+  | { ok: true; state: 'reported' | 'final' | 'disputed' }
+  | { ok: false; error: string; recover: 'retry' | 'reload' }
+
 const RESULT_TYPES = new Set(['normal', 'walkover', 'retired'])
 
 /**
@@ -62,27 +73,37 @@ function sanitize(payload: CourtPayload): CourtPayload | null {
   }
 }
 
-export async function courtSubmit(payload: CourtPayload) {
+export async function courtSubmit(payload: CourtPayload): Promise<CourtSubmitResult> {
   const ctx = await currentCourtSession()
   if (!ctx) {
-    return { ok: false, error: 'This court link has expired. Ask the organiser for a new card.' }
+    return {
+      ok: false,
+      error: 'This court card has stopped working — the organiser may have printed new ones today.',
+      recover: 'reload',
+    }
   }
 
   const clean = sanitize(payload)
-  if (!clean) return { ok: false, error: 'That score didn’t make sense. Enter it again.' }
+  if (!clean) {
+    return { ok: false, error: 'That score didn’t make sense. Enter it again.', recover: 'retry' }
+  }
 
   // The server checks the match is one this court may write to; it never
   // resolves "whatever is on this court now" from the request.
   const allowed = await scoreableMatches(ctx)
   const match = allowed.find((m) => m.id === clean.matchId)
   if (!match) {
-    return { ok: false, error: 'That match has moved. Pull down to refresh and try again.' }
+    return {
+      ok: false,
+      error: `That match isn’t on ${ctx.courtName} any more. Read the score out to the organiser, or scan the card on the court it moved to.`,
+      recover: 'reload',
+    }
   }
 
   // "Which side am I" decides whether this counts as independent agreement, so
   // it has to be one of the two sides actually in this match.
   if (clean.submittingTeamId && ![match.teamAId, match.teamBId].includes(clean.submittingTeamId)) {
-    return { ok: false, error: 'Pick your own side.' }
+    return { ok: false, error: 'Pick one of the two sides in this match.', recover: 'retry' }
   }
 
   const res = await submitResult({
@@ -102,8 +123,19 @@ export async function courtSubmit(payload: CourtPayload) {
     deviceId: ctx.deviceId,
     clientEventId: newId('ce'),
   })
-  revalidatePath('/court')
-  return res.ok ? { ok: true, state: res.state } : { ok: false, error: res.error }
+
+  if (res.ok) {
+    revalidatePath('/court')
+    return { ok: true, state: res.state }
+  }
+
+  // Whether the next step is "try again" or "look at this court again" is a
+  // question about the world, not about the wording of the error — so ask the
+  // world. Matching on the message would go stale the first time somebody
+  // rewrites a string.
+  const stillWritable = await scoreableMatches(ctx)
+  const moved = !stillWritable.some((m) => m.id === clean.matchId)
+  return { ok: false, error: res.error, recover: moved ? 'reload' : 'retry' }
 }
 
 /**
@@ -119,10 +151,25 @@ async function scopedMatch(matchId: string) {
   return match ? { ctx, match } : null
 }
 
-export async function courtAgree(formData: FormData) {
-  const matchId = String(formData.get('matchId'))
+/**
+ * The confirmation buttons are a plain `<form action>` so they still work
+ * before — or without — JavaScript, which on a phone at the far end of a court
+ * on venue wifi is a real state and not a hypothetical one. That means these
+ * take `(previousState, formData)` and hand a message back, rather than
+ * swallowing the failure the way a void action did.
+ */
+export type ConfirmState = { error: string | null }
+export const NO_ERROR: ConfirmState = { error: null }
+
+const GONE: ConfirmState = {
+  error:
+    'That match isn’t on this court any more, so it can’t be changed from here. Tell the organiser if the score is wrong.',
+}
+
+export async function courtAgree(_prev: ConfirmState, formData: FormData): Promise<ConfirmState> {
+  const matchId = String(formData.get('matchId') || '')
   const scoped = await scopedMatch(matchId)
-  if (!scoped) return
+  if (!scoped) return GONE
   const { ctx, match } = scoped
 
   const raw = String(formData.get('teamId') || '')
@@ -135,12 +182,19 @@ export async function courtAgree(formData: FormData) {
     deviceId: ctx.deviceId,
   })
   revalidatePath('/court')
+  // A failure here is always "there is nothing left to agree to" — two people
+  // tapping at once, or the ten minutes running out mid-tap. Saying so would
+  // contradict the page that is about to render, which will show the result as
+  // in. The re-rendered state is the answer.
+  return NO_ERROR
 }
 
-export async function courtDispute(formData: FormData) {
-  const matchId = String(formData.get('matchId'))
+export async function courtDispute(_prev: ConfirmState, formData: FormData): Promise<ConfirmState> {
+  const matchId = String(formData.get('matchId') || '')
   const scoped = await scopedMatch(matchId)
-  if (!scoped) return
-  await raiseDispute(matchId, 'the other side disagreed at the net')
+  if (!scoped) return GONE
+
+  const res = await raiseDispute(matchId, 'the other side disagreed at the net')
   revalidatePath('/court')
+  return res.ok ? NO_ERROR : { error: res.error }
 }

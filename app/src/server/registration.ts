@@ -1,7 +1,7 @@
 import 'server-only'
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { headers } from 'next/headers'
-import { db } from '@/db'
+import { db, transact } from '@/db'
 import {
   categories,
   categoryPlayers,
@@ -35,23 +35,27 @@ export type RegistrationView = {
 }
 
 export async function issueRegistrationLink(tournamentId: string, expiresAt: Date) {
-  await db
-    .update(registrationTokens)
-    .set({ status: 'revoked', revokedAt: new Date() })
-    .where(
-      and(
-        eq(registrationTokens.tournamentId, tournamentId),
-        eq(registrationTokens.status, 'active'),
-      ),
-    )
-
   const { raw, hash, prefix } = newCourtToken()
-  await db.insert(registrationTokens).values({
-    id: newId('rt'),
-    tournamentId,
-    tokenHash: hash,
-    tokenPrefix: prefix,
-    expiresAt,
+  // One transaction: the partial unique index allows exactly one active link
+  // per tournament, so revoking and issuing have to land together or the second
+  // attempt fails on a constraint the organiser cannot see.
+  await transact(async (tx) => {
+    await tx
+      .update(registrationTokens)
+      .set({ status: 'revoked', revokedAt: new Date() })
+      .where(
+        and(
+          eq(registrationTokens.tournamentId, tournamentId),
+          eq(registrationTokens.status, 'active'),
+        ),
+      )
+    await tx.insert(registrationTokens).values({
+      id: newId('rt'),
+      tournamentId,
+      tokenHash: hash,
+      tokenPrefix: prefix,
+      expiresAt,
+    })
   })
   return raw
 }
@@ -91,7 +95,7 @@ export async function resolveRegistrationToken(raw: string): Promise<Registratio
 
   const normalized = normalizeCrockford(raw)
   const [token] = await db
-    .select()
+    .select({ tournamentId: registrationTokens.tournamentId })
     .from(registrationTokens)
     .where(
       and(
@@ -105,18 +109,31 @@ export async function resolveRegistrationToken(raw: string): Promise<Registratio
   await recordTokenAttempt('registration', normalized.slice(0, 5), ipHash, !!token)
   if (!token) return null
 
-  const [tournament] = await db
-    .select()
-    .from(tournaments)
-    .where(and(eq(tournaments.id, token.tournamentId), isNull(tournaments.deletedAt)))
-    .limit(1)
+  // The tournament and its categories are both keyed off the token's
+  // tournament id, so neither has to wait for the other.
+  const [tournament, cats] = await Promise.all([
+    db
+      .select({
+        id: tournaments.id,
+        name: tournaments.name,
+        slug: tournaments.slug,
+        startDate: tournaments.startDate,
+      })
+      .from(tournaments)
+      .where(and(eq(tournaments.id, token.tournamentId), isNull(tournaments.deletedAt)))
+      .limit(1)
+      .then((r) => r[0]),
+    db
+      .select({
+        id: categories.id,
+        name: categories.name,
+        discipline: categories.discipline,
+      })
+      .from(categories)
+      .where(and(eq(categories.tournamentId, token.tournamentId), isNull(categories.deletedAt)))
+      .orderBy(asc(categories.seq)),
+  ])
   if (!tournament) return null
-
-  const cats = await db
-    .select()
-    .from(categories)
-    .where(and(eq(categories.tournamentId, tournament.id), isNull(categories.deletedAt)))
-    .orderBy(asc(categories.seq))
 
   return {
     tournament: {
@@ -157,37 +174,40 @@ export async function submitRegistration(
     return { ok: false, error: 'Pick at least one — singles, doubles, or both.' }
   }
 
-  // The categories have to belong to THIS tournament; the ids arrive from a
-  // form on a page anyone with the link can open.
-  const valid = await db
-    .select({ id: categories.id })
-    .from(categories)
-    .where(
-      and(
-        eq(categories.tournamentId, input.tournamentId),
-        inArray(categories.id, input.categoryIds),
-        isNull(categories.deletedAt),
-      ),
-    )
-  if (valid.length !== input.categoryIds.length) {
-    return { ok: false, error: 'That form is out of date — reload the page and try again.' }
-  }
-
   const nameKey = normalizeName(name)
   const partnerName = input.partnerName?.trim() || null
 
-  // Registering twice from the same phone is the norm, not an attack: people
-  // reload, or add a second category later. Update rather than duplicate.
-  const [existing] = await db
-    .select()
-    .from(pendingRegistrations)
-    .where(
-      and(
-        eq(pendingRegistrations.tournamentId, input.tournamentId),
-        eq(pendingRegistrations.nameKey, nameKey),
+  // The categories have to belong to THIS tournament; the ids arrive from a
+  // form on a page anyone with the link can open. That check and the
+  // did-they-already-register lookup are independent, so they go out together.
+  const [valid, existing] = await Promise.all([
+    db
+      .select({ id: categories.id })
+      .from(categories)
+      .where(
+        and(
+          eq(categories.tournamentId, input.tournamentId),
+          inArray(categories.id, input.categoryIds),
+          isNull(categories.deletedAt),
+        ),
       ),
-    )
-    .limit(1)
+    // Registering twice from the same phone is the norm, not an attack: people
+    // reload, or add a second category later. Update rather than duplicate.
+    db
+      .select()
+      .from(pendingRegistrations)
+      .where(
+        and(
+          eq(pendingRegistrations.tournamentId, input.tournamentId),
+          eq(pendingRegistrations.nameKey, nameKey),
+        ),
+      )
+      .limit(1)
+      .then((r) => r[0]),
+  ])
+  if (valid.length !== input.categoryIds.length) {
+    return { ok: false, error: 'That form is out of date — reload the page and try again.' }
+  }
 
   const h = await headers()
   const ipHash = hashIp(h.get('x-forwarded-for')?.split(',')[0]?.trim())
@@ -208,28 +228,32 @@ export async function submitRegistration(
   }
 
   const id = newId('reg')
-  await db.insert(pendingRegistrations).values({
-    id,
-    tournamentId: input.tournamentId,
-    name,
-    nameKey,
-    phone: normalizePhone(input.phone),
-    categoryIds: input.categoryIds,
-    partnerName,
-    partnerNameKey: partnerName ? normalizeName(partnerName) : null,
-    deviceId: input.deviceId ?? null,
-    ipHash,
-  })
-
-  await db
-    .update(registrationTokens)
-    .set({ useCount: sql`${registrationTokens.useCount} + 1` })
-    .where(
-      and(
-        eq(registrationTokens.tournamentId, input.tournamentId),
-        eq(registrationTokens.status, 'active'),
+  // Together, not in sequence, and deliberately not in a transaction: the use
+  // counter is a statistic on the link, and making a player on a phone wait for
+  // a BEGIN and a COMMIT to protect it would be the wrong trade.
+  await Promise.all([
+    db.insert(pendingRegistrations).values({
+      id,
+      tournamentId: input.tournamentId,
+      name,
+      nameKey,
+      phone: normalizePhone(input.phone),
+      categoryIds: input.categoryIds,
+      partnerName,
+      partnerNameKey: partnerName ? normalizeName(partnerName) : null,
+      deviceId: input.deviceId ?? null,
+      ipHash,
+    }),
+    db
+      .update(registrationTokens)
+      .set({ useCount: sql`${registrationTokens.useCount} + 1` })
+      .where(
+        and(
+          eq(registrationTokens.tournamentId, input.tournamentId),
+          eq(registrationTokens.status, 'active'),
+        ),
       ),
-    )
+  ])
 
   return { ok: true, id, alreadyIn: false }
 }
@@ -252,25 +276,34 @@ export type PendingRow = {
 }
 
 export async function listPendingRegistrations(tournamentId: string): Promise<PendingRow[]> {
-  const rows = await db
-    .select()
-    .from(pendingRegistrations)
-    .where(eq(pendingRegistrations.tournamentId, tournamentId))
-    .orderBy(desc(pendingRegistrations.createdAt))
+  // The roster match is expressed as a subquery on the same name keys rather
+  // than a second trip carrying the keys back down, so all three reads go out
+  // at once instead of one after another.
+  const [rows, cats, known] = await Promise.all([
+    db
+      .select()
+      .from(pendingRegistrations)
+      .where(eq(pendingRegistrations.tournamentId, tournamentId))
+      .orderBy(desc(pendingRegistrations.createdAt)),
+    db
+      .select({ id: categories.id, name: categories.name })
+      .from(categories)
+      .where(eq(categories.tournamentId, tournamentId)),
+    db
+      .select({ id: players.id, name: players.name, nameKey: players.nameKey })
+      .from(players)
+      .where(
+        inArray(
+          players.nameKey,
+          db
+            .select({ nameKey: pendingRegistrations.nameKey })
+            .from(pendingRegistrations)
+            .where(eq(pendingRegistrations.tournamentId, tournamentId)),
+        ),
+      ),
+  ])
 
-  const cats = await db
-    .select({ id: categories.id, name: categories.name })
-    .from(categories)
-    .where(eq(categories.tournamentId, tournamentId))
   const catName = new Map(cats.map((c) => [c.id, c.name]))
-
-  const keys = [...new Set(rows.map((r) => r.nameKey))]
-  const known = keys.length
-    ? await db
-        .select({ id: players.id, name: players.name, nameKey: players.nameKey })
-        .from(players)
-        .where(inArray(players.nameKey, keys))
-    : []
   const knownByKey = new Map(known.map((p) => [p.nameKey, p]))
 
   const byKey = new Map(rows.map((r) => [r.nameKey, r]))
@@ -322,6 +355,7 @@ export async function approveRegistration(
   const wanted = opts?.categoryIds ?? reg.categoryIds
 
   let playerId = opts?.linkPlayerId ?? null
+  let isNewPlayer = false
   if (!playerId) {
     const [match] = await db
       .select({ id: players.id })
@@ -332,38 +366,56 @@ export async function approveRegistration(
   }
   if (!playerId) {
     playerId = newId('ply')
-    await db.insert(players).values({
-      id: playerId,
-      name: reg.name,
-      nameKey: reg.nameKey,
-      phone: reg.phone,
-      phoneKey: normalizePhone(reg.phone),
-    })
+    isNewPlayer = true
   }
 
-  await db
-    .insert(tournamentPlayers)
-    .values({ id: newId('tp'), tournamentId: reg.tournamentId, playerId })
-    .onConflictDoNothing()
+  // Everything an approval means happens together. Half of it — a player on the
+  // roster who is in none of the categories they asked for, or a registration
+  // still showing as pending after the player exists — is a review list the
+  // organiser cannot trust, and they are working through forty of these.
+  const player = playerId
+  await transact(async (tx) => {
+    if (isNewPlayer) {
+      await tx.insert(players).values({
+        id: player,
+        name: reg.name,
+        nameKey: reg.nameKey,
+        phone: reg.phone,
+        phoneKey: normalizePhone(reg.phone),
+      })
+    }
 
-  for (const categoryId of wanted) {
-    await db
-      .insert(categoryPlayers)
-      .values({ id: newId('cp'), categoryId, playerId })
+    await tx
+      .insert(tournamentPlayers)
+      .values({ id: newId('tp'), tournamentId: reg.tournamentId, playerId: player })
       .onConflictDoNothing()
-  }
 
-  await db
-    .update(pendingRegistrations)
-    .set({
-      status: 'approved',
-      mergedPlayerId: playerId,
-      reviewedAt: new Date(),
-      categoryIds: wanted,
-    })
-    .where(eq(pendingRegistrations.id, registrationId))
+    // One insert for every category they asked for, not one per category.
+    // De-duplicated first: the list is a wire format, and the same category
+    // twice would put two identical rows in a single statement.
+    const uniqueCategories = [...new Set(wanted)]
+    if (uniqueCategories.length) {
+      await tx
+        .insert(categoryPlayers)
+        .values(
+          uniqueCategories.map((categoryId) => ({ id: newId('cp'), categoryId, playerId: player })),
+        )
+        .onConflictDoNothing()
+    }
 
-  await bumpStreamVersion(reg.tournamentId)
+    await tx
+      .update(pendingRegistrations)
+      .set({
+        status: 'approved',
+        mergedPlayerId: player,
+        reviewedAt: new Date(),
+        categoryIds: wanted,
+      })
+      .where(eq(pendingRegistrations.id, registrationId))
+
+    await bumpStreamVersion(reg.tournamentId, tx)
+  })
+
   return { ok: true as const, playerId }
 }
 
@@ -388,29 +440,34 @@ export async function rejectRegistration(registrationId: string, note?: string) 
 export async function pairApproved(categoryId: string, playerIds: string[], names: string[]) {
   if (playerIds.length < 2) return { ok: false as const, error: 'A pair needs two players.' }
 
-  const already = await db
-    .select({ teamId: teamPlayers.teamId })
-    .from(teamPlayers)
-    .innerJoin(teams, eq(teams.id, teamPlayers.teamId))
-    .where(and(eq(teams.categoryId, categoryId), inArray(teamPlayers.playerId, playerIds)))
+  const [already, [{ n }]] = await Promise.all([
+    db
+      .select({ teamId: teamPlayers.teamId })
+      .from(teamPlayers)
+      .innerJoin(teams, eq(teams.id, teamPlayers.teamId))
+      .where(and(eq(teams.categoryId, categoryId), inArray(teamPlayers.playerId, playerIds))),
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(teams)
+      .where(eq(teams.categoryId, categoryId)),
+  ])
   if (already.length) {
     return { ok: false as const, error: 'One of them is already in a team in this category.' }
   }
 
-  const [{ n }] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(teams)
-    .where(eq(teams.categoryId, categoryId))
-
+  // A team without its players is a team of nobody, and the review screen shows
+  // it as a real pair.
   const teamId = newId('tm')
-  await db.insert(teams).values({
-    id: teamId,
-    categoryId,
-    name: names.join(' / '),
-    seed: Number(n) + 1,
+  await transact(async (tx) => {
+    await tx.insert(teams).values({
+      id: teamId,
+      categoryId,
+      name: names.join(' / '),
+      seed: Number(n) + 1,
+    })
+    await tx
+      .insert(teamPlayers)
+      .values(playerIds.map((playerId, position) => ({ teamId, playerId, position })))
   })
-  await db
-    .insert(teamPlayers)
-    .values(playerIds.map((playerId, position) => ({ teamId, playerId, position })))
   return { ok: true as const, teamId }
 }
