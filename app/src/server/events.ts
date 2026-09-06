@@ -3,6 +3,7 @@ import { and, asc, desc, eq, gte, inArray, isNull, ne, sql } from 'drizzle-orm'
 import { db, transact } from '@/db'
 import {
   categories,
+  categoryPlayers,
   courts,
   matches,
   pendingRegistrations,
@@ -92,6 +93,27 @@ export async function primaryCategory(tournamentId: string) {
     .limit(1)
   if (!cat) throw new Error(`Tournament ${tournamentId} has no category.`)
   return cat
+}
+
+/**
+ * A tournament is one category, so the category's player list IS the roster.
+ * Call after anything that adds or removes a player: the substitution tools
+ * and the pairing screen read the category list, not the roster.
+ */
+export async function syncCategoryPlayers(tournamentId: string) {
+  const category = await primaryCategory(tournamentId)
+  const roster = await db
+    .select({ playerId: tournamentPlayers.playerId })
+    .from(tournamentPlayers)
+    .where(and(eq(tournamentPlayers.tournamentId, tournamentId), eq(tournamentPlayers.withdrawn, false)))
+  await transact(async (tx) => {
+    await tx.delete(categoryPlayers).where(eq(categoryPlayers.categoryId, category.id))
+    if (roster.length) {
+      await tx.insert(categoryPlayers).values(
+        roster.map((r) => ({ id: newId('cp'), categoryId: category.id, playerId: r.playerId })),
+      )
+    }
+  })
 }
 
 // ───────────────────────────── courts ─────────────────────────────

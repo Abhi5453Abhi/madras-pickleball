@@ -407,6 +407,11 @@ export const tournamentPlayers = pgTable(
     paid: boolean('paid').notNull().default(false),
     paidNote: text('paid_note'),
     withdrawn: boolean('withdrawn').notNull().default(false),
+    /** 'link' when they signed themselves up, 'hand' when the organiser added them (SPEC v4). */
+    source: text('source').notNull().default('hand'),
+    /** Who they asked to play with, as typed; resolved to a roster player where one matches. */
+    partnerWish: text('partner_wish'),
+    partnerPlayerId: text('partner_player_id'),
     registeredAt: timestamp('registered_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
