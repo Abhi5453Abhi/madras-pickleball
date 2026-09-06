@@ -14,6 +14,7 @@ import (
 
 	"mpb/internal/core"
 	"mpb/internal/db"
+	"mpb/internal/engine"
 )
 
 // ── rows ──────────────────────────────────────────────────────────────────
@@ -99,24 +100,11 @@ type Team struct {
 	Players      []Player // in position order
 }
 
-// SlotSource says where a side of a match comes from — see docs/GO-API.ts
-// and the reference's draw.ts.
-type SlotSource struct {
-	Type      string `json:"type"` // entry | group_rank | winner_of | loser_of | bye
-	TeamID    string `json:"teamId,omitempty"`
-	GroupName string `json:"groupName,omitempty"`
-	Rank      int    `json:"rank,omitempty"`
-	MatchID   string `json:"matchId,omitempty"`
-}
-
-// Game is one game of a match, as stored in matches.games.
-type Game struct {
-	GameNo          int  `json:"gameNo"`
-	ScoreA          int  `json:"scoreA"`
-	ScoreB          int  `json:"scoreB"`
-	ExcludeFromDiff bool `json:"excludeFromDiff,omitempty"`
-	TimeCapped      bool `json:"timeCapped,omitempty"`
-}
+// SlotSource and Game are the engine's types; a match stores them as JSON.
+type (
+	SlotSource = engine.SlotSource
+	Game       = engine.Game
+)
 
 type Match struct {
 	ID            string
