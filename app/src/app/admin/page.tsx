@@ -226,7 +226,7 @@ function UpcomingCard({ row: t }: { row: DashboardRow }) {
         </p>
         <p className="mt-1 text-meta text-text-3">
           {t.registrationOpen ? 'Sign-ups open' : 'Sign-ups closed'}
-          {t.pendingSignups ? ` · ${t.pendingSignups} waiting for you` : ''}
+          {t.pendingSignups ? ` · ${t.pendingSignups} possible ${t.pendingSignups === 1 ? 'duplicate' : 'duplicates'}` : ''}
           {' · '}
           {t.courts.length
             ? t.courts.map((c) => c.name).join(', ')

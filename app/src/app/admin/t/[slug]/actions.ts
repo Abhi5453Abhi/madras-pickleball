@@ -17,6 +17,7 @@ import {
   withdrawalEffect,
 } from '@/server/chaos'
 import { deleteEvent } from '@/server/events'
+import { flowTournament } from '@/server/board'
 import { getCategory, getTournamentBySlug } from '@/server/tournaments'
 
 /**
@@ -89,8 +90,8 @@ export async function withdrawTeamAction(formData: FormData) {
     reason: `${team.name} pulled out of ${team.categoryName}`,
     after: { played: effect?.played ?? 0, walkovers: res.walkovers },
   })
-  // Their walkovers can make a later match ready: this is where
-  // `flowTournament(team.tournamentId)` belongs once it exists.
+  // Their walkovers can make a later match ready.
+  await flowTournament(team.tournamentId)
   done(
     slug,
     `${team.name} are out. ${
@@ -121,7 +122,8 @@ export async function reinstateTeamAction(formData: FormData) {
     reason: `${team.name} are playing after all`,
     after: { walkoversUndone: res.restored },
   })
-  // Undone walkovers go back in the queue: `flowTournament` belongs here too.
+  // Undone walkovers go back in the queue.
+  await flowTournament(team.tournamentId)
   done(
     slug,
     `${team.name} are back in. ${
@@ -215,8 +217,8 @@ export async function resumeDayAction(formData: FormData) {
     entity: 'tournament',
     entityId: tournament.id,
   })
-  // Courts that stood empty through the stop take the next matches now:
-  // `flowTournament(tournament.id)` belongs here once it exists.
+  // `resumeDay` already flows the next matches onto the courts that stood
+  // empty through the stop.
   done(slug, 'The day is going again.')
 }
 
