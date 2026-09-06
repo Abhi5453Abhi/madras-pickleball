@@ -3,7 +3,15 @@ import { desc, isNotNull, isNull, and } from 'drizzle-orm'
 import { db } from '@/db'
 import { tournaments } from '@/db/schema'
 import { ensureReady } from '@/server/bootstrap'
-import { CourtMark, EmptyState, NetRule, StatusPill, statusWords, Wordmark } from '@/components/ui'
+import {
+  CourtMark,
+  EmptyState,
+  NetRule,
+  SkipLink,
+  StatusPill,
+  statusWords,
+  Wordmark,
+} from '@/components/ui'
 import { venueDate } from '@/lib/time'
 
 export const dynamic = 'force-dynamic'
@@ -26,7 +34,8 @@ export default async function Home() {
   const rest = published.filter((t) => t.id !== current?.id)
 
   return (
-    <main className="min-h-dvh bg-ground pb-16">
+    <div className="min-h-dvh bg-ground pb-16">
+      <SkipLink>Skip to the tournaments</SkipLink>
       <header className="masthead relative overflow-hidden bg-ink px-4 pt-8 pb-7 text-white">
         <CourtMark className="pointer-events-none absolute -right-8 -bottom-12 w-56 text-white opacity-[0.07] print:hidden" />
         <div className="mx-auto w-full max-w-3xl">
@@ -43,11 +52,11 @@ export default async function Home() {
         <NetRule className="absolute inset-x-0 bottom-0" />
       </header>
 
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4">
+      <main id="main" className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4">
         {current ? (
           <Link
             href={`/t/${current.slug}`}
-            className="tap-xl flex items-center gap-3 rounded-card border border-line-strong bg-paper px-4 shadow-card"
+            className="tap-xl flex items-center gap-3 rounded-card border border-line-key bg-paper px-4 shadow-card"
           >
             <span className="min-w-0 flex-1">
               <span className="block text-section text-text">
@@ -75,7 +84,7 @@ export default async function Home() {
                   <li key={t.id}>
                     <Link
                       href={`/t/${t.slug}`}
-                      className="tap flex items-center gap-3 rounded-card border border-line-strong bg-paper px-4 shadow-card"
+                      className="tap flex items-center gap-3 rounded-card border border-line-key bg-paper px-4 shadow-card"
                     >
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-row text-text">{t.name}</span>
@@ -103,7 +112,7 @@ export default async function Home() {
             Scorers don’t need an account — scan the QR on the net post.
           </p>
         </div>
-      </div>
-    </main>
+      </main>
+    </div>
   )
 }

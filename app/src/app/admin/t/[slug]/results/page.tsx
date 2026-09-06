@@ -29,6 +29,14 @@ import { confirmAll, markNoShow } from './actions'
  * was never sent out is not a missing score at all. Lumping that last group in
  * had the page asking the organiser to chase six matches when two needed it.
  */
+
+/** The screen's own word first: a tab label truncates from the right. */
+export async function generateMetadata(props: PageProps<'/admin/t/[slug]/results'>) {
+  const { slug } = await props.params
+  const tournament = await getTournamentBySlug(slug)
+  return { title: tournament ? `Results desk · ${tournament.name}` : 'Results desk · Madras Pickleball' }
+}
+
 export const dynamic = 'force-dynamic'
 
 /**

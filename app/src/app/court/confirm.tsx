@@ -59,7 +59,7 @@ export function ConfirmButtons({
       </p>
 
       <details className="group">
-        <summary className="tap-xl flex items-center justify-center rounded-control border-2 border-text-3 bg-paper px-4 text-center text-[18px] font-bold text-text">
+        <summary className="tap-xl flex items-center justify-center rounded-control border-2 border-line-key bg-paper px-4 text-center text-[18px] font-bold text-text">
           That’s not the score
         </summary>
         <div className="pt-3">

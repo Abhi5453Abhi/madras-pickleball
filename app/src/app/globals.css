@@ -11,9 +11,26 @@
  *      confirmed is ink. A second green destroys both.
  *   2. Terracotta is the single accent, and it is spent on structure (the net
  *      rule, a qualifying position, an idle court's call to action) — never on
- *      status, never on text below 14px.
+ *      status. Which terracotta depends on the job, and the split is measured,
+ *      not aesthetic: `accent` and `accent-hi` are dark enough to carry words
+ *      on every surface here, `accent-line` is not and is only ever a rule or
+ *      a fill under nothing.
  *   3. Ink is a chrome FILL, not body text. Blue-tinted body copy at 15px just
  *      reads as generic dark grey; a solid ink band reads as a brand.
+ *
+ * Every colour below carries its worst measured ratio, and the surface it was
+ * measured against. Two lessons, both learned by shipping the mistake:
+ *
+ *   Measure against the WORST surface a token lands on, not the common one.
+ *   `text-3` was tuned on `ground` (4.50:1, a margin of three thousandths) and
+ *   nobody checked `sunken`, where the same colour is 4.18:1 — and `sunken` is
+ *   where Confirm puts the one sentence telling you how to back out.
+ *
+ *   Measure the NON-text pairs too. Sizes and weights are not the rule and
+ *   never were: a colour that fails 4.5:1 fails at 15px and at 24px alike,
+ *   and a control's edge has its own threshold (3:1, WCAG 1.4.11) that no
+ *   amount of type size will rescue. The audit that found all of this read
+ *   78 rendered text pairs and every border in the system.
  */
 
 /* Self-hosted: no font CDN is reachable from the build, and a webfont that
@@ -53,10 +70,12 @@
   /* ── text ── */
   --color-text: #10151b;
   --color-text-2: #414d5c;
-  /* Nudged darker: at #6b7889 a 14px section subtitle on the page's own grey
-     ground measured 3.97:1, which is under AA for normal text, and this is the
-     colour every "in the order they'll be called" line uses. Now 4.5:1. */
-  --color-text-3: #636f80;
+  /* Darkened twice, and the second time for the reason the first one missed.
+     #6b7889 was 3.97:1 on `ground`; #636f80 fixed that at 4.50:1 and was still
+     4.18:1 on `sunken` — a surface it lands on constantly, and the one under
+     Confirm's "tap it again to leave it alone". Measured against `sunken` now:
+     4.78:1 there, 5.15:1 on ground, 5.83:1 on paper. */
+  --color-text-3: #5b6675;
   --color-on-ink: #ffffff;
   --color-on-ink-2: #b9cde0;
 
@@ -67,23 +86,42 @@
        line        — a divider between rows of one list.
        line-strong — the edge of an OBJECT: a card, a panel, a table cell.
                      1.6:1 against paper, which is all a seam needs.
-       line-key    — the edge of a TARGET, where the border is the only thing
-                     saying where to press: a bare input, a secondary button,
-                     a summary row, a category chip, a number key on the score
-                     pad. 3.7:1 against paper and 3.2:1 against the page's own
-                     grey, so it clears the 3:1 that WCAG 1.4.11 asks of the
-                     boundary of an active control — which line-strong does not,
-                     and which is the difference between finding a 64px chip in
-                     direct sun and hunting for it. text-3 (5.1:1) also clears
-                     it and reads as a heavy box; this is a pencil line. ── */
+       line-key    — the edge of a TARGET. The test is not whether it looks
+                     like a card: if a finger can press it, it is a target.
+                     A bare input, a secondary button, a summary row, a
+                     category chip, a number key, a link card. WCAG 1.4.11
+                     asks 3:1 of the boundary of an active control, which
+                     line-strong (1.62:1 on paper, 1.43:1 on ground) is not
+                     within reach of. text-3 also clears 3:1 and reads as a
+                     heavy box; this is a pencil line.
+
+                     #7a8797 shipped at 2.999:1 on `sunken` — one thousandth
+                     under, on the surface Confirm puts its fields on. Now
+                     3.34:1 on sunken, 3.60:1 on ground, 4.07:1 on paper. ── */
   --color-line: #dce2ea;
   --color-line-strong: #c3ccd8;
-  --color-line-key: #7a8797;
+  --color-line-key: #737f8e;
   --color-line-ink: #1e4e77;
 
-  /* ── the one accent ── */
-  --color-accent: #ce4318;
-  --color-accent-hi: #b23a13;
+  /* ── the one accent ──
+     Three steps of one terracotta, and which one you reach for is decided by
+     what has to be legible against it, not by how hot it looks:
+
+       accent      — words on a page surface, and fills that carry white text.
+                     The old #ce4318 was 4.17:1 on `ground` and 4.73:1 under
+                     white, so the eyebrow at the top of eight of eleven
+                     screens ("Organiser", "Court board", "Results desk") and
+                     the one terracotta button both failed AA. It is now the
+                     value that was already sitting in the palette one step
+                     down: 4.91:1 at worst as text (on sunken), 5.99:1 under
+                     white.
+       accent-hi   — the pressed/hover step, and any accent word on a tinted
+                     panel. 5.91:1 at worst, 7.21:1 under white.
+       accent-line — the net rule, the cut line, the 3px marks. 3.04:1 at
+                     worst, which is a graphic threshold and NOT a text one.
+                     Nothing readable ever sits on it or in it. ── */
+  --color-accent: #b23a13;
+  --color-accent-hi: #9c3410;
   --color-accent-line: #e2582b;
   --color-accent-soft: #fcebe4;
   /* The same terracotta, lightened by exactly as much as it takes to clear
@@ -478,9 +516,12 @@ details[open] > summary .chev {
     white-space: normal !important;
     text-overflow: clip !important;
   }
-  /* Panels clip on screen so a row cannot break out of a rounded corner. On
-     paper clipping only ever loses something. */
-  [class*='overflow-hidden'] {
+  /* Panels clip on screen so a row cannot break out of a rounded corner, and
+     the standings table scrolls sideways inside its own box at phone widths.
+     On paper there is no scrolling to do and clipping only ever loses
+     something — 186mm is wider than the table's floor either way. */
+  [class*='overflow-hidden'],
+  .table-scroll {
     overflow: visible !important;
   }
 

@@ -12,6 +12,8 @@ const ROLE_WORDS: Record<string, string> = {
   umpire: 'Umpire — you can score the matches you are put on',
 }
 
+export const metadata = { title: 'Your account · Madras Pickleball' }
+
 export default async function AccountPage(props: PageProps<'/admin/account'>) {
   const user = await requireUser('umpire', { allowPasswordChange: true })
   const { first } = await props.searchParams

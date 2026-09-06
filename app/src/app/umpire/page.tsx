@@ -12,6 +12,8 @@ import {
 import { umpireQueue } from '@/server/umpire'
 import { ensureReady } from '@/server/bootstrap'
 
+export const metadata = { title: 'Scoring · Madras Pickleball' }
+
 export const dynamic = 'force-dynamic'
 
 /**

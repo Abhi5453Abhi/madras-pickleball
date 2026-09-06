@@ -14,6 +14,8 @@ import { PRIMARY_LINK, SECONDARY_LINK } from './_ui'
  * much of the day is left. So the live tournament gets the day's numbers and a
  * button straight to the board; everything else is a line in a list.
  */
+export const metadata = { title: 'Tournaments · Madras Pickleball' }
+
 export default async function AdminHome(props: PageProps<'/admin'>) {
   await ensureReady()
   await requireUser('admin')

@@ -5,6 +5,13 @@ import { getTournamentBySlug } from '@/server/tournaments'
 import { SECONDARY_LINK } from '../../../_ui'
 import { Cards } from './cards'
 
+/** The screen's own word first: a tab label truncates from the right. */
+export async function generateMetadata(props: PageProps<'/admin/t/[slug]/cards'>) {
+  const { slug } = await props.params
+  const tournament = await getTournamentBySlug(slug)
+  return { title: tournament ? `Court cards · ${tournament.name}` : 'Court cards · Madras Pickleball' }
+}
+
 export const dynamic = 'force-dynamic'
 
 export default async function CardsPage(props: PageProps<'/admin/t/[slug]/cards'>) {

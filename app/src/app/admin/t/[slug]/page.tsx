@@ -59,6 +59,21 @@ import { resumeDayAction } from './actions'
  * Nothing is hidden: every match and every player is still in the document,
  * behind a `details`, so find-in-page reaches them.
  */
+
+/**
+ * Three of these screens live in three tabs on tournament morning. Sharing one
+ * document title made the tab strip, the back button and browser history
+ * useless (WCAG 2.4.2), so the distinguishing word goes first — a tab label
+ * truncates from the right.
+ */
+export async function generateMetadata(props: PageProps<'/admin/t/[slug]'>) {
+  const { slug } = await props.params
+  const tournament = await getTournamentBySlug(slug)
+  return {
+    title: tournament ? `${tournament.name} · Madras Pickleball` : 'Tournament · Madras Pickleball',
+  }
+}
+
 export const dynamic = 'force-dynamic'
 
 /** One row of the attention block, already rendered, with a key to put it under. */
@@ -326,7 +341,7 @@ export default async function TournamentPage(props: PageProps<'/admin/t/[slug]'>
   // ── what the emergency tools would cost (SPEC A7) ──────────────────────────
 
   const everyTeam = cats.flatMap((c, i) =>
-    tables[i].teams.map((t) => ({ ...t, categoryName: c.name })),
+    tables[i].teams.map((t) => ({ ...t, categoryId: c.id, categoryName: c.name })),
   )
   // The engine's own answer, not one rebuilt from the match list: the number in
   // the confirm has to be the number the write acts on. They go out together,
@@ -334,6 +349,21 @@ export default async function TournamentPage(props: PageProps<'/admin/t/[slug]'>
   const effects = await Promise.all(everyTeam.map((t) => withdrawalEffect(t.id)))
   const withdrawals: WithdrawView[] = everyTeam.map((t, i) => {
     const e = effects[i]
+    // `vacates` is a count; the sentence wants the round's name, and the match
+    // list already on this page has it. The engine still owns whether the
+    // clause is said at all.
+    const vacatesRounds = allMatches
+      .filter(
+        (m) =>
+          m.categoryId === t.categoryId &&
+          m.resultState === 'none' &&
+          m.status !== 'live' &&
+          (m.teamAId === t.id || m.teamBId === t.id) &&
+          !(m.teamAId && m.teamBId),
+      )
+      .map((m) => m.roundName)
+      .filter((r): r is string => !!r)
+
     return {
       teamId: t.id,
       name: t.name,
@@ -341,6 +371,8 @@ export default async function TournamentPage(props: PageProps<'/admin/t/[slug]'>
       withdrawn: t.status === 'withdrawn',
       played: e?.played ?? 0,
       toWalkover: e?.toWalkover ?? 0,
+      vacates: e?.vacates ?? 0,
+      vacatesRounds,
       blockedBy: e?.blocked.length ? (e.blocked[0].roundName ?? 'A match of theirs') : null,
     }
   })

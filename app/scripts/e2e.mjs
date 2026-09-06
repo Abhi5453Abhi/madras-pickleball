@@ -29,7 +29,9 @@ page.on('pageerror', (e) => console.log('   pageerror:', e.message.slice(0, 160)
 const fails = []
 const ok = (l, c, extra = '') =>
   c ? console.log(`  ok    ${l}`) : (fails.push(l), console.log(`  FAIL  ${l} ${extra}`))
-const body = () => page.innerText('body')
+// innerText skips anything inside a closed <details>, and the redesign puts
+// plenty behind disclosures. Read the DOM, not just what is on screen.
+const body = () => page.evaluate(() => document.body.textContent ?? '')
 
 const PASSWORD = 'e2e-real-password-1'
 
@@ -52,7 +54,8 @@ ok('signed in', /\/admin|\/umpire/.test(page.url()))
 
 // A temporary password opens exactly one door.
 ok('a temporary password lands on the change-password screen', page.url().includes('/admin/account'))
-await page.goto(`${BASE}/admin/quick`)
+await page.goto(`${BASE}/admin/quick`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(500)
 ok(
   'and it cannot be walked around',
   page.url().includes('/admin/account'),
@@ -80,7 +83,11 @@ await page.fill(
   '#players',
   ['Ana One', 'Ben Two', 'Cara Three', 'Dev Four', 'Eve Five', 'Fin Six', 'Gia Seven', 'Hal Eight'].join('\n'),
 )
-await page.waitForFunction(() => document.body.innerText.includes('8 players'), null, { timeout: 10000 })
+await page.waitForFunction(
+  () => (document.body.textContent ?? '').includes('8 players'),
+  null,
+  { timeout: 10000 },
+)
 await Promise.all([
   page.waitForURL('**/admin/t/**', { timeout: 30000 }).catch(() => {}),
   page.click('button[type=submit]'),
@@ -96,8 +103,8 @@ ok('tournament created', !!slug, page.url())
 }
 
 console.log('\n3. court board')
-await page.goto(`${BASE}/admin/t/${slug}/board`)
-let text = await body()
+await page.goto(`${BASE}/admin/t/${slug}/board`, { waitUntil: 'networkidle' })
+let text = await page.evaluate(() => document.body.textContent ?? '')
 const courtCards = await page.$$('[data-court]')
 ok('board lists four courts', courtCards.length === 4, `saw ${courtCards.length}`)
 ok('an idle court offers the next match', /Send to Court/.test(text))
@@ -112,8 +119,16 @@ ok('conflict detection names a blocked player', /is on Court/i.test(text), text.
 console.log('\n4. court cards')
 await page.goto(`${BASE}/admin/t/${slug}/cards`)
 await page.click('button:has-text("Make the cards")')
-await page.waitForFunction(() => document.body.innerText.includes('shown once'), null, { timeout: 20000 })
-const codes = (await body()).match(/\b[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}\b/g) ?? []
+await page.waitForFunction(
+  () => (document.body.textContent ?? '').includes('shown once'),
+  null,
+  { timeout: 20000 },
+)
+// No \b anchors: read from textContent the code runs straight into the court
+// name either side of it, and a digit next to a letter is not a word boundary.
+const codes = [
+  ...new Set((await body()).match(/[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}/g) ?? []),
+]
 ok('a code per court', codes.length === 4, `got ${codes.length}`)
 
 console.log('\n5. score from the court QR, with no account')
@@ -153,7 +168,7 @@ const playGame = async (p, winnerLabel, winnerScore, loserScore) => {
 
 for (const code of codes) {
   await court.goto(`${BASE}/c/${code}`)
-  const t = await court.innerText('body')
+  const t = await court.evaluate(() => document.body.textContent ?? '')
   if (!/Who won game 1/.test(t)) continue
 
   // Whoever is listed first wins in straight games.
@@ -170,7 +185,7 @@ for (const code of codes) {
 ok('the QR opens the scoreboard with no login', scored)
 
 if (scored) {
-  const t = await court.innerText('body')
+  const t = await court.evaluate(() => document.body.textContent ?? '')
   ok(
     'it asks which side is sending it',
     /putting this in|submitting|Hold your own name/i.test(t),
@@ -180,11 +195,16 @@ if (scored) {
   const holds = await court.$$('button:has-text("Hold")')
   ok('there is something to hold', holds.length > 0, t.slice(0, 300))
   if (holds.length) {
-    await holds[0].focus()
-    await court.keyboard.press('Enter')
+    // Hold it, the way a thumb does. The keyboard path is a two-press arm
+    // rather than a hold, and this is the gesture that actually ships.
+    const box = await holds[0].boundingBox()
+    await court.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await court.mouse.down()
+    await court.waitForTimeout(900)
+    await court.mouse.up()
     await court.waitForTimeout(3000)
   }
-  const after = await court.innerText('body')
+  const after = await court.evaluate(() => document.body.textContent ?? '')
   ok(
     'the score lands and asks the other pair',
     /Hand the phone|That’s right|That's right/i.test(after),

@@ -16,6 +16,14 @@ import { LinkPanel } from './link-panel'
  * The order is the order they need attention: people waiting, then pairs that
  * can be formed with one tap, then everyone already in.
  */
+
+/** The screen's own word first: a tab label truncates from the right. */
+export async function generateMetadata(props: PageProps<'/admin/t/[slug]/registrations'>) {
+  const { slug } = await props.params
+  const tournament = await getTournamentBySlug(slug)
+  return { title: tournament ? `Sign-ups · ${tournament.name}` : 'Sign-ups · Madras Pickleball' }
+}
+
 export const dynamic = 'force-dynamic'
 
 export default async function RegistrationsPage(props: PageProps<'/admin/t/[slug]/registrations'>) {

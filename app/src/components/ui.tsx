@@ -418,6 +418,34 @@ export function Wordmark({ className }: { className?: string }) {
   )
 }
 
+/**
+ * The first thing in the tab order, and invisible until it has focus.
+ *
+ * The public page opens with an ink masthead and a name picker; a keyboard or
+ * switch user who wants the tables was tabbing through twenty-four player
+ * buttons to reach them. `sr-only` until focused rather than permanently
+ * visible, because it is chrome for the few and clutter for everyone else.
+ *
+ * The page it sits on must have a matching `id` on its <main>, or this is a
+ * link to nowhere — which is worse than no link at all.
+ */
+export function SkipLink({ href = '#main', children }: { href?: string; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      // Paper on ink, not ink on ink: this lands on top of the masthead on
+      // every page that has one, and an ink pill on an ink band is an
+      // invisible skip link, which is the same as no skip link.
+      className={clsx(
+        'sr-only rounded-control border-2 border-ink bg-paper px-4 py-3 text-[17px] font-bold text-ink',
+        'focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-50 focus:shadow-bar',
+      )}
+    >
+      {children}
+    </a>
+  )
+}
+
 export function NetRule({ className }: { className?: string }) {
   return <div aria-hidden className={clsx('net-rule', className)} />
 }
@@ -499,8 +527,9 @@ const TAG: Record<TagTone, string> = {
   neutral: 'border-line-strong bg-sunken text-text-2',
   waiting: 'border-waiting/35 bg-waiting-soft text-waiting',
   alert: 'border-alert/35 bg-alert-soft text-alert',
-  // accent-hi, not accent: terracotta on its own soft tint is 4.1:1, and a
-  // 14px tag is not large text.
+  // accent-hi rather than accent on a tinted panel: 6.23:1 against the soft
+  // tint instead of 5.17:1, and this tag sits next to alert and waiting tags
+  // that are both darker than their own tints by about that much.
   accent: 'border-accent/35 bg-accent-soft text-accent-hi',
   live: 'border-live/35 bg-live-soft text-live-text',
 }

@@ -36,6 +36,15 @@ export type WithdrawView = {
   played: number
   /** Matches they have left, which become walkovers to the other side. */
   toWalkover: number
+  /**
+   * Matches they were only pencilled into — a final waiting on the other semi.
+   * There is nobody to give a walkover to, so the slot simply loses their name
+   * and goes back to waiting. Counted separately because promising a walkover
+   * that will not happen is worse than saying nothing.
+   */
+  vacates: number
+  /** What those matches are called, for the sentence. */
+  vacatesRounds: string[]
   /** A match of theirs on court right now — the server will refuse until it ends. */
   blockedBy: string | null
 }
@@ -63,6 +72,45 @@ export type SubTeam = {
   teamName: string
   categoryName: string
   members: Array<{ id: string; name: string }>
+}
+
+/**
+ * What a withdrawal costs, in counts, before it happens. Three different things
+ * can happen to a pair's remaining matches and the confirm has to name whichever
+ * ones apply — "are you sure?" is not an answer to somebody standing in front of
+ * you asking to pull out.
+ */
+function withdrawalSentence(w: WithdrawView): string {
+  if (w.played === 0 && w.toWalkover === 0 && w.vacates === 0) {
+    return 'They have no matches in the draw yet, so nothing moves — this only marks them as out.'
+  }
+
+  const parts: string[] = []
+
+  parts.push(
+    w.played === 0
+      ? 'They have not played anything yet.'
+      : `${w.played} ${w.played === 1 ? 'match' : 'matches'} they have played stand.`,
+  )
+
+  if (w.toWalkover > 0) {
+    parts.push(
+      `The ${w.toWalkover} they had left ${w.toWalkover === 1 ? 'becomes a walkover' : 'become walkovers'} to the other pair.`,
+    )
+  }
+
+  if (w.vacates > 0) {
+    const named = w.vacatesRounds.filter(Boolean)
+    parts.push(
+      w.vacates === 1 && named.length === 1
+        ? `They ${w.toWalkover > 0 ? 'also ' : ''}come off ${named[0]}, which goes back to waiting for whoever comes through.`
+        : `They ${w.toWalkover > 0 ? 'also ' : ''}come off ${w.vacates} matches they were only pencilled into, which go back to waiting.`,
+    )
+  }
+
+  if (w.toWalkover === 0 && w.vacates === 0) parts.push('They have nothing left to play.')
+
+  return parts.join(' ')
 }
 
 const INK_BUTTON =
@@ -198,10 +246,7 @@ export function Fixes({
                       // Not "are you sure" — the organiser is standing in front
                       // of the person asking, and the answer they need is a
                       // count of what it costs.
-                      question={
-                        `${w.played} ${w.played === 1 ? 'match' : 'matches'} they have played stand. ` +
-                        `${w.toWalkover === 0 ? 'They have nothing left to play' : `The ${w.toWalkover} they had left ${w.toWalkover === 1 ? 'becomes a walkover' : 'become walkovers'} to the other pair`}.`
-                      }
+                      question={withdrawalSentence(w)}
                       detail="A walkover counts as a win and adds nothing to any difference column, so a pair going home cannot decide the pool for the people still playing. You can put them back."
                     >
                       <form action={withdrawTeamAction}>
@@ -300,7 +345,13 @@ export function Fixes({
                           <Confirm
                             label={o.label}
                             question={`The ${c.outstanding} ${c.outstanding === 1 ? 'match' : 'matches'} nobody has started in ${c.name} become ${o.label.toLowerCase()}.${o.finishAt ? ` The day finishes about ${o.finishAt} instead — ${Math.round(o.savedMinutes)} minutes back.` : ''}`}
-                            detail="Matches already played keep the format they were played under, so no score changes meaning."
+                            // This sentence is load-bearing and it is tied to
+                            // `rules_override`: a category is scored one way
+                            // for the whole day until the shortening writes
+                            // per-match rules onto the unplayed fixtures. When
+                            // that lands, the second half of this is no longer
+                            // true and should go.
+                            detail="Scores already in are not changed. But a category is scored one way for the whole day, so a result you go back to correct afterwards has to fit the new shape — if you have corrections to make, make them first."
                           >
                             <form action={shortenFormatAction}>
                               <input type="hidden" name="slug" value={slug} />

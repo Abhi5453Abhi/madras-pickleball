@@ -93,7 +93,36 @@ function StandingsTable({ table }: { table: CategoryTable }) {
 
   return (
     <Panel>
-      <table className="w-full border-collapse">
+      {/*
+        The one place on this page that cannot reflow. Five columns of numbers
+        and a column of two-line names has a floor: at a 195px viewport — a
+        phone at 200% zoom — the fixed number columns pushed WON and SCORED
+        past the edge and the whole PAGE scrolled sideways by 84px, which is
+        WCAG 1.4.10 and is also just miserable to read.
+
+        A data table is the criterion's own exception, so the fix is not to
+        shrink it into uselessness but to give it its own scroll box: the page
+        stays one column at any width, and the two columns the tiebreak turns
+        on stay reachable. `tabindex` because a scrollable region that only a
+        pointer can scroll is a keyboard trap in reverse (WCAG 2.1.1); the
+        stylesheet's `[tabindex]:focus-visible` rule already rings it.
+      */}
+      {/*
+        `relative` is load-bearing, not tidiness. The column headers carry
+        `sr-only` spans — "Position", "Played", "Total points scored" — and an
+        sr-only box is `position: absolute`. With no positioned ancestor its
+        containing block is the viewport, so inside a box that scrolls
+        sideways it escapes the box entirely and widens the PAGE by however
+        far along the table it happens to sit. That is 133px of horizontal
+        page scroll from three invisible one-pixel spans.
+      */}
+      <div
+        className="table-scroll relative overflow-x-auto"
+        tabIndex={0}
+        role="region"
+        aria-label={`${table.name} table`}
+      >
+        <table className="w-full min-w-[19rem] border-collapse">
         <caption className="sr-only">
           {table.name} table{cut ? ` — ${cutLabel(table)}` : ''}
         </caption>
@@ -207,7 +236,8 @@ function StandingsTable({ table }: { table: CategoryTable }) {
             </tr>
           ) : null}
         </tbody>
-      </table>
+        </table>
+      </div>
 
       {nothingPlayed && table.rows.length > 0 ? (
         <p className="border-t border-line bg-sunken px-4 py-3 text-meta text-text-2">
@@ -266,6 +296,26 @@ export function Tables({ tables }: { tables: CategoryTable[] }) {
               </span>
             ))}
           </div>
+        )}
+
+        {/*
+          Choosing a tab replaces a whole six-row table underneath, and a radio
+          group announces the radio, not its consequence. These lines ride the
+          same `[data-panel]` switch as the tables themselves, so the one that
+          is showing is the one in the live region — no JavaScript, no second
+          source of truth for which table is on.
+
+          The radio's own "Men's Doubles, selected" is the part that is
+          guaranteed; this is the part that says what it did.
+        */}
+        {single ? null : (
+          <p role="status" className="sr-only">
+            {tables.map((t, i) => (
+              <span key={t.id} data-panel={i}>
+                Showing the {t.name} table
+              </span>
+            ))}
+          </p>
         )}
 
         {tables.map((t, i) => (

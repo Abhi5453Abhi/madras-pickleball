@@ -173,7 +173,14 @@ export function FindMyMatch({
   function showTable(index: number) {
     const radio = document.getElementById(`cat-tab-${index}`)
     if (radio instanceof HTMLInputElement) radio.checked = true
-    document.getElementById('tables')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // A smooth scroll of two thousand pixels is thirteen frames of the whole
+    // page moving under someone who has asked the operating system for none of
+    // that. The stylesheet's reduced-motion block cannot reach a scroll started
+    // in script, so the check has to happen here.
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    document
+      .getElementById('tables')
+      ?.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' })
   }
 
   if (me) {
@@ -249,7 +256,7 @@ export function FindMyMatch({
             <button
               type="button"
               onClick={() => showTable(myTable.index)}
-              className="tap mt-3 -mb-1 flex w-full items-center justify-center rounded-control border border-line-strong bg-paper px-4 text-row text-link"
+              className="tap mt-3 -mb-1 flex w-full items-center justify-center rounded-control border border-line-key bg-paper px-4 text-row text-link"
             >
               See the {myTable.name} table
             </button>
@@ -257,8 +264,12 @@ export function FindMyMatch({
         </div>
 
         {history.length ? (
-          <details className="group border-t border-line">
-            <summary className="tap flex items-center gap-3 bg-paper px-4">
+          <details className="group">
+            {/* The border lives on the summary, not on the details: it is the
+                edge of the control. On the details it was the edge of a region
+                that happens to start there, and the summary itself measured
+                1.00:1 against paper — no boundary at all. */}
+            <summary className="tap flex items-center gap-3 border-t border-line-key bg-paper px-4">
               <span className="min-w-0 flex-1 text-row text-text">
                 Your {history.length} match{history.length === 1 ? '' : 'es'} so far
               </span>
@@ -343,8 +354,26 @@ export function FindMyMatch({
           placeholder="Type your name"
           autoComplete="off"
           enterKeyHint="search"
-          className="tap-lg mt-3 w-full rounded-control border border-line-strong bg-paper px-3.5 text-body text-text placeholder:text-text-3 focus:border-link focus:ring-2 focus:ring-link/25 focus:outline-none"
+          aria-describedby="me-count"
+          className="tap-lg mt-3 w-full rounded-control border border-line-key bg-paper px-3.5 text-body text-text placeholder:text-text-3 focus:border-link focus:ring-2 focus:ring-link/25 focus:outline-none"
         />
+        {/*
+          Typing rebuilds a list of up to twenty-four buttons below, and until
+          now it did it in silence: a screen reader user got no signal that
+          anything had happened between keystrokes, and no way to know whether
+          to go looking. One short count, politely, is the whole fix — the
+          names themselves are already reachable, they just were not announced
+          as having arrived.
+        */}
+        <p id="me-count" role="status" className="sr-only">
+          {query.trim()
+            ? shortlist.length === 1
+              ? '1 name matches'
+              : `${shortlist.length} names match`
+            : browsing
+              ? `Showing all ${players.length} names`
+              : ''}
+        </p>
       </div>
 
       {shortlist.length ? (
@@ -371,7 +400,7 @@ export function FindMyMatch({
         <button
           type="button"
           onClick={() => setBrowsing(true)}
-          className="tap flex w-full items-center justify-center border-t border-line px-4 text-row text-link"
+          className="tap flex w-full items-center justify-center border-t border-line-key px-4 text-row text-link"
         >
           Show all {players.length} names
         </button>
@@ -382,7 +411,7 @@ export function FindMyMatch({
             setBrowsing(false)
             setQuery('')
           }}
-          className="tap flex w-full items-center justify-center border-t border-line px-4 text-row text-link"
+          className="tap flex w-full items-center justify-center border-t border-line-key px-4 text-row text-link"
         >
           Hide the list
         </button>

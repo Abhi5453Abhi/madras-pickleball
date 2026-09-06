@@ -17,6 +17,13 @@ import { getTournamentBySlug } from '@/server/tournaments'
 import { offersForFreeCourts } from '../suggestions'
 import { placeMatch, takeOffCourt } from './actions'
 
+/** The screen's own word first: a tab label truncates from the right. */
+export async function generateMetadata(props: PageProps<'/admin/t/[slug]/board'>) {
+  const { slug } = await props.params
+  const tournament = await getTournamentBySlug(slug)
+  return { title: tournament ? `Court board · ${tournament.name}` : 'Court board · Madras Pickleball' }
+}
+
 export const dynamic = 'force-dynamic'
 
 function Sides({ a, b, dim }: { a: string | null; b: string | null; dim?: boolean }) {
@@ -104,9 +111,16 @@ function CourtCard({
             </p>
           ) : null}
         </div>
-        {/* The confirm goes full width once it is open, so its sentence is not
-            squeezed into the third of the row the closed button occupies. */}
-        <div className="flex flex-wrap gap-2 p-3">
+        {/*
+          gap-4, not gap-2. These two measured 7.6px apart, and the brief's own
+          floor is that nothing important sits within 8px of another target —
+          the one pair in the app that broke it, and the pair a wet thumb
+          reaches for. Sixteen is double the floor and keeps the row on one
+          line, which is what "every court visible without scrolling" costs.
+          The confirm also goes full width once open, so its sentence is not
+          squeezed into the third of the row the closed button occupies.
+        */}
+        <div className="flex flex-wrap gap-4 p-3">
           <Link
             href={`/admin/m/${court.live.id}`}
             className={clsx(
@@ -117,7 +131,10 @@ function CourtCard({
             {stale ? 'Enter it for them' : 'Enter the score'}
           </Link>
           <Confirm
-            className="shrink-0 [&[open]]:w-full [&[open]]:basis-full"
+            // Narrower and quieter than the primary: on a live court the
+            // organiser wants the score nineteen times out of twenty, and two
+            // equal-weight buttons say otherwise.
+            className="w-[7rem] shrink-0 [&[open]]:w-full [&[open]]:basis-full"
             label="Off court"
             question={`${court.name} goes back to free and this match comes off it with no score. Nothing is lost — send it out again whenever you like.`}
           >
@@ -193,7 +210,12 @@ export default async function BoardPage(props: PageProps<'/admin/t/[slug]/board'
   const upNext = placeable.filter((m) => !suggestedIds.has(m.id))
 
   return (
-    <div className="flex flex-col gap-6 pb-24">
+    // scroll-margin-bottom on the targets rather than scroll-padding on the
+    // document: the bar is fixed over the page, so tabbing to a control near
+    // the fold parked 41px of a 72px button underneath it (WCAG 2.4.11). The
+    // property belongs to the thing being scrolled to, and this is the only
+    // screen in the app with a bar over the content.
+    <div className="flex flex-col gap-6 pb-24 [&_a]:scroll-mb-24 [&_button]:scroll-mb-24 [&_summary]:scroll-mb-24">
       <header>
         <p className="font-score text-eyebrow text-accent uppercase">Court board</p>
         <h1 className="mt-1">

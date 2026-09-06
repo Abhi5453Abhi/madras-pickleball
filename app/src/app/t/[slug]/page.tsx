@@ -8,6 +8,7 @@ import {
   Notice,
   Panel,
   SectionHead,
+  SkipLink,
   Tag,
   TeamName,
   Wordmark,
@@ -134,6 +135,25 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
         mode={live.length ? 'live' : finished && !settling ? 'off' : 'idle'}
       />
 
+      <SkipLink>Skip to the day&rsquo;s play</SkipLink>
+
+      {/*
+        The page rewrites itself every few seconds and said nothing while it
+        did. This is the one sentence that changes when anything material
+        does — a match goes on, a score lands, the queue shortens — and
+        because it is server-rendered text, React only touches the DOM when
+        the numbers actually move. An identical re-render announces nothing,
+        which is the difference between a status and a nag.
+      */}
+      <p role="status" className="sr-only">
+        {live.length === 0
+          ? 'No match on court.'
+          : live.length === 1
+            ? '1 match on court.'
+            : `${live.length} matches on court.`}{' '}
+        {results.length} played, {toPlay.length} to play.
+      </p>
+
       <header className="masthead relative overflow-hidden bg-ink px-4 pt-6 pb-6 text-white">
         <CourtMark className="pointer-events-none absolute -right-8 -bottom-12 w-56 text-white opacity-[0.07] print:hidden" />
         <div className="mx-auto w-full max-w-5xl xl:max-w-6xl">
@@ -160,7 +180,7 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
         <NetRule className="absolute inset-x-0 bottom-0" />
       </header>
 
-      <div className="mx-auto w-full max-w-5xl px-4 pt-6 xl:max-w-6xl">
+      <main id="main" className="mx-auto w-full max-w-5xl px-4 pt-6 xl:max-w-6xl">
         {/*
           Two columns from `lg`. The sidebar holds the two things a reader keeps
           coming back to — who they are playing and who is next — and the main
@@ -246,7 +266,13 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
                       </div>
                       <TeamName name={m.nameB} players={m.playersB} size="section" />
                     </div>
-                    <p className="num border-t border-line bg-sunken px-4 py-2 text-meta text-text-2">
+                    {/* Explicitly off: the number reticks every 30 seconds and
+                        is worth nothing spoken. Saying so here also stops it
+                        being swallowed by a live region added above it later. */}
+                    <p
+                      aria-live="off"
+                      className="num border-t border-line bg-sunken px-4 py-2 text-meta text-text-2"
+                    >
                       {m.startedAt ? (
                         <Elapsed
                           startedAt={m.startedAt.getTime()}
@@ -415,7 +441,7 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
             </div>
           </div>
         </div>
-      </div>
+      </main>
     </div>
   )
 }
