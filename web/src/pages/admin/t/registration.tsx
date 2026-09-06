@@ -75,6 +75,18 @@ function Registration({
     await link.reload()
   }
 
+  /** "Same as Ravi Shankar?" — Same person merges, Different clears the flag. */
+  async function settleDuplicate(e: FormEvent<HTMLFormElement>, playerId: string, keepId: string) {
+    e.preventDefault()
+    const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null
+    const same = submitter?.value === 'same'
+    await settle(
+      same
+        ? await run('registration.mergePlayers', { tournamentId, keepId, dropId: playerId })
+        : await run('registration.keepBoth', { tournamentId, playerId }),
+    )
+  }
+
   const token = link.state === 'ready' ? link.data?.token : undefined
   const fullLink = token ? `${window.location.origin}/r/${token}` : ''
   const shown = token ? `${window.location.host}/r/${token}` : ''
@@ -118,6 +130,7 @@ function Registration({
               await settle(await run('events.reopenRegistration', { tournamentId }))
             }}
           >
+            <input type="hidden" name="slug" value={slug} />
             <button className={SECONDARY_LINK}>Reopen sign-ups</button>
           </form>
         </Card>
@@ -144,6 +157,7 @@ function Registration({
                 await settle(await run('events.closeRegistration', { tournamentId }))
               }}
             >
+              <input type="hidden" name="slug" value={slug} />
               <button className="tap-lg w-full rounded-control bg-ink px-4 text-[18px] font-bold text-white">
                 Close sign-ups
               </button>
@@ -213,6 +227,8 @@ function Registration({
                               )
                             }}
                           >
+                            <input type="hidden" name="slug" value={slug} />
+                            <input type="hidden" name="playerId" value={r.playerId} />
                             <button className="tap-lg w-full rounded-control bg-ink px-4 text-[18px] font-bold text-white">
                               Take {r.name} off
                             </button>
@@ -221,34 +237,20 @@ function Registration({
                       )}
                     </div>
                     {r.duplicateOf ? (
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          className={`${ROW_BUTTON} flex-1`}
-                          onClick={async () => {
-                            await settle(
-                              await run('registration.mergePlayers', {
-                                tournamentId,
-                                keepId: r.duplicateOf!.playerId,
-                                dropId: r.playerId,
-                              }),
-                            )
-                          }}
-                        >
+                      // One form with two named buttons, as the reference had
+                      // it: which one was pressed is read off the submitter,
+                      // so Enter in the row still settles it the same way.
+                      <form onSubmit={(e) => settleDuplicate(e, r.playerId, r.duplicateOf!.playerId)} className="flex gap-2">
+                        <input type="hidden" name="slug" value={slug} />
+                        <input type="hidden" name="playerId" value={r.playerId} />
+                        <input type="hidden" name="keepId" value={r.duplicateOf.playerId} />
+                        <button name="decision" value="same" className={`${ROW_BUTTON} flex-1`}>
                           Same person
                         </button>
-                        <button
-                          type="button"
-                          className={`${SECONDARY_LINK} flex-1`}
-                          onClick={async () => {
-                            await settle(
-                              await run('registration.keepBoth', { tournamentId, playerId: r.playerId }),
-                            )
-                          }}
-                        >
+                        <button name="decision" value="different" className={`${SECONDARY_LINK} flex-1`}>
                           Different
                         </button>
-                      </div>
+                      </form>
                     ) : null}
                   </li>
                 )

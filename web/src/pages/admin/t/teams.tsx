@@ -157,6 +157,7 @@ function Teams({ slug, tournamentId, name }: { slug: string; tournamentId: strin
               }
             >
               <form onSubmit={pairRest}>
+                <input type="hidden" name="slug" value={slug} />
                 <button className={`${ROW_BUTTON} w-full`}>Pair them</button>
               </form>
             </Confirm>
@@ -299,6 +300,7 @@ function PairRow({
             Split {pair.players.map((p) => p.name).join(' and ')}? Both go back to the pile.
           </p>
           <form onSubmit={(e) => onSplit(e, pair.teamId)} className="mt-3">
+            <input type="hidden" name="team" value={pair.teamId} />
             <button className={`${ROW_BUTTON} w-full`}>Split them</button>
           </form>
           <p className="mt-2 text-meta text-text-3">Tap the row again to leave it.</p>

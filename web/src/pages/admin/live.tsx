@@ -161,6 +161,7 @@ export function LiveBoardPage() {
             title={`${t.name} is paused`}
             action={
               <form onSubmit={(e) => resume(e, t.id)}>
+                <input type="hidden" name="tournamentId" value={t.id} />
                 <button className={`${PRIMARY_LINK} w-full`}>Start again</button>
               </form>
             }
@@ -175,6 +176,7 @@ export function LiveBoardPage() {
         .filter((t) => t.total > 0 && t.played === t.total)
         .map((t) => (
           <form key={t.id} onSubmit={(e) => finish(e, t.id)}>
+            <input type="hidden" name="slug" value={t.slug} />
             <button className={PRIMARY_LINK}>Finish {t.name}</button>
             <p className="mt-2 text-center text-meta text-text-2">
               All {t.total} played. The winners go on top of the public page and its courts come free.
@@ -306,6 +308,8 @@ function CourtCard({ court, board, onPutOn, onAddCourt }: CardProps) {
             // by a door the flow does not watch — so the board offers it, in
             // the only terracotta button on the screen.
             <form onSubmit={(e) => onPutOn(e, court.offer!.id, court.id)} className="mt-3">
+              <input type="hidden" name="matchId" value={court.offer.id} />
+              <input type="hidden" name="courtId" value={court.id} />
               <button className="tap w-full rounded-control bg-accent px-4 text-[17px] font-bold text-white shadow-key active:translate-y-px active:shadow-none">
                 Put {pairLine(court.offer)} on {court.name}
               </button>
@@ -369,6 +373,8 @@ function UnassignedCard({
             {wants.shortName} has {wants.toPlay} to play and a court sitting empty.
           </p>
           <form onSubmit={(e) => onAddCourt(e, wants.id, court.id)} className="mt-3">
+            <input type="hidden" name="tournamentId" value={wants.id} />
+            <input type="hidden" name="courtId" value={court.id} />
             <button className={`${QUIET_BUTTON} w-full`}>
               Add {court.name} to {wants.categoryName}
             </button>

@@ -32,14 +32,19 @@ export function useVersionPoll(
 ) {
   // The callback and the version change on every render of the page that owns
   // them; re-arming the interval each time would reset the five seconds and,
-  // on a busy board, mean it never actually fires.
+  // on a busy board, mean it never actually fires. So they are kept in refs
+  // that the interval reads, and written in an effect rather than during
+  // render — a ref written while rendering is a value React is free to throw
+  // away.
   const moved = useRef(onMoved)
-  moved.current = onMoved
   // The venue board has no version in its payload, so `current` is null on the
   // first render and the first poll adopts what it finds rather than treating
   // "I did not know yet" as "it moved".
   const seen = useRef<string | null | undefined>(current)
-  if (current !== null && current !== undefined) seen.current = current
+  useEffect(() => {
+    moved.current = onMoved
+    if (current !== null && current !== undefined) seen.current = current
+  })
 
   useEffect(() => {
     if (!path || mode === 'off') return

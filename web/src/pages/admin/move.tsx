@@ -85,6 +85,8 @@ export function MovePage() {
               <li key={c.id}>
                 {pickable ? (
                   <form onSubmit={(e) => move(e, c.id)}>
+                    <input type="hidden" name="matchId" value={opts.match.id} />
+                    <input type="hidden" name="courtId" value={c.id} />
                     <button className="tap-lg flex w-full items-center gap-3 px-4 text-left">
                       <CourtSwatch colorKey={c.colorKey} size="md" />
                       <span className="min-w-0 flex-1">
@@ -112,6 +114,7 @@ export function MovePage() {
           })}
           <li>
             <form onSubmit={backToQueue}>
+              <input type="hidden" name="matchId" value={opts.match.id} />
               <button className="tap-lg flex w-full items-center gap-3 px-4 text-left">
                 <span className="min-w-0 flex-1">
                   <span className="block text-row text-text">Back to the queue</span>

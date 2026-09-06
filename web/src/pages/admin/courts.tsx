@@ -90,6 +90,7 @@ export function CourtsPage() {
             {list.map((c) => (
               <li key={c.id} className="flex flex-col gap-2 px-4 py-3">
                 <form onSubmit={(e) => rename(e, c.id, c.name)} className="flex items-center gap-3">
+                  <input type="hidden" name="courtId" value={c.id} />
                   <CourtSwatch colorKey={c.colorKey} size="md" />
                   <Input
                     name="name"
@@ -116,6 +117,7 @@ export function CourtsPage() {
                       question={`${c.name} stops being offered to tournaments. Anything already played on it stays on the record.`}
                     >
                       <form onSubmit={(e) => remove(e, c.id)}>
+                        <input type="hidden" name="courtId" value={c.id} />
                         <button className="tap-lg w-full rounded-control bg-ink px-4 text-[18px] font-bold text-white">
                           Take {c.name} out
                         </button>

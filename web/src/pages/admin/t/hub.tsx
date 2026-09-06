@@ -107,11 +107,13 @@ export function HubPage() {
           // Singles has no pairs to make, so it skips the Teams step: the
           // players are the registration list.
           steps={h.steps.filter((s) => !(s.key === 'teams' && t.discipline === 'singles'))}
+          slug={slug}
           canStart={h.steps.every((s) => s.key === 'start' || s.state === 'done')}
           onStart={start}
         />
       ) : (
         <Running
+          slug={slug}
           base={base}
           phase={h.phase}
           tournamentId={t.id}
@@ -152,10 +154,12 @@ export function HubPage() {
 
 function SetupChecklist({
   steps,
+  slug,
   canStart,
   onStart,
 }: {
   steps: Step[]
+  slug: string
   canStart: boolean
   onStart: (e: FormEvent<HTMLFormElement>) => void
 }) {
@@ -201,6 +205,7 @@ function SetupChecklist({
                 <div className="flex items-center gap-3">{inner}</div>
                 {canStart ? (
                   <form onSubmit={onStart}>
+                    <input type="hidden" name="slug" value={slug} />
                     <button className={`${PRIMARY_LINK} w-full`}>Start the tournament</button>
                   </form>
                 ) : null}
@@ -223,6 +228,7 @@ function SetupChecklist({
 // ──────────────────────────── running / finished ────────────────────────────
 
 function Running({
+  slug,
   base,
   phase,
   tournamentId,
@@ -232,6 +238,7 @@ function Running({
   totalMatches,
   onFinish,
 }: {
+  slug: string
   base: string
   phase: 'running' | 'finished'
   tournamentId: string
@@ -332,6 +339,7 @@ function Running({
           title="Everything has been played"
           action={
             <form onSubmit={onFinish}>
+              <input type="hidden" name="slug" value={slug} />
               <button className={`${PRIMARY_LINK} w-full`}>Finish the tournament</button>
             </form>
           }

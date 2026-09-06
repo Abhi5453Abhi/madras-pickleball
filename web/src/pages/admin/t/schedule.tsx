@@ -146,6 +146,7 @@ function Schedule({ slug, h, reloadHub }: { slug: string; h: Hub; reloadHub: () 
         <section className="flex flex-col gap-3">
           <h2 className="font-score text-eyebrow text-text-2 uppercase">Courts</h2>
           <form onSubmit={saveCourts} className="flex flex-col gap-3">
+            <input type="hidden" name="slug" value={slug} />
             <div className="flex flex-wrap gap-2">
               {opts.map((o) => (
                 <label
@@ -198,6 +199,7 @@ function Schedule({ slug, h, reloadHub }: { slug: string; h: Hub; reloadHub: () 
           scroll, and the button is the thing the organiser came for. */}
       {canStart ? (
         <form onSubmit={start}>
+          <input type="hidden" name="slug" value={slug} />
           <button className={PRIMARY_LINK}>Start the tournament</button>
           <p className="mt-2 text-center text-meta text-text-2">Closes sign-ups and opens the live board.</p>
         </form>
@@ -215,6 +217,7 @@ function Schedule({ slug, h, reloadHub }: { slug: string; h: Hub; reloadHub: () 
           </h2>
           {all.length === 0 ? (
             <form onSubmit={makeSchedule} className="flex flex-col gap-2">
+              <input type="hidden" name="slug" value={slug} />
               <button className={PRIMARY_LINK} disabled={h.teamsMade < 2}>
                 Make the schedule
               </button>
@@ -254,6 +257,7 @@ function Schedule({ slug, h, reloadHub }: { slug: string; h: Hub; reloadHub: () 
               </Panel>
               {!locked ? (
                 <form onSubmit={makeSchedule}>
+                  <input type="hidden" name="slug" value={slug} />
                   <button className={SECONDARY_LINK + ' w-full'}>Make it again</button>
                 </form>
               ) : null}

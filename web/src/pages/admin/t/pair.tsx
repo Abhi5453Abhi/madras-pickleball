@@ -86,6 +86,8 @@ function PairWith({ slug, tournamentId }: { slug: string; tournamentId: string }
             {free.map((p) => (
               <li key={p.id}>
                 <form onSubmit={(e) => pair(e, p.id)}>
+                  <input type="hidden" name="player" value={me.id} />
+                  <input type="hidden" name="partner" value={p.id} />
                   <button
                     type="submit"
                     className="flex min-h-[56px] w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-ground"

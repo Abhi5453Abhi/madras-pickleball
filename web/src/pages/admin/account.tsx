@@ -151,6 +151,7 @@ function Organisers({
                     question={`${o.name}'s PIN stops working straight away. Everything they entered stays.`}
                   >
                     <form onSubmit={(e) => removeOrganiser(e, o.id)}>
+                      <input type="hidden" name="userId" value={o.id} />
                       <button className="tap-lg w-full rounded-control bg-ink px-4 text-[18px] font-bold text-white">
                         Remove {o.name}
                       </button>

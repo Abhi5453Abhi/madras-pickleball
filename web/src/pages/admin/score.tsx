@@ -132,6 +132,7 @@ export function ScorePage() {
           detail="Use this when a match should never have existed. To fix a wrong score, change the score above instead."
         >
           <form onSubmit={voidThisMatch} className="flex flex-col gap-2">
+            <input type="hidden" name="matchId" value={matchId} />
             <input
               name="reason"
               required

@@ -17,6 +17,7 @@ import {
   type PlayedMatch,
   type ShortenView,
   type WithdrawDetail,
+  type WithdrawRow,
 } from './fixes'
 
 type Tournament = Output<'tournaments.getTournamentBySlug'>
@@ -273,9 +274,6 @@ function WithdrawData({
   refuse: Refuse
 }) {
   const teams = useRpc('tournaments.listTeams', { tournamentId })
-  // The engine's own answer, not one rebuilt from the match list: the number
-  // in the confirm has to be the number the write acts on.
-  const effect = useRpc('chaos.withdrawalEffect', { tournamentId, teamId: teamParam ?? '' })
   const { run } = useAction()
 
   if (teams.state === 'loading') return <Loading lines={2} />
@@ -287,21 +285,7 @@ function WithdrawData({
     players: [] as string[],
     withdrawn: t.status === 'withdrawn',
   }))
-  const picked = teams.data.find((t) => t.id === teamParam)
-  const selected: WithdrawDetail | null =
-    picked && teamParam && effect.state === 'ready'
-      ? {
-          teamId: picked.id,
-          name: picked.name,
-          withdrawn: picked.status === 'withdrawn',
-          played: effect.data.played,
-          toWalkover: effect.data.toWalkover,
-          vacates: effect.data.vacates,
-          blockedBy: effect.data.blocked.length
-            ? (effect.data.blocked[0].roundName ?? 'A match of theirs')
-            : null,
-        }
-      : null
+  const picked = teams.data.find((t) => t.id === teamParam) ?? null
 
   async function withdraw(e: FormEvent<HTMLFormElement>, teamId: string) {
     e.preventDefault()
@@ -319,16 +303,48 @@ function WithdrawData({
     else done(res.note)
   }
 
-  return (
-    <Withdraw
-      slug={slug}
-      rows={rows}
-      selected={selected}
-      unit={unit}
-      onWithdraw={withdraw}
-      onReinstate={reinstate}
-    />
+  const props = { slug, rows, unit, onWithdraw: withdraw, onReinstate: reinstate }
+  // The effect is a whole component so it is not asked for until a pair has
+  // been tapped: `withdrawalEffect` 404s without a team, and a screen that
+  // 404s on arrival is a screen that logs a failure nobody caused.
+  return picked ? (
+    <WithdrawEffect {...props} tournamentId={tournamentId} picked={picked} />
+  ) : (
+    <Withdraw {...props} selected={null} />
   )
+}
+
+function WithdrawEffect({
+  tournamentId,
+  picked,
+  ...props
+}: {
+  slug: string
+  tournamentId: string
+  picked: { id: string; name: string; status: 'active' | 'withdrawn' }
+  rows: WithdrawRow[]
+  unit: 'pair' | 'player'
+  onWithdraw: (e: FormEvent<HTMLFormElement>, teamId: string) => void
+  onReinstate: (e: FormEvent<HTMLFormElement>, teamId: string) => void
+}) {
+  // The engine's own answer, not one rebuilt from the match list: the number
+  // in the confirm has to be the number the write acts on.
+  const effect = useRpc('chaos.withdrawalEffect', { tournamentId, teamId: picked.id })
+  const selected: WithdrawDetail | null =
+    effect.state === 'ready'
+      ? {
+          teamId: picked.id,
+          name: picked.name,
+          withdrawn: picked.status === 'withdrawn',
+          played: effect.data.played,
+          toWalkover: effect.data.toWalkover,
+          vacates: effect.data.vacates,
+          blockedBy: effect.data.blocked.length
+            ? (effect.data.blocked[0].roundName ?? 'A match of theirs')
+            : null,
+        }
+      : null
+  return <Withdraw {...props} selected={selected} />
 }
 
 function SwapData({
