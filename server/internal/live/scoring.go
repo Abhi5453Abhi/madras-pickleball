@@ -64,6 +64,9 @@ type scoringMatch struct {
 	ResultState  string  `json:"resultState"`
 	ResultType   string  `json:"resultType"`
 	WinnerTeamID *string `json:"winnerTeamId"`
+	// Version is what the screen sends back as expectedVersion, so a score
+	// typed against a match that has since moved on is not written blind.
+	Version int `json:"version"`
 }
 
 type matchForScoringOut struct {
@@ -99,6 +102,7 @@ func getMatchForScoring(ctx context.Context, d *core.Deps, matchID string) (*mat
 			ID: match.ID, TournamentID: match.TournamentID, RoundName: match.RoundName,
 			TeamAID: *match.TeamAID, TeamBID: *match.TeamBID, Status: match.Status,
 			ResultState: match.ResultState, ResultType: match.ResultType, WinnerTeamID: match.WinnerTeamID,
+			Version: match.Version,
 		},
 		CategoryName: engine.CategoryName(t.Gender, t.Discipline),
 		NameA:        names[*match.TeamAID],

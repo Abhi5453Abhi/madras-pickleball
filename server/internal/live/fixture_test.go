@@ -415,29 +415,42 @@ func (f *fixture) teamNames(t *testing.T) map[string]string {
 
 // ── calling an RPC the way a phone does ───────────────────────────────────
 
-// api builds the router this package registers into, with the RPC handler
-// mounted where the server mounts it.
-func api(t *testing.T, d *core.Deps) *http.ServeMux {
+// client is the router this package registers into, plus the organiser whose
+// name goes on every audit row.
+type client struct {
+	mux  *http.ServeMux
+	user *rpc.User
+}
+
+func api(t *testing.T, d *core.Deps) *client {
 	t.Helper()
 	mux := http.NewServeMux()
 	reg := rpc.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	Register(mux, reg, d)
 	mux.Handle("/api/rpc/{name}", reg.Handler())
-	return mux
+
+	// The seeded owner: the audit log references a real row, so a made-up id
+	// would fail the write rather than the assertion.
+	var u rpc.User
+	if err := d.DB.QueryRowContext(context.Background(),
+		`select id, name, role from users order by created_at limit 1`).Scan(&u.ID, &u.Name, &u.Role); err != nil {
+		t.Fatal(err)
+	}
+	return &client{mux: mux, user: &u}
 }
 
 // call posts an RPC as a signed-in organiser and decodes the reply. A status
 // other than 200 fails the test: a refusal is a 200 with {ok:false}.
-func call(t *testing.T, mux *http.ServeMux, name string, in any, out any) {
+func (c *client) call(t *testing.T, name string, in any, out any) {
 	t.Helper()
 	body, err := json.Marshal(in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest("POST", "/api/rpc/"+name, bytes.NewReader(body))
-	req = req.WithContext(rpc.WithUser(req.Context(), &rpc.User{ID: "usr_test", Name: "Organiser", Role: "owner"}))
+	req = req.WithContext(rpc.WithUser(req.Context(), c.user))
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	c.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("%s answered %d: %s", name, rec.Code, rec.Body.String())
 	}

@@ -111,7 +111,7 @@ func TestMoveOptions(t *testing.T) {
 	f.flow(t)
 
 	var got *moveOptionsOut
-	call(t, api(t, d), "board.moveOptions", map[string]any{"matchId": f.Matches[0].ID}, &got)
+	api(t, d).call(t, "board.moveOptions", map[string]any{"matchId": f.Matches[0].ID}, &got)
 
 	if got.Match.CourtName == nil || *got.Match.CourtName != "Court 1" {
 		t.Errorf("the header says %v", got.Match.CourtName)

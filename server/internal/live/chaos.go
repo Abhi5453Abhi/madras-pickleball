@@ -92,9 +92,11 @@ func teamOf(ctx context.Context, q core.Querier, tournamentID, teamID string) (*
 }
 
 type withdrawOut struct {
-	OK        bool   `json:"ok"`
-	Walkovers int    `json:"walkovers,omitempty"`
-	Note      string `json:"note,omitempty"`
+	OK bool `json:"ok"`
+	// walkovers and note are always present on the wire: the screen prints
+	// "N matches become walkovers", and a missing field reads as "undefined".
+	Walkovers int    `json:"walkovers"`
+	Note      string `json:"note"`
 	Error     string `json:"error,omitempty"`
 	Fix       string `json:"fix,omitempty"`
 }
@@ -231,8 +233,8 @@ func withdrawTeam(ctx context.Context, d *core.Deps, in teamIn) (withdrawOut, er
 
 type reinstateOut struct {
 	OK       bool   `json:"ok"`
-	Restored int    `json:"restored,omitempty"`
-	Note     string `json:"note,omitempty"`
+	Restored int    `json:"restored"`
+	Note     string `json:"note"`
 	Error    string `json:"error,omitempty"`
 }
 
@@ -374,9 +376,9 @@ type substituteIn struct {
 
 type substituteOut struct {
 	OK       bool   `json:"ok"`
-	Name     string `json:"name,omitempty"`
-	Incoming string `json:"incoming,omitempty"`
-	Note     string `json:"note,omitempty"`
+	Name     string `json:"name"`
+	Incoming string `json:"incoming"`
+	Note     string `json:"note"`
 	Error    string `json:"error,omitempty"`
 	Fix      string `json:"fix,omitempty"`
 }
@@ -531,7 +533,7 @@ type pauseIn struct {
 
 type noteOut struct {
 	OK    bool   `json:"ok"`
-	Note  string `json:"note,omitempty"`
+	Note  string `json:"note"`
 	Error string `json:"error,omitempty"`
 	Fix   string `json:"fix,omitempty"`
 }
