@@ -11,6 +11,7 @@ import {
   validateGames,
   matchOutcome,
   cappedDiff,
+  hornOutcome,
   walkoverGames,
   retirementGames,
   type ScoringRules,
@@ -506,5 +507,89 @@ describe('score chips', () => {
         }
       }
     }
+  })
+})
+
+// ── the horn ──────────────────────────────────────────────────────────────
+describe('hornOutcome', () => {
+  const rules = { bestOf: 3, pointsToWin: 11, winBy: 2, hardCap: null }
+
+  it('ends the match on one capped game', () => {
+    const o = hornOutcome(rules, [{ gameNo: 1, scoreA: 8, scoreB: 6, timeCapped: true }])
+    expect(o).toMatchObject({ complete: true, winner: 'A' })
+  })
+
+  it('level on games is decided by the game the horn stopped, not by totals', () => {
+    // A won game 1 in a blowout; B was winning the game the horn stopped.
+    // Summing every point would hand it to A — which is the blowout SPEC A6
+    // caps out of the tiebreak precisely so it cannot decide anything.
+    const o = hornOutcome(rules, [
+      { gameNo: 1, scoreA: 11, scoreB: 2 },
+      { gameNo: 2, scoreA: 2, scoreB: 8, timeCapped: true },
+    ])
+    expect(o.winner).toBe('B')
+  })
+
+  it('leading in games wins even when behind on the capped game', () => {
+    const o = hornOutcome(rules, [
+      { gameNo: 1, scoreA: 11, scoreB: 9 },
+      { gameNo: 2, scoreA: 11, scoreB: 4 },
+    ])
+    expect(o).toMatchObject({ complete: true, winner: 'A' })
+  })
+
+  it('refuses to call a match that is level on games and level on the capped game', () => {
+    const o = hornOutcome(rules, [
+      { gameNo: 1, scoreA: 11, scoreB: 9 },
+      { gameNo: 2, scoreA: 9, scoreB: 11 },
+      { gameNo: 3, scoreA: 6, scoreB: 6, timeCapped: true },
+    ])
+    expect(o.complete).toBe(false)
+    expect(o.winner).toBeNull()
+  })
+})
+
+describe('validateGames rejects a duplicated game number', () => {
+  it('because the ledger write would fail halfway through', () => {
+    const rules = { bestOf: 3, pointsToWin: 11, winBy: 2, hardCap: null }
+    const v = validateGames(rules, [
+      { gameNo: 1, scoreA: 11, scoreB: 9 },
+      { gameNo: 1, scoreA: 11, scoreB: 9 },
+    ])
+    expect(v.ok).toBe(false)
+  })
+})
+
+describe('a retirement keeps the points that were actually played', () => {
+  it('and excludes only the games nobody played', () => {
+    const rules = { bestOf: 3, pointsToWin: 11, winBy: 2, hardCap: null }
+    // Lost game 1 9-11, then pulled a calf between games.
+    const { games, excludeFromDiff } = retirementGames(
+      rules,
+      [{ gameNo: 1, scoreA: 9, scoreB: 11 }],
+      'A',
+    )
+    expect(games).toHaveLength(2)
+    expect(excludeFromDiff).toEqual([2])
+
+    const rows = tallyRows(['a', 'b'], [
+      {
+        matchId: 'm',
+        teamAId: 'a',
+        teamBId: 'b',
+        winnerTeamId: 'b',
+        state: 'final',
+        resultType: 'retired',
+        games: games.map((g) => ({
+          scoreA: g.scoreA,
+          scoreB: g.scoreB,
+          excludeFromDiff: excludeFromDiff.includes(g.gameNo),
+        })),
+      },
+    ])
+    // The game they played counts in full; the one they didn't counts nowhere.
+    expect(rows.get('b')!.pointsFor).toBe(11)
+    expect(rows.get('b')!.gamesWon).toBe(1)
+    expect(rows.get('b')!.pointDiff).toBe(2)
   })
 })

@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation'
 import { atLeast, requireUser } from '@/lib/auth'
 import { newId } from '@/lib/ids'
 import { adminSetResult, getMatchForScoring, submitResult } from '@/server/scoring'
+import { umpireMayScore } from '@/server/umpire'
 import type { GameScore } from '@/lib/rules'
 
 export type SavePayload = {
@@ -33,6 +34,16 @@ export async function saveResult(payload: SavePayload) {
   if (!loaded) return { ok: false as const, error: 'That match no longer exists.' }
 
   const alreadyHasResult = loaded.match.resultState !== 'none'
+
+  // An umpire scores what is on a court, in a tournament that has started.
+  // `umpireQueue` filters the LIST; this is the boundary, because the action
+  // takes a match id off the wire.
+  if (!atLeast(user, 'admin') && !(await umpireMayScore(payload.matchId))) {
+    return {
+      ok: false as const,
+      error: 'That match isn’t one you can score. Ask the organiser.',
+    }
+  }
 
   if (alreadyHasResult) {
     if (!atLeast(user, 'admin')) {
@@ -109,6 +120,12 @@ export async function useSubmission(formData: FormData) {
     resultType: sub.resultType as 'normal' | 'walkover' | 'retired',
     winnerTeamId: sub.winnerTeamId,
     retiredTeamId: sub.retiredTeamId,
+    // The stored games ARE the ledger, exclusions and all. Re-deriving them
+    // from an already-expanded list finds nothing left to expand and marks
+    // none of it excluded — so settling a disputed retirement used to hand the
+    // winner every point of the games nobody played.
+    expanded: true,
+    excludeFromDiff: sub.excludeFromDiff,
     reason: `Settled the disagreement — used the score from ${
       sub.submittingTeamId === loaded.match.teamAId
         ? (loaded.nameA ?? 'side A')

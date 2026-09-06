@@ -1,13 +1,34 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useActionState, useEffect, useState } from 'react'
 import { Button, Input, NetRule } from '@/components/ui'
 import { register, type RegState } from './actions'
 
 type Cat = { id: string; name: string; discipline: string; needsPartner: boolean }
 
+/**
+ * A stable id for this browser, so the person who signed up under a name is the
+ * only one who can change it. Best effort by design: a private window or
+ * cleared storage simply means the organiser sorts it out, which they were
+ * always going to have to do.
+ */
+function deviceId(): string {
+  const KEY = 'mpb.device'
+  try {
+    const saved = localStorage.getItem(KEY)
+    if (saved) return saved
+    const made = crypto.randomUUID().replace(/-/g, '')
+    localStorage.setItem(KEY, made)
+    return made
+  } catch {
+    return ''
+  }
+}
+
 export function RegisterForm({ token, categories }: { token: string; categories: Cat[] }) {
   const [state, action, pending] = useActionState<RegState, FormData>(register, {})
+  const [device, setDevice] = useState('')
+  useEffect(() => setDevice(deviceId()), [])
 
   if (state.ok) {
     return (
@@ -29,6 +50,7 @@ export function RegisterForm({ token, categories }: { token: string; categories:
   return (
     <form action={action} className="flex flex-col gap-5">
       <input type="hidden" name="token" value={token} />
+      <input type="hidden" name="deviceId" value={device} />
 
       {state.error ? (
         <p role="alert" className="rounded-control bg-alert-soft px-3.5 py-3 text-body font-medium text-alert">

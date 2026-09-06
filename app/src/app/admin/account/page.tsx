@@ -47,6 +47,11 @@ export default async function AccountPage(props: PageProps<'/admin/account'>) {
             Back to {user.role === 'umpire' ? 'scoring' : 'your tournaments'}
           </Link>
 
+          {/* Set apart from the link above it: two identical bordered rows,
+              one of which signs you out mid-tournament, is a row you tap by
+              accident. */}
+          <div aria-hidden className="mt-2 h-px bg-line" />
+
           <Confirm
             label="Sign out"
             question="You will need your username and password to get back in. If a tournament is running, the court board and the QR cards keep working without you."

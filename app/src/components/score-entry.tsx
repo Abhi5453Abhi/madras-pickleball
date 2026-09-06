@@ -498,13 +498,16 @@ export function ScoreEntry(props: ScoreEntryProps) {
       const played = hasPartial
         ? [...finished, { gameNo: finished.length + 1, scoreA: partA, scoreB: partB }]
         : finished
-      const { games, excludeFromDiff } = retirementGames(rules, played, special.side)
+      // Send only what was PLAYED. The server fills in the games nobody played
+      // and decides which of them sit out of the difference columns — that
+      // field settles the venue's headline tiebreak, and expanding it here
+      // meant the server re-expanded an already-complete list, found nothing
+      // to fill in, and marked none of it excluded.
       return {
-        games,
+        games: played,
         resultType: 'retired' as const,
         winnerTeamId: special.side === 'A' ? props.teamBId : props.teamAId,
         retiredTeamId: special.side === 'A' ? props.teamAId : props.teamBId,
-        excludeFromDiff,
         submittingTeamId,
       }
     }
@@ -553,7 +556,11 @@ export function ScoreEntry(props: ScoreEntryProps) {
     })
   }
 
-  const winnerName = outcome.winner === 'A' ? nameA : nameB
+  // Null when the horn left it level on games AND level on the game it stopped.
+  // Without this branch the screen printed "Arun / Deepa win 1–1" directly
+  // above the notice saying nothing here can call it.
+  const winnerName =
+    outcome.winner === 'A' ? nameA : outcome.winner === 'B' ? nameB : null
   const loserSideName = draft.winner === 'A' ? nameB : nameA
   const winnerSideName = draft.winner === 'A' ? nameA : nameB
   const scoreLine = finished.map((g) => `${g.scoreA}–${g.scoreB}`).join(', ')
@@ -957,9 +964,13 @@ export function ScoreEntry(props: ScoreEntryProps) {
         </div>
       ) : (
         <div className="rounded-card border-2 border-ink bg-paper p-4">
-          <p className="font-score text-eyebrow text-text-2 uppercase">That’s the match</p>
+          <p className="font-score text-eyebrow text-text-2 uppercase">
+            {winnerName ? 'That’s the match' : 'Nothing separates them'}
+          </p>
           <p className="mt-1 text-title text-text">
-            {winnerName} win {outcome.gamesWonA}–{outcome.gamesWonB}
+            {winnerName
+              ? `${winnerName} win ${outcome.gamesWonA}–${outcome.gamesWonB}`
+              : `Level at ${outcome.gamesWonA}–${outcome.gamesWonB}`}
           </p>
           <p className="num mt-1 text-[22px] font-bold text-text-2">{scoreLine}</p>
           {hornEnded ? (

@@ -798,6 +798,13 @@ export const resultSubmissions = pgTable(
     ipHash: text('ip_hash'),
     submittingTeamId: text('submitting_team_id').references(() => teams.id),
     games: jsonb('games').notNull(),
+    /**
+     * Which of those games sit out of point difference — worked out on the
+     * server, stored here so that settling a dispute by replaying a submission
+     * writes the same ledger the original did rather than quietly counting the
+     * games nobody played (SPEC A6).
+     */
+    excludeFromDiff: jsonb('exclude_from_diff').$type<number[]>().notNull().default([]),
     resultType: resultTypeEnum('result_type').notNull().default('normal'),
     retiredTeamId: text('retired_team_id'),
     winnerTeamId: text('winner_team_id'),

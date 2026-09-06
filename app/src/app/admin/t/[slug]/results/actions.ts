@@ -1,14 +1,14 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { redirect } from 'next/navigation'
 import { and, eq } from 'drizzle-orm'
 import { db } from '@/db'
 import { courtClosures, matches } from '@/db/schema'
 import { requireUser } from '@/lib/auth'
 import { recordAudit } from '@/lib/audit'
 import { newId } from '@/lib/ids'
-import { walkoverGames } from '@/lib/rules'
-import { confirmAllPending, getMatchForScoring, submitResult } from '@/server/scoring'
+import { adminSetResult, confirmAllPending, getMatchForScoring } from '@/server/scoring'
 import { getTournamentBySlug } from '@/server/tournaments'
 import { clearCourt } from '@/server/board'
 import { bumpStreamVersion } from '@/lib/stream'
@@ -31,43 +31,52 @@ export async function confirmAll(formData: FormData) {
   revalidatePath(`/admin/t/${slug}`)
 }
 
-/** No-show → walkover. Never a typed 11-0: that would corrupt the tiebreak. */
+/**
+ * No-show → walkover — SPEC A7.
+ *
+ * Never a typed 11-0: the scoreline is generated so it can be excluded from
+ * every difference column. And it goes through `adminSetResult` like any other
+ * organiser change, so it clears the downstream guard, counts as a correction
+ * and lands in the log with a reason. Routing it through an authoritative
+ * `submitResult` meant a stray tap could overwrite a score the pair had entered
+ * from the court two minutes earlier, silently, with no `before` in the audit
+ * row and no check that a semi-final had already been built off it.
+ */
 export async function markNoShow(formData: FormData) {
   const user = await requireUser('admin')
   const matchId = String(formData.get('matchId'))
   const absentSide = String(formData.get('absent')) as 'A' | 'B'
   const slug = String(formData.get('slug'))
+  if (absentSide !== 'A' && absentSide !== 'B') return
+
+  const t = await getTournamentBySlug(slug)
+  if (!t) return
 
   const loaded = await getMatchForScoring(matchId)
   if (!loaded || !loaded.match.teamAId || !loaded.match.teamBId) return
+  // The id comes off a form. It has to belong to the tournament in the URL.
+  if (loaded.match.tournamentId !== t.id) return
 
   const winnerTeamId = absentSide === 'A' ? loaded.match.teamBId : loaded.match.teamAId
-  const gs = walkoverGames(loaded.rules)
-  const games = absentSide === 'A' ? gs.map((g) => ({ ...g, scoreA: g.scoreB, scoreB: g.scoreA })) : gs
+  const absentName =
+    (absentSide === 'A' ? loaded.nameA : loaded.nameB) ?? 'the absent pair'
 
-  await submitResult({
+  const res = await adminSetResult({
     matchId,
-    games,
+    games: [],
     resultType: 'walkover',
     winnerTeamId,
-    submittingTeamId: null,
-    attributorKey: `user:${user.id}`,
-    actorType: 'user',
+    reason: `${absentName} didn\u2019t turn up — recorded as a no-show from the results desk.`,
     userId: user.id,
-    clientEventId: newId('ce'),
-    authoritative: true,
+    actorLabel: user.name,
   })
-  await recordAudit({
-    userId: user.id,
-    actorLabel: user.username,
-    action: 'match.no_show',
-    entity: 'match',
-    entityId: matchId,
-    reason: 'recorded from the pending results screen',
-  })
+
   revalidatePath(`/admin/t/${slug}/results`)
   revalidatePath(`/admin/t/${slug}/board`)
   revalidatePath(`/admin/t/${slug}`)
+  if (!res.ok) {
+    redirect(`/admin/t/${slug}/results?err=${encodeURIComponent(res.error)}` as never)
+  }
 }
 
 /** Court out of action — the queue and the finish estimate recompute. */

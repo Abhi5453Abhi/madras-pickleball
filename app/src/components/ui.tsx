@@ -72,7 +72,9 @@ export function Input({ className, ...rest }: ComponentProps<'input'>) {
   return (
     <input
       className={clsx(
-        'tap w-full rounded-control border border-line-strong bg-paper px-3.5 text-body text-text',
+        // line-key, not line-strong: an empty text field is a target whose
+        // border is the only thing saying where it is.
+        'tap w-full rounded-control border border-line-key bg-paper px-3.5 text-body text-text',
         'placeholder:text-text-3 focus:border-link focus:ring-2 focus:ring-link/25 focus:outline-none',
         className,
       )}
@@ -94,7 +96,8 @@ export function Button({ className, variant = 'primary', ...rest }: ButtonProps)
         'transition-colors duration-100 active:translate-y-px',
         'disabled:cursor-not-allowed disabled:opacity-60 disabled:active:translate-y-0',
         variant === 'primary' && 'bg-ink text-white hover:bg-ink-2 active:shadow-none',
-        variant === 'secondary' && 'border border-line-strong bg-paper text-text hover:bg-ground',
+        // line-key: an outlined button has no fill, so the border IS the target.
+        variant === 'secondary' && 'border border-line-key bg-paper text-text hover:bg-ground',
         variant === 'accent' && 'bg-accent text-white shadow-key hover:bg-accent-hi active:shadow-none',
         variant === 'quiet' && 'text-link hover:text-text',
         className,
@@ -104,25 +107,174 @@ export function Button({ className, variant = 'primary', ...rest }: ButtonProps)
   )
 }
 
+type NoticeTone = 'alert' | 'info' | 'waiting'
+
+const NOTICE_FLAT: Record<NoticeTone, string> = {
+  alert: 'bg-alert-soft text-alert',
+  info: 'bg-accent-soft text-accent-hi',
+  waiting: 'bg-waiting-soft text-waiting',
+}
+
+const NOTICE_BLOCK: Record<NoticeTone, { edge: string; word: string }> = {
+  alert: { edge: 'border-alert/40 bg-alert-soft', word: 'text-alert' },
+  info: { edge: 'border-accent/35 bg-accent-soft', word: 'text-accent-hi' },
+  waiting: { edge: 'border-waiting/45 bg-waiting-soft', word: 'text-waiting' },
+}
+
+/**
+ * Something went wrong, or something is happening that the reader has to know
+ * about. Two shapes, and which one you get is decided by what you pass:
+ *
+ *   Sentence only          → a tinted paragraph. Unchanged.
+ *   `title` / `detail` /   → a bounded block: a word for the tone, the
+ *   `action`                 sentence in ink, and the way out.
+ *
+ * The block exists because the interesting failures all have a recovery — a
+ * submit that did not save can be retried, a stale screen can be reloaded — and
+ * a message that names the problem and then leaves the person holding the phone
+ * with nothing to press is only half of the sentence. `action` is a slot rather
+ * than a button prop so it can be a `Button`, a `Link` or a `form`; whatever it
+ * is, give it `w-full`.
+ *
+ * Body copy in ink, not in the tone's own colour: 16:1 against the tint instead
+ * of 5.2:1, and the tone is already doing its job in the word above.
+ */
 export function Notice({
   tone = 'alert',
+  title,
+  detail,
+  action,
   children,
 }: {
-  tone?: 'alert' | 'info' | 'waiting'
+  tone?: NoticeTone
+  /** The tone in a word — "That didn't save", "Under review". */
+  title?: ReactNode
+  /** The quieter line under the sentence — what has NOT gone wrong. */
+  detail?: ReactNode
+  /** The way out. Rendered under the text, full width. */
+  action?: ReactNode
   children: ReactNode
 }) {
+  if (!title && !detail && !action) {
+    return (
+      <p role="alert" className={clsx('rounded-control px-3.5 py-3 text-body font-medium', NOTICE_FLAT[tone])}>
+        {children}
+      </p>
+    )
+  }
+
+  const t = NOTICE_BLOCK[tone]
   return (
-    <p
-      role="alert"
-      className={clsx(
-        'rounded-control px-3.5 py-3 text-body font-medium',
-        tone === 'alert' && 'bg-alert-soft text-alert',
-        tone === 'info' && 'bg-accent-soft text-accent-hi',
-        tone === 'waiting' && 'bg-waiting-soft text-waiting',
-      )}
+    <div role="alert" className={clsx('rounded-card border-2 p-4', t.edge)}>
+      {title ? (
+        <p className={clsx('font-score text-eyebrow uppercase', t.word)}>{title}</p>
+      ) : null}
+      <p className={clsx('text-body text-text', title && 'mt-1.5')}>{children}</p>
+      {detail ? <p className="mt-1.5 text-meta text-text-2">{detail}</p> : null}
+      {action ? <div className="mt-3">{action}</div> : null}
+    </div>
+  )
+}
+
+/**
+ * A destructive or surprising action, in two taps — promoted out of the admin
+ * screens because the court card has exactly the same problem.
+ *
+ * Every caller fires something that changes the day: a walkover is awarded, a
+ * live match loses its start time, a dispute pins a red alert on the
+ * organiser's board and stops the winners advancing. One tap in the sun with a
+ * paddle in the other hand is not consent, and an undo that costs a page load
+ * is not a substitute for being told first.
+ *
+ * `details` rather than a dialog: no JavaScript, no focus trap to get wrong,
+ * and tapping the summary again is the cancel. The summary says what the button
+ * is FOR; the sentence inside says what it will DO.
+ *
+ * `size` is the venue, not the taste: `md` is a 56px organiser control at a
+ * desk, `lg` is a 72px control used on court, where the brief's own floor is
+ * higher and the border has to be findable rather than tidy.
+ */
+export function Confirm({
+  label,
+  question,
+  detail,
+  children,
+  cancelHint = 'Tap the button above again to leave it alone.',
+  size = 'md',
+  className,
+}: {
+  /** What the control is for. Shown closed. */
+  label: ReactNode
+  /** What will happen, in a sentence, before it happens. */
+  question: ReactNode
+  /** A second line where the sentence is not the whole story. */
+  detail?: ReactNode
+  /** The real form, with the real submit button inside it. */
+  children: ReactNode
+  /** Pass `false` where the surrounding copy already says how to back out. */
+  cancelHint?: ReactNode | false
+  size?: 'md' | 'lg'
+  className?: string
+}) {
+  return (
+    <details className={clsx('group min-w-0', className)}>
+      <summary
+        className={clsx(
+          'flex items-center justify-center rounded-control bg-paper text-center',
+          size === 'lg'
+            ? 'tap-xl border-2 border-line-key px-4 text-[18px] font-bold text-text'
+            : 'tap border border-line-key px-3.5 text-[16px] font-semibold text-text-2',
+        )}
+      >
+        {label}
+      </summary>
+      <div className="mt-2 rounded-control border border-line-strong bg-sunken p-3.5">
+        <p className="text-body text-text">{question}</p>
+        {detail ? <p className="mt-1.5 text-meta text-text-2">{detail}</p> : null}
+        <div className="mt-3">{children}</div>
+        {cancelHint ? <p className="mt-2 text-meta text-text-3">{cancelHint}</p> : null}
+      </div>
+    </details>
+  )
+}
+
+/**
+ * How far through something it is. A bar rather than a percentage: it is read
+ * at arm's length while walking, and "two thirds" is the whole content of the
+ * number.
+ *
+ * `label` is what a screen reader says, so it carries the unit the bar cannot
+ * draw — "18 of 27 matches played", not "18 of 27".
+ */
+export function Meter({
+  done,
+  total,
+  label,
+  tone = 'ink',
+  className,
+}: {
+  done: number
+  total: number
+  label?: string
+  /** `accent` for a countdown the reader is waiting on, `ink` for progress. */
+  tone?: 'ink' | 'accent'
+  className?: string
+}) {
+  const pct = total > 0 ? Math.round((Math.min(Math.max(done, 0), total) / total) * 100) : 0
+  return (
+    <div
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={total}
+      aria-valuenow={done}
+      aria-label={label ?? `${done} of ${total}`}
+      className={clsx('h-2 w-full overflow-hidden rounded-full bg-sunken', className)}
     >
-      {children}
-    </p>
+      <div
+        className={clsx('h-full rounded-full', tone === 'accent' ? 'bg-accent' : 'bg-ink')}
+        style={{ width: `${pct}%` }}
+      />
+    </div>
   )
 }
 
@@ -179,13 +331,48 @@ export const COURT_COLORS: Record<string, string> = {
   indigo: 'bg-court-indigo',
 }
 
+const SWATCH: Record<'sm' | 'md' | 'lg', string> = {
+  /** In a line of text, beside the court's name. */
+  sm: 'size-2.5 rounded-[3px]',
+  /** A row's own identity, read at arm's length. */
+  md: 'size-5 rounded-[4px]',
+  /** The court card in the net post header — checkable from a metre away. */
+  lg: 'size-9 rounded-[6px]',
+}
+
 /**
  * Every representation of a court carries its colour, so checking a phone
  * against the card on the net post stops requiring reading.
+ *
+ * It takes a size because the distance changes: 10px is right next to a name in
+ * a list, and wrong as the thing a pair squints at from the baseline to be sure
+ * they are about to put a score on their own court. `aria-hidden` at every
+ * size — the court's name is always beside it, and the system never leans on
+ * colour alone.
  */
-export function CourtSwatch({ colorKey }: { colorKey: string }) {
+export function CourtSwatch({
+  colorKey,
+  size = 'sm',
+  onInk,
+  className,
+}: {
+  colorKey: string
+  size?: 'sm' | 'md' | 'lg'
+  /** On the ink band. Court indigo on navy is otherwise a hole, not a square. */
+  onInk?: boolean
+  className?: string
+}) {
   return (
-    <span aria-hidden className={clsx('size-2.5 shrink-0 rounded-[3px]', COURT_COLORS[colorKey] ?? 'bg-court-blue')} />
+    <span
+      aria-hidden
+      className={clsx(
+        'court-swatch shrink-0',
+        SWATCH[size],
+        COURT_COLORS[colorKey] ?? 'bg-court-blue',
+        onInk && 'ring-2 ring-white/45',
+        className,
+      )}
+    />
   )
 }
 
@@ -208,6 +395,26 @@ export function CourtMark({ className }: { className?: string }) {
       <path d="M9 4.5v15M15 4.5v15" stroke="currentColor" strokeWidth="1.25" opacity=".5" />
       <path d="M12 3.4v17.2" stroke="var(--color-accent-line)" strokeWidth="2" />
     </svg>
+  )
+}
+
+/**
+ * The venue lockup, on ink. One definition, because the front door and every
+ * tournament page carry the same one and they had drifted a size apart.
+ *
+ * It grows with the band it sits in. At 390px it is deliberately quieter than
+ * the tournament name below it — the reader knows where they are and came for
+ * the day, not the brand — but at 1280px the band is three times as wide and a
+ * 19px eyebrow in it reads as a smudge, which is what it was doing.
+ */
+export function Wordmark({ className }: { className?: string }) {
+  return (
+    <div className={clsx('flex items-center gap-2 sm:gap-2.5', className)}>
+      <CourtMark className="size-6 shrink-0 text-white sm:size-7" />
+      <span className="font-score text-[20px] font-bold tracking-[0.04em] text-accent-on-ink uppercase sm:text-[23px]">
+        Madras Pickleball
+      </span>
+    </div>
   )
 }
 
@@ -318,9 +525,14 @@ export function Tag({ tone = 'neutral', children }: { tone?: TagTone; children: 
   )
 }
 
-function Chevron() {
+/**
+ * The caret on anything that opens. The `chev` class is what the stylesheet
+ * rotates when the parent `details` opens and what print removes, so a caller
+ * adding a size or a colour must keep it — pass `className`, don't replace it.
+ */
+export function Chevron({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 20 20" aria-hidden className="chev size-5 shrink-0" fill="none">
+    <svg viewBox="0 0 20 20" aria-hidden className={clsx('chev size-5 shrink-0', className)} fill="none">
       <path d="M5 8l5 5 5-5" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
@@ -346,7 +558,9 @@ export function Disclosure({
 }) {
   return (
     <details id={id} className={clsx('group', className)}>
-      <summary className="tap flex items-center gap-3 rounded-control border border-line-strong bg-paper px-4 text-left shadow-card">
+      {/* line-key: a summary is a 56px target on a busy page, and the box is
+          the only thing that says so. */}
+      <summary className="tap flex items-center gap-3 rounded-control border border-line-key bg-paper px-4 text-left shadow-card">
         <span className="min-w-0 flex-1">
           <span className="block text-row text-text">{summary}</span>
           {meta ? <span className="block text-meta text-text-3">{meta}</span> : null}

@@ -60,9 +60,25 @@
   --color-on-ink: #ffffff;
   --color-on-ink-2: #b9cde0;
 
-  /* ── lines ── */
+  /* ── lines ──
+     Three weights, and which one to use is decided by what the line is doing,
+     not by how heavy it looks:
+
+       line        — a divider between rows of one list.
+       line-strong — the edge of an OBJECT: a card, a panel, a table cell.
+                     1.6:1 against paper, which is all a seam needs.
+       line-key    — the edge of a TARGET, where the border is the only thing
+                     saying where to press: a bare input, a secondary button,
+                     a summary row, a category chip, a number key on the score
+                     pad. 3.7:1 against paper and 3.2:1 against the page's own
+                     grey, so it clears the 3:1 that WCAG 1.4.11 asks of the
+                     boundary of an active control — which line-strong does not,
+                     and which is the difference between finding a 64px chip in
+                     direct sun and hunting for it. text-3 (5.1:1) also clears
+                     it and reads as a heavy box; this is a pencil line. ── */
   --color-line: #dce2ea;
   --color-line-strong: #c3ccd8;
+  --color-line-key: #7a8797;
   --color-line-ink: #1e4e77;
 
   /* ── the one accent ── */
@@ -301,12 +317,21 @@ details[open] > summary .chev {
 .switch:has([data-tab]:checked) [data-panel] {
   display: none;
 }
+/* Twelve, because a venue that runs more categories than that in one day is
+   not the case this was built for — but the failure has to degrade to "all of
+   them visible", never to a tab bar above nothing at all. */
 .switch:has([data-tab='0']:checked) [data-panel='0'],
 .switch:has([data-tab='1']:checked) [data-panel='1'],
 .switch:has([data-tab='2']:checked) [data-panel='2'],
 .switch:has([data-tab='3']:checked) [data-panel='3'],
 .switch:has([data-tab='4']:checked) [data-panel='4'],
-.switch:has([data-tab='5']:checked) [data-panel='5'] {
+.switch:has([data-tab='5']:checked) [data-panel='5'],
+.switch:has([data-tab='6']:checked) [data-panel='6'],
+.switch:has([data-tab='7']:checked) [data-panel='7'],
+.switch:has([data-tab='8']:checked) [data-panel='8'],
+.switch:has([data-tab='9']:checked) [data-panel='9'],
+.switch:has([data-tab='10']:checked) [data-panel='10'],
+.switch:has([data-tab='11']:checked) [data-panel='11'] {
   display: block;
 }
 
@@ -322,4 +347,176 @@ details[open] > summary .chev {
  */
 [id] {
   scroll-margin-top: 12px;
+}
+
+/* ──────────────────────────────── print ────────────────────────────────
+ *
+ * SPEC A8: the organiser pins the order of play and the tables to the
+ * noticeboard in the morning, and prints the results sheet at the end of the
+ * day. Both of those are this same public page, so print has one job — hand
+ * back the whole document, on A4, with nothing missing and nothing cut off.
+ *
+ * The screen page does four things that paper cannot survive, and every rule
+ * below is one of them:
+ *
+ *   1. Most of the page is folded away. Three sections sit behind `details`,
+ *      and the category switcher shows one table out of three. A pinned sheet
+ *      with two thirds of the day hidden is worse than no sheet.
+ *   2. A third of it is controls — the name picker, the tab bar, the buttons.
+ *      None of them do anything once they are on a wall.
+ *   3. Colour carries the court, the cut line and the live rule. Chrome drops
+ *      every background when it prints unless it is told not to.
+ *   4. Names are clamped to two lines and panels clip what overflows, so the
+ *      thing that gets cut is precisely the long name somebody is looking for.
+ */
+@media print {
+  @page {
+    size: A4 portrait;
+    /* 12mm keeps the tables inside every laser printer's unprintable edge and
+       still leaves 186mm of column — wider than the phone the page is built
+       for, so nothing has to reflow to fit. */
+    margin: 12mm;
+  }
+
+  html {
+    /* The qualifying cut line, the live rule and the court squares are
+       information. Without this they print as white on white. */
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  body {
+    background: #fff;
+  }
+
+  /* ── 1. nothing stays folded away ── */
+
+  /* Chrome ≥131, Safari ≥18.4, Firefox ≥139 hide a closed `details` by putting
+     `content-visibility: hidden` on this pseudo-element. */
+  details::details-content {
+    content-visibility: visible !important;
+    block-size: auto !important;
+  }
+  /* Older engines hid the children outright. Scoped behind @supports so it
+     never flattens a flex column on an engine that does not need it. */
+  @supports not selector(::details-content) {
+    details > :not(summary) {
+      display: block !important;
+    }
+  }
+  /* Every category table, not the one tab that happened to be selected. */
+  [data-panel] {
+    display: block !important;
+  }
+
+  /* ── 2. the chrome goes ── */
+  button,
+  input,
+  select,
+  textarea,
+  .chev {
+    display: none !important;
+  }
+  /* A summary stays: with its block now open it is that block's heading, so it
+     loses the card it wore as a button and keeps only the words. */
+  summary {
+    border: 0 !important;
+    background: none !important;
+    box-shadow: none !important;
+    min-height: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    break-after: avoid;
+  }
+
+  /* The ink band is 40cm² of navy. On paper it is a masthead, so it is drawn
+     the way a masthead is drawn: black on white, above the net rule. */
+  .masthead {
+    background: #fff !important;
+    padding-top: 0 !important;
+  }
+  /* `svg` is in the list because the court mark in the lockup is drawn in
+     `currentColor` and would otherwise be white strokes on white paper. Its
+     net line stays terracotta — it is hard-coded, and it is the signature. */
+  .masthead,
+  .masthead h1,
+  .masthead p,
+  .masthead span,
+  .masthead svg {
+    color: #000 !important;
+  }
+  .board {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  /* The page's own grey ground is a screen surface. On paper it is most of six
+     sheets of toner, and it makes every white card float rather than sit. The
+     cards keep their own borders, so nothing loses its edge. */
+  .bg-ground {
+    background: #fff !important;
+  }
+
+  /* ── 3. what colour was carrying ── */
+
+  /* Four courts print as four similar greys on a club laser printer, so the
+     square gets an outline to guarantee it exists at all. The court NAME is
+     always beside it — the system never leans on colour alone — so monochrome
+     costs discrimination here, not information. */
+  .court-swatch {
+    outline: 1px solid #000;
+    outline-offset: -1px;
+  }
+
+  /* ── 4. nothing is cut off ── */
+  .line-clamp-2 {
+    display: block !important;
+    -webkit-line-clamp: unset !important;
+    overflow: visible !important;
+  }
+  .truncate {
+    overflow: visible !important;
+    white-space: normal !important;
+    text-overflow: clip !important;
+  }
+  /* Panels clip on screen so a row cannot break out of a rounded corner. On
+     paper clipping only ever loses something. */
+  [class*='overflow-hidden'] {
+    overflow: visible !important;
+  }
+
+  /* One column, whatever the paper. A4 landscape is 1123px wide, which is past
+     the `lg` breakpoint, and would otherwise print the desktop grid — with a
+     sticky sidebar, which paged media has nowhere to stick to. */
+  .page-grid {
+    display: block !important;
+  }
+  .page-grid > * + * {
+    margin-top: 8mm;
+  }
+  .page-sticky {
+    position: static !important;
+  }
+
+  /* ── page breaks ── */
+  /* A repeated header is the difference between a second page of standings and
+     a second page of five unlabelled numbers. */
+  thead {
+    display: table-header-group;
+  }
+  /* A row, a fixture, a court card — never a whole table: a standings table
+     that outgrows the page has to break at a row and repeat its header, which
+     is what `table-header-group` above is for. */
+  tr,
+  li,
+  article {
+    break-inside: avoid;
+  }
+  h1,
+  h2,
+  h3 {
+    break-after: avoid;
+  }
+  section {
+    break-inside: auto;
+  }
 }

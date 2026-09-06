@@ -4,6 +4,7 @@ import { db } from '@/db'
 import { courts, tournaments } from '@/db/schema'
 import { atLeast, requireUser } from '@/lib/auth'
 import { getMatchForScoring, projectedState } from '@/server/scoring'
+import { umpireMayScore } from '@/server/umpire'
 import { AdminEntry } from './entry'
 import { useSubmission } from './actions'
 import Link from 'next/link'
@@ -38,6 +39,21 @@ export default async function AdminMatchPage(props: PageProps<'/admin/m/[matchId
 
   const state = projectedState(loaded.match)
   const hasResult = loaded.match.resultState !== 'none'
+
+  // Showing an umpire a form the action will refuse is worse than not showing
+  // it. The action is still the boundary; this is so the screen agrees with it.
+  if (!atLeast(user, 'admin') && !(await umpireMayScore(matchId))) {
+    return (
+      <div className="flex flex-col gap-4">
+        <h1 className="text-title text-text">
+          {loaded.nameA} v {loaded.nameB}
+        </h1>
+        <Notice tone="info">
+          This isn’t one for you to score — it isn’t on a court, or the result is already in.
+        </Notice>
+      </div>
+    )
+  }
 
   // An umpire scores; an organiser corrects. Showing an umpire a form that will
   // be refused on submit is worse than not showing it.

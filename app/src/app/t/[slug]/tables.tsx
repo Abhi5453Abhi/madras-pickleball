@@ -112,22 +112,28 @@ function StandingsTable({ table }: { table: CategoryTable }) {
             >
               Team
             </th>
+            {/* The three number columns are right-aligned against each other,
+                so each one needs its gap on the LEFT — without it "Won" and
+                "Scored" ran together into one word in the header. The eyebrow's
+                0.08em tracking is dropped here for the same reason: it is worth
+                8px of a 390px screen, and these are three known words, not
+                copy. */}
             <th
               scope="col"
-              className="font-score w-9 py-2.5 text-right text-eyebrow text-text-2 uppercase"
+              className="font-score w-9 py-2.5 pl-2 text-right text-eyebrow tracking-[0.03em] whitespace-nowrap text-text-2 uppercase"
             >
               <span aria-hidden>Pld</span>
               <span className="sr-only">Played</span>
             </th>
             <th
               scope="col"
-              className="font-score w-9 py-2.5 text-right text-eyebrow text-text-2 uppercase"
+              className="font-score w-9 py-2.5 pl-2 text-right text-eyebrow tracking-[0.03em] whitespace-nowrap text-text-2 uppercase"
             >
               Won
             </th>
             <th
               scope="col"
-              className="font-score w-[4.25rem] py-2.5 pr-3 text-right text-eyebrow text-text-2 uppercase"
+              className="font-score w-[3.75rem] py-2.5 pr-3 pl-2 text-right text-eyebrow tracking-[0.03em] whitespace-nowrap text-text-2 uppercase"
             >
               <span aria-hidden>Scored</span>
               <span className="sr-only">Total points scored</span>
@@ -163,11 +169,13 @@ function StandingsTable({ table }: { table: CategoryTable }) {
                       </span>
                     ) : null}
                   </td>
-                  <td className="num py-3 text-right align-middle text-num text-text-3">
+                  <td className="num py-3 pl-2 text-right align-middle text-num text-text-3">
                     {row.played}
                   </td>
-                  <td className="num py-3 text-right align-middle text-num text-text">{row.won}</td>
-                  <td className="num py-3 pr-3 text-right align-middle text-num font-bold text-text-2">
+                  <td className="num py-3 pl-2 text-right align-middle text-num text-text">
+                    {row.won}
+                  </td>
+                  <td className="num py-3 pr-3 pl-2 text-right align-middle text-num font-bold text-text-2">
                     {row.pointsFor}
                   </td>
                 </tr>
@@ -233,7 +241,7 @@ export function Tables({ tables }: { tables: CategoryTable[] }) {
         <legend className="sr-only">Choose a category</legend>
 
         {single ? null : (
-          <div className="mb-4 flex flex-wrap gap-2">
+          <div className="mb-4 flex flex-wrap gap-2 print:hidden">
             {tables.map((t, i) => (
               <span key={t.id} className="flex min-w-0 grow basis-[6.5rem]">
                 <input
@@ -249,7 +257,7 @@ export function Tables({ tables }: { tables: CategoryTable[] }) {
                   className={clsx(
                     'flex min-h-[60px] w-full cursor-pointer items-center justify-center rounded-control',
                     'border px-2 py-2 text-center text-row text-balance',
-                    'border-line-strong bg-paper text-text-2',
+                    'border-line-key bg-paper text-text-2',
                     'peer-checked:border-ink peer-checked:bg-ink peer-checked:text-white',
                   )}
                 >
@@ -262,7 +270,9 @@ export function Tables({ tables }: { tables: CategoryTable[] }) {
 
         {tables.map((t, i) => (
           <div key={t.id} data-panel={i}>
-            {single ? null : <h3 className="sr-only">{t.name}</h3>}
+            {single ? null : (
+              <h3 className="sr-only print:not-sr-only print:mb-2 print:text-section">{t.name}</h3>
+            )}
             <StandingsTable table={t} />
           </div>
         ))}

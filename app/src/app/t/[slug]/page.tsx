@@ -10,6 +10,7 @@ import {
   SectionHead,
   Tag,
   TeamName,
+  Wordmark,
 } from '@/components/ui'
 import { MatchRow } from '@/components/match-row'
 import { FindMyMatch } from './find-my-match'
@@ -133,36 +134,45 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
         mode={live.length ? 'live' : finished && !settling ? 'off' : 'idle'}
       />
 
-      <header className="relative overflow-hidden bg-ink px-4 pt-6 pb-6 text-white">
-        <CourtMark className="pointer-events-none absolute -right-8 -bottom-12 w-56 text-white opacity-[0.07]" />
-        <div className="mx-auto w-full max-w-5xl">
-          {/* The same lockup as the site root. A 15px tracked eyebrow was the
-              right shape and the wrong size: on the ink band, above a 32px
-              headline, it read as a smudge. */}
-          <div className="flex items-center gap-2">
-            <CourtMark className="size-6 shrink-0 text-white" />
-            <span className="font-score text-[19px] font-bold tracking-[0.04em] text-accent-on-ink uppercase">
-              Madras Pickleball
-            </span>
-          </div>
-          <h1 className="mt-2 text-hero">{data.tournament.name}</h1>
+      <header className="masthead relative overflow-hidden bg-ink px-4 pt-6 pb-6 text-white">
+        <CourtMark className="pointer-events-none absolute -right-8 -bottom-12 w-56 text-white opacity-[0.07] print:hidden" />
+        <div className="mx-auto w-full max-w-5xl xl:max-w-6xl">
+          <Wordmark />
+          {/* The tournament name is the headline of the band, so it scales with
+              it: 32px is right above a 390px column and thin across 1120px. */}
+          <h1 className="mt-2 text-hero sm:text-[38px] sm:leading-[42px] lg:text-[44px] lg:leading-[48px]">
+            {data.tournament.name}
+          </h1>
           <p className="num mt-1.5 text-body text-on-ink-2">
             {venueDate(data.tournament.startDate)} · {roster.length} players · {dayLine}
           </p>
           {live.length ? (
-            <p className="mt-4 inline-flex items-center gap-2 rounded-control bg-white/15 px-4 py-2 text-[17px] font-semibold">
+            <p className="mt-4 inline-flex items-center gap-2 rounded-control bg-white/15 px-4 py-2 text-[17px] font-semibold print:hidden">
               <span aria-hidden className="size-2.5 rounded-full bg-live" />
               {live.length === 1 ? '1 match live now' : `${live.length} matches live now`}
             </p>
           ) : null}
+          {/* Paper cannot say when it stopped being true, so it says so. */}
+          <p className="hidden text-meta print:mt-3 print:block">
+            Printed from the live page. Scores change during the day — the screen is always right.
+          </p>
         </div>
         <NetRule className="absolute inset-x-0 bottom-0" />
       </header>
 
-      <div className="mx-auto w-full max-w-5xl px-4 pt-6">
-        <div className="flex flex-col gap-8 lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start lg:gap-x-8">
-          {/* 1 — the answer to the only question most people came with. */}
-          <div className="lg:col-start-2 lg:row-start-1">
+      <div className="mx-auto w-full max-w-5xl px-4 pt-6 xl:max-w-6xl">
+        {/*
+          Two columns from `lg`. The sidebar holds the two things a reader keeps
+          coming back to — who they are playing and who is next — and the main
+          column holds the long stuff. The sidebar's second row is sticky
+          because it is short and its neighbour is three thousand pixels of
+          tables: without it, two thirds of a 1280px page is a column of
+          nothing beside the standings.
+        */}
+        <div className="page-grid flex flex-col gap-8 lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start lg:gap-x-8 xl:grid-cols-[minmax(0,1fr)_22rem]">
+          {/* 1 — the answer to the only question most people came with. It is a
+              name picker and a remembered id: on paper it is a blank box. */}
+          <div className="lg:col-start-2 lg:row-start-1 print:hidden">
             <FindMyMatch
               players={roster.map((p) => ({ id: p.id, name: p.name, teamIds: p.teamIds }))}
               courtsInPlay={data.courtsInPlay}
@@ -197,7 +207,7 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
               </h2>
               <div aria-hidden className="mt-1.5 h-[3px] w-10 rounded-full bg-accent-line" />
               {live.length ? (
-                <p className="mt-1.5 text-meta text-text-3">
+                <p className="mt-1.5 text-meta text-text-3 print:hidden">
                   <span className="font-semibold text-live-text">Live</span> — this page updates by
                   itself
                 </p>
@@ -274,7 +284,7 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
           </section>
 
           {/* 3 — the queue. */}
-          <section className="flex flex-col gap-4 lg:col-start-2 lg:row-start-2">
+          <section className="page-sticky flex flex-col gap-4 lg:sticky lg:top-6 lg:col-start-2 lg:row-start-2">
             <SectionHead
               title={started ? 'Up next' : 'First up'}
               meta={upNext.length ? "in the order they'll be called" : undefined}
@@ -387,7 +397,7 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
               meta={`${roster.length} players · ${data.teamName.size} pairs`}
             >
               <div className="rounded-card border border-line-strong bg-paper p-4 shadow-card">
-                <ul className="columns-2 gap-4">
+                <ul className="columns-2 gap-4 sm:columns-3 lg:columns-4">
                   {roster.map((p) => (
                     <li key={p.id} className="break-inside-avoid py-1 text-body text-text">
                       {p.name}
@@ -397,7 +407,7 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
               </div>
             </Disclosure>
 
-            <div className="border-t border-line pt-4">
+            <div className="border-t border-line pt-4 print:hidden">
               <p className="text-meta text-text-3">
                 This page updates itself — leave it open. Scores go final ten minutes after they are
                 entered, unless someone disputes them.

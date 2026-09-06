@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { redirect } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
 import { recordAudit } from '@/lib/audit'
 import { endOfVenueDay } from '@/lib/time'
@@ -96,9 +97,12 @@ export async function makePair(formData: FormData) {
   const slug = String(formData.get('slug'))
   const categoryId = String(formData.get('categoryId'))
   const playerIds = String(formData.get('playerIds')).split(',').filter(Boolean)
-  const names = String(formData.get('names')).split('|').filter(Boolean)
 
-  const res = await pairApproved(categoryId, playerIds, names)
+  const t = await getTournamentBySlug(slug)
+  if (!t) return
+
+  // The names come from the players' own rows, not from the form.
+  const res = await pairApproved(t.id, categoryId, playerIds)
   if (res.ok) {
     await recordAudit({
       userId: user.id,
@@ -106,9 +110,12 @@ export async function makePair(formData: FormData) {
       action: 'team.created_from_registration',
       entity: 'team',
       entityId: res.teamId,
-      after: { names },
+      after: { name: res.name },
     })
   }
   revalidatePath(`/admin/t/${slug}/registrations`)
   revalidatePath(`/admin/t/${slug}`)
+  if (!res.ok) {
+    redirect(`/admin/t/${slug}/registrations?err=${encodeURIComponent(res.error)}` as never)
+  }
 }

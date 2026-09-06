@@ -19,6 +19,7 @@ import { bumpStreamVersion } from '@/lib/stream'
 import { recordAudit } from '@/lib/audit'
 import {
   DEFAULT_RULES,
+  hornOutcome,
   matchOutcome,
   retirementGames,
   validateGames,
@@ -228,6 +229,9 @@ export function normalizeResult(
     resultType: ResultType
     winnerTeamId: string | null
     retiredTeamId?: string | null
+    /** These games are already the full ledger — see the retirement branch. */
+    expanded?: boolean
+    excludeFromDiff?: number[]
   },
 ): { ok: true; value: NormalizedResult } | { ok: false; error: string } {
   const sides = [match.teamAId, match.teamBId].filter(Boolean) as string[]
@@ -267,24 +271,53 @@ export function normalizeResult(
     }
     const retiringSide: 'A' | 'B' = retiredTeamId === match.teamAId ? 'A' : 'B'
     const played = [...input.games].sort((a, b) => a.gameNo - b.gameNo)
+    const winnerTeamId = retiringSide === 'A' ? match.teamBId : match.teamAId
+
+    // `expanded` means these games ARE the ledger — an organiser replaying a
+    // stored submission. Re-running the expansion over an already-complete list
+    // finds nothing left to fill in and hands back an EMPTY exclusion list, so
+    // the 11-0 nobody played quietly entered game and point difference.
+    if (input.expanded) {
+      return {
+        ok: true,
+        value: {
+          games: played,
+          winnerTeamId,
+          retiredTeamId,
+          excludeFromDiff: input.excludeFromDiff ?? [],
+        },
+      }
+    }
+
     const { games: gs, excludeFromDiff } = retirementGames(rules, played, retiringSide)
     return {
       ok: true,
-      value: {
-        games: gs,
-        winnerTeamId: retiringSide === 'A' ? match.teamBId : match.teamAId,
-        retiredTeamId,
-        excludeFromDiff,
-      },
+      value: { games: gs, winnerTeamId, retiredTeamId, excludeFromDiff },
     }
   }
 
   const v = validateGames(rules, input.games)
   if (!v.ok) return { ok: false, error: v.reason }
-  const outcome = matchOutcome(rules, input.games)
+
+  // A time-capped game ends the MATCH, not just the game — so a horn-stopped
+  // match is complete on one game, or on two that are level. Judging it by
+  // `matchOutcome` made the whole time-cap path unsubmittable from the court
+  // card: the screen said "that's the match" and the server said those games
+  // don't decide it, forever.
+  const stoppedByHorn = input.games.some((g) => g.timeCapped)
+  const outcome = stoppedByHorn
+    ? hornOutcome(rules, input.games)
+    : matchOutcome(rules, input.games)
   const winnerTeamId =
     outcome.winner === 'A' ? match.teamAId : outcome.winner === 'B' ? match.teamBId : null
-  if (!winnerTeamId) return { ok: false, error: 'Those games don\u2019t decide the match.' }
+  if (!winnerTeamId) {
+    return {
+      ok: false,
+      error: stoppedByHorn
+        ? 'Level on games and level on the game the horn stopped — the organiser has to call this one.'
+        : 'Those games don\u2019t decide the match.',
+    }
+  }
 
   return {
     ok: true,
@@ -447,6 +480,7 @@ export async function submitResult(input: SubmitInput): Promise<SubmitResult> {
         deviceId: input.deviceId ?? null,
         submittingTeamId: input.submittingTeamId,
         games: value.games,
+        excludeFromDiff: value.excludeFromDiff,
         resultType: input.resultType,
         retiredTeamId: value.retiredTeamId,
         winnerTeamId: value.winnerTeamId,
@@ -994,6 +1028,8 @@ export async function adminSetResult(input: {
   winnerTeamId: string | null
   retiredTeamId?: string | null
   excludeFromDiff?: number[]
+  /** These games are already the full ledger — replaying a stored submission. */
+  expanded?: boolean
   reason: string
   userId: string
   actorLabel: string

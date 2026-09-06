@@ -8,10 +8,12 @@ import { parsePlayerList } from '@/lib/parse-players'
 import { estimateDay, leagueMatchCount, minutesPerMatch } from '@/lib/estimate'
 import { formatDuration, venueTime } from '@/lib/time'
 
+// "Men's Doubles · men only" is the label twice. A hint only earns its line
+// where the label leaves a real question.
 const SHAPES = [
   { key: 'open_doubles', label: 'Doubles', hint: 'anyone with anyone' },
-  { key: 'mens_doubles', label: "Men's Doubles", hint: 'men only' },
-  { key: 'womens_doubles', label: "Women's Doubles", hint: 'women only' },
+  { key: 'mens_doubles', label: "Men's Doubles", hint: '' },
+  { key: 'womens_doubles', label: "Women's Doubles", hint: '' },
   { key: 'singles', label: 'Singles', hint: 'one v one' },
 ]
 
@@ -76,19 +78,27 @@ export function QuickForm({ defaultName, courts }: { defaultName: string; courts
               type="button"
               onClick={() => setShape(s.key)}
               aria-pressed={shape === s.key}
+              // A fixed height on all four, not `tap-lg`: "Women's Doubles"
+              // wraps to two lines at 390px and made the second row of the
+              // grid taller than the first.
               className={clsx(
-                'tap-lg rounded-control border px-3.5 text-left transition-colors',
+                'flex min-h-[84px] flex-col justify-center rounded-control border px-3.5 py-2 text-left transition-colors',
                 shape === s.key
                   ? 'border-ink bg-ink text-white'
                   : 'border-line-strong bg-paper text-text hover:bg-ground',
               )}
             >
-              <span className="block text-row">{s.label}</span>
-              <span
-                className={clsx('block text-meta', shape === s.key ? 'text-on-ink-2' : 'text-text-3')}
-              >
-                {s.hint}
-              </span>
+              <span className="block text-row text-balance">{s.label}</span>
+              {s.hint ? (
+                <span
+                  className={clsx(
+                    'mt-0.5 block text-meta',
+                    shape === s.key ? 'text-on-ink-2' : 'text-text-3',
+                  )}
+                >
+                  {s.hint}
+                </span>
+              ) : null}
             </button>
           ))}
         </div>
@@ -140,7 +150,7 @@ export function QuickForm({ defaultName, courts }: { defaultName: string; courts
               {day.totalMatches} matches across {courts} court{courts === 1 ? '' : 's'} —{' '}
               {formatDuration(day.minutes)}, finishing about{' '}
               <span className="font-bold">{day.finishAt ? venueTime(day.finishAt) : '—'}</span>.
-              Everyone plays at least {teamCount - 1}.
+              Everyone plays at least {teamCount - 1} match{teamCount - 1 === 1 ? '' : 'es'}.
             </p>
           ) : null}
         </div>

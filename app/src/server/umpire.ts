@@ -86,3 +86,36 @@ export async function umpireQueue(): Promise<UmpireMatch[]> {
     }))
     .sort((a, b) => (a.status === b.status ? 0 : a.status === 'live' ? -1 : 1))
 }
+
+/**
+ * May this umpire record a result for this match?
+ *
+ * The queue above is a display filter, and a display filter is not a boundary:
+ * `saveResult` takes a match id off the wire, and without this an umpire
+ * account — which SPEC A1 intends as a step-up on one court session, not a
+ * standalone credential — could mark any match in any tournament final and
+ * advance the bracket off it.
+ */
+export async function umpireMayScore(matchId: string): Promise<boolean> {
+  const [row] = await db
+    .select({
+      status: matches.status,
+      resultState: matches.resultState,
+      reportedAt: matches.reportedAt,
+      scoringMode: matches.scoringMode,
+      tournamentStatus: tournaments.status,
+      deletedAt: tournaments.deletedAt,
+      teamAId: matches.teamAId,
+      teamBId: matches.teamBId,
+    })
+    .from(matches)
+    .innerJoin(tournaments, eq(tournaments.id, matches.tournamentId))
+    .where(eq(matches.id, matchId))
+    .limit(1)
+
+  if (!row || row.deletedAt) return false
+  if (row.tournamentStatus === 'draft') return false
+  if (!row.teamAId || !row.teamBId) return false
+  if (row.status !== 'live' && row.status !== 'ready') return false
+  return projectedState(row) === 'none'
+}

@@ -214,6 +214,22 @@ export async function submitRegistration(
 
   if (existing) {
     if (existing.status === 'approved') return { ok: true, id: existing.id, alreadyIn: true }
+    // A name that is already in the list belongs to whoever put it there. The
+    // link is shared in a group chat, so without this anyone could resubmit as
+    // "Ravi Kumar", attach their own phone number, add categories he did not
+    // ask for, and un-reject an entry the organiser had already turned down.
+    if (existing.status === 'rejected') {
+      return {
+        ok: false,
+        error: 'The organiser has already looked at this one — have a word with them.',
+      }
+    }
+    if (existing.deviceId && input.deviceId && existing.deviceId !== input.deviceId) {
+      return {
+        ok: false,
+        error: 'Somebody has already signed up under that name. Add an initial, or ask the organiser.',
+      }
+    }
     await db
       .update(pendingRegistrations)
       .set({
@@ -221,7 +237,7 @@ export async function submitRegistration(
         categoryIds: [...new Set([...existing.categoryIds, ...input.categoryIds])],
         partnerName: partnerName ?? existing.partnerName,
         partnerNameKey: partnerName ? normalizeName(partnerName) : existing.partnerNameKey,
-        status: 'pending',
+        deviceId: input.deviceId ?? existing.deviceId,
       })
       .where(eq(pendingRegistrations.id, existing.id))
     return { ok: true, id: existing.id, alreadyIn: false }
@@ -436,38 +452,70 @@ export async function rejectRegistration(registrationId: string, note?: string) 
 /**
  * Build a team from two approved registrations who named each other. Offered on
  * the review screen, never automatic.
+ *
+ * Everything is checked against the database rather than taken from the form:
+ * the category has to belong to this tournament, both players have to be
+ * approved registrants in it, and the team NAME is built from the players'
+ * stored names. The name is the one string the public page, the board and every
+ * blocked-match message identify a pair by — it is not a field a stale form
+ * gets to set.
  */
-export async function pairApproved(categoryId: string, playerIds: string[], names: string[]) {
-  if (playerIds.length < 2) return { ok: false as const, error: 'A pair needs two players.' }
+export async function pairApproved(
+  tournamentId: string,
+  categoryId: string,
+  playerIds: string[],
+) {
+  const ids = [...new Set(playerIds.filter(Boolean))]
+  if (ids.length !== 2) return { ok: false as const, error: 'A pair is two players.' }
 
-  const [already, [{ n }]] = await Promise.all([
-    db
-      .select({ teamId: teamPlayers.teamId })
-      .from(teamPlayers)
-      .innerJoin(teams, eq(teams.id, teamPlayers.teamId))
-      .where(and(eq(teams.categoryId, categoryId), inArray(teamPlayers.playerId, playerIds))),
-    db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(teams)
-      .where(eq(teams.categoryId, categoryId)),
-  ])
+  const [category] = await db
+    .select({ id: categories.id, discipline: categories.discipline })
+    .from(categories)
+    .where(
+      and(
+        eq(categories.id, categoryId),
+        eq(categories.tournamentId, tournamentId),
+        isNull(categories.deletedAt),
+      ),
+    )
+    .limit(1)
+  if (!category) return { ok: false as const, error: 'That category is not in this tournament.' }
+  if (category.discipline === 'singles') {
+    return { ok: false as const, error: 'Singles has no pairs.' }
+  }
+
+  const members = await db
+    .select({ id: players.id, name: players.name })
+    .from(categoryPlayers)
+    .innerJoin(players, eq(players.id, categoryPlayers.playerId))
+    .where(and(eq(categoryPlayers.categoryId, categoryId), inArray(categoryPlayers.playerId, ids)))
+  if (members.length !== 2) {
+    return { ok: false as const, error: 'Both of them have to be in this category first.' }
+  }
+
+  const already = await db
+    .select({ teamId: teamPlayers.teamId })
+    .from(teamPlayers)
+    .innerJoin(teams, eq(teams.id, teamPlayers.teamId))
+    .where(and(eq(teams.categoryId, categoryId), inArray(teamPlayers.playerId, ids)))
   if (already.length) {
     return { ok: false as const, error: 'One of them is already in a team in this category.' }
   }
 
-  // A team without its players is a team of nobody, and the review screen shows
-  // it as a real pair.
-  const teamId = newId('tm')
-  await transact(async (tx) => {
-    await tx.insert(teams).values({
-      id: teamId,
-      categoryId,
-      name: names.join(' / '),
-      seed: Number(n) + 1,
-    })
+  const byId = new Map(members.map((m) => [m.id, m.name]))
+  const name = ids.map((id) => byId.get(id) ?? '?').join(' / ')
+
+  return transact(async (tx) => {
+    const [{ n }] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(teams)
+      .where(eq(teams.categoryId, categoryId))
+
+    const teamId = newId('tm')
+    await tx.insert(teams).values({ id: teamId, categoryId, name, seed: Number(n) + 1 })
     await tx
       .insert(teamPlayers)
-      .values(playerIds.map((playerId, position) => ({ teamId, playerId, position })))
+      .values(ids.map((playerId, position) => ({ teamId, playerId, position })))
+    return { ok: true as const, teamId, name }
   })
-  return { ok: true as const, teamId }
 }

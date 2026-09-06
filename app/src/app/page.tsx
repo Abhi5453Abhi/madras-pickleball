@@ -3,7 +3,7 @@ import { desc, isNotNull, isNull, and } from 'drizzle-orm'
 import { db } from '@/db'
 import { tournaments } from '@/db/schema'
 import { ensureReady } from '@/server/bootstrap'
-import { CourtMark, EmptyState, NetRule, StatusPill, statusWords } from '@/components/ui'
+import { CourtMark, EmptyState, NetRule, StatusPill, statusWords, Wordmark } from '@/components/ui'
 import { venueDate } from '@/lib/time'
 
 export const dynamic = 'force-dynamic'
@@ -27,16 +27,13 @@ export default async function Home() {
 
   return (
     <main className="min-h-dvh bg-ground pb-16">
-      <header className="relative overflow-hidden bg-ink px-4 pt-8 pb-7 text-white">
-        <CourtMark className="pointer-events-none absolute -right-8 -bottom-12 w-56 text-white opacity-[0.07]" />
+      <header className="masthead relative overflow-hidden bg-ink px-4 pt-8 pb-7 text-white">
+        <CourtMark className="pointer-events-none absolute -right-8 -bottom-12 w-56 text-white opacity-[0.07] print:hidden" />
         <div className="mx-auto w-full max-w-3xl">
-          <div className="flex items-center gap-2.5">
-            <CourtMark className="size-7 text-white" />
-            <span className="font-score text-[21px] font-bold tracking-[0.04em] text-accent-on-ink uppercase">
-              Madras Pickleball
-            </span>
-          </div>
-          <h1 className="mt-4 text-hero">{current ? current.name : 'Nothing on right now'}</h1>
+          <Wordmark />
+          <h1 className="mt-4 text-hero sm:text-[38px] sm:leading-[42px]">
+            {current ? current.name : 'Nothing on right now'}
+          </h1>
           <p className="mt-1.5 text-body text-on-ink-2">
             {current
               ? venueDate(current.startDate)
@@ -98,7 +95,7 @@ export default async function Home() {
         <div className="mt-4 border-t border-line pt-4">
           <Link
             href="/login"
-            className="tap flex items-center justify-center rounded-control border border-line-strong bg-paper text-[17px] font-semibold text-text"
+            className="tap flex items-center justify-center rounded-control border border-line-key bg-paper text-[17px] font-semibold text-text"
           >
             Organiser sign in
           </Link>

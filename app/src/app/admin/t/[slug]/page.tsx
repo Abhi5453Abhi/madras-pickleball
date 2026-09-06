@@ -138,49 +138,59 @@ export default async function TournamentPage(props: PageProps<'/admin/t/[slug]'>
     })
   }
 
-  // A finished day has four free courts and nothing to put on them; saying so
-  // four times is the nag this block exists to replace.
+  // Ranked by consequence, and edited. A stuck or wrong match comes before an
+  // empty court: the first two rows are things nobody else will notice, the
+  // third is something the board shows at a glance anyway.
+  //
+  // The free courts collapse to ONE row. Two full-terracotta buttons made
+  // filling a court the loudest thing on a screen whose first row was a
+  // disputed result, and sending a pair out is one tap per court either way —
+  // the page re-renders and offers the next court.
   if (board.remaining > 0) {
-    for (const c of freeCourts) {
-      const offer = offers.get(c.id)
-      if (!offer) continue
-      const idle = c.freeSinceMinutes !== null && c.freeSinceMinutes > 0
+    const offered = freeCourts.filter((c) => offers.has(c.id))
+    const first = offered[0]
+
+    if (first) {
+      const offer = offers.get(first.id)!
+      const idle = first.freeSinceMinutes !== null && first.freeSinceMinutes > 0
       items.push({
-        key: `f-${c.id}`,
+        key: 'free',
         node: (
           <AttentionRow
             tone="accent"
-            what={idle ? `${c.name} has been empty ${c.freeSinceMinutes} min` : `${c.name} is free`}
-            where={`${offer.nameA} v ${offer.nameB}`}
+            what={
+              offered.length > 1
+                ? `${offered.length} courts free`
+                : idle
+                  ? `${first.name} has been empty ${first.freeSinceMinutes} min`
+                  : `${first.name} is free`
+            }
+            where={`Next up: ${offer.nameA} v ${offer.nameB}`}
             action={
               <form action={placeMatch}>
                 <input type="hidden" name="matchId" value={offer.id} />
-                <input type="hidden" name="courtId" value={c.id} />
+                <input type="hidden" name="courtId" value={first.id} />
                 <input type="hidden" name="slug" value={slug} />
                 <button className={`${ROW_BUTTON_ACCENT} w-full sm:w-auto`}>
-                  Send to {c.name} →
+                  Send to {first.name} →
                 </button>
               </form>
             }
           />
         ),
       })
-    }
-
-    // ONE row for all the courts standing empty with nothing legal to put on
-    // them, rather than one row each: the cause is the same for all of them and
-    // so is the organiser's move.
-    const stuck = freeCourts.filter((c) => !offers.has(c.id))
-    if (stuck.length && board.liveCount > 0) {
+    } else if (freeCourts.length && board.liveCount > 0) {
+      // Every free court is blocked by the same thing, so it is one row, not
+      // one per court.
       items.push({
         key: 'stuck',
         node: (
           <AttentionRow
             tone="waiting"
             what={
-              stuck.length === 1
-                ? `${stuck[0].name} is free, nothing can start on it`
-                : `${stuck.length} courts free, nothing can start on them`
+              freeCourts.length === 1
+                ? `${freeCourts[0].name} is free, nothing can start on it`
+                : `${freeCourts.length} courts free, nothing can start on them`
             }
             where="Everyone who could play next is already on a court."
             action={
@@ -263,7 +273,7 @@ export default async function TournamentPage(props: PageProps<'/admin/t/[slug]'>
       teams: table.teams.length,
       played: catMatches.filter((m) => m.resultState !== 'none').length,
       total: catMatches.length,
-      rows: rows.map((r, idx) => ({
+      rows: rows.map((r) => ({
         teamId: r.teamId,
         name: names.get(r.teamId) ?? '—',
         played: r.played,
@@ -271,12 +281,10 @@ export default async function TournamentPage(props: PageProps<'/admin/t/[slug]'>
         pointsFor: r.pointsFor,
         provisional: r.provisional,
         disputed: r.disputed,
-        // Read down the column, a pair on three wins from four sits above a
-        // pair on three from five with more points scored — which looks like
-        // the venue's headline rule being ignored. Where a neighbour is level
-        // on wins, both rows say what their record is.
-        levelOnWins:
-          r.played > 0 && (rows[idx - 1]?.won === r.won || rows[idx + 1]?.won === r.won),
+        // Passed through untouched: the caption is the engine's own answer to
+        // "what put this pair here", and rebuilding it from the columns names
+        // the wrong rule (see `positionNote` in draw.tsx).
+        reason: r.reason,
       })),
       matches: catMatches.map(toMatchView),
     }

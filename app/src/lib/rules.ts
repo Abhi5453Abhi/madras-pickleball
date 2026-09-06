@@ -199,10 +199,13 @@ export function retirementGames(
 /**
  * The horn ends the MATCH, not just the game — SPEC A5.
  *
- * Recording a time-capped game used to leave the screen asking who won a game
- * that would never be played, with no way to submit. Games decide it; level on
- * games, the points actually scored decide it; level on both, nobody can, and
- * the organiser has to.
+ * The order is the one the spec gives, and it is not "most points": the team
+ * leading in games wins; level on games, the team leading the game that was
+ * actually in progress wins; level on that too, nobody here can call it.
+ *
+ * Summing every point across the match instead would hand the day to whoever
+ * won an early game 11-2 — the same blowout SPEC A6 caps out of the tiebreak
+ * precisely so it cannot decide anything.
  */
 export function hornOutcome(rules: ScoringRules, games: GameScore[]): MatchOutcome {
   const base = matchOutcome(rules, games)
@@ -217,16 +220,13 @@ export function hornOutcome(rules: ScoringRules, games: GameScore[]): MatchOutco
     }
   }
 
-  let pointsA = 0
-  let pointsB = 0
-  for (const g of games) {
-    pointsA += g.scoreA
-    pointsB += g.scoreB
-  }
-  if (pointsA === pointsB) return { ...base, complete: false }
+  // The game the horn actually stopped.
+  const stopped = [...games].reverse().find((g) => g.timeCapped) ?? games[games.length - 1]
+  if (!stopped || stopped.scoreA === stopped.scoreB) return { ...base, complete: false }
+
   return {
     complete: true,
-    winner: pointsA > pointsB ? 'A' : 'B',
+    winner: stopped.scoreA > stopped.scoreB ? 'A' : 'B',
     gamesWonA: base.gamesWonA,
     gamesWonB: base.gamesWonB,
   }

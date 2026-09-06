@@ -28,7 +28,8 @@ export type TableRowView = {
   pointsFor: number
   provisional: boolean
   disputed: boolean
-  levelOnWins: boolean
+  /** Straight from `standings()` — the step that actually settled this row. */
+  reason?: string
 }
 
 export type MatchView = {
@@ -56,6 +57,35 @@ export type CategoryView = {
   total: number
   rows: TableRowView[]
   matches: MatchView[]
+}
+
+/**
+ * What settled this row's position, in the organiser's words.
+ *
+ * This has to be read off the reason `standings()` produced, never
+ * reconstructed from played/won: two pairs on 2 from 4 were both captioned
+ * "Win rate · 2 from 4" — naming the one rule that did NOT separate them, on
+ * the screen the organiser reads out to the pair who missed out. Points scored
+ * separated them, and that is what the engine said.
+ *
+ * The same function, over the same reasons, is `positionNote` in
+ * `src/app/t/[slug]/tables.tsx`. If one changes, change both.
+ */
+function positionNote(rows: TableRowView[], idx: number) {
+  const row = rows[idx]
+  if (!row.reason || row.played === 0) return null
+
+  if (row.reason.startsWith('record')) {
+    // The ordinary reason, printed six times, is noise — EXCEPT where a
+    // neighbour is level on wins and the table therefore looks out of order.
+    const levelOnWins = rows[idx - 1]?.won === row.won || rows[idx + 1]?.won === row.won
+    if (!levelOnWins) return null
+    return { text: `Win rate · ${row.won} from ${row.played}`, tone: 'neutral' as const }
+  }
+  if (row.reason.startsWith('drawn')) {
+    return { text: 'Level — you decide', tone: 'alert' as const }
+  }
+  return { text: `Tiebreak · ${row.reason}`, tone: 'neutral' as const }
 }
 
 /** What the cut line says, in the words the organiser would use out loud. */
@@ -100,6 +130,7 @@ function StandingsTable({ cat }: { cat: CategoryView }) {
         <tbody>
           {cat.rows.map((row, idx) => {
             const through = cut > 0 && idx < cut
+            const note = positionNote(cat.rows, idx)
             return (
               <Fragment key={row.teamId}>
                 <tr className="border-t border-line align-middle">
@@ -114,17 +145,13 @@ function StandingsTable({ cat }: { cat: CategoryView }) {
                   </td>
                   <td className="min-w-0 py-3 pr-2 align-middle">
                     <TeamName name={row.name} />
-                    {row.disputed || row.provisional || row.levelOnWins ? (
+                    {row.disputed || row.provisional || note ? (
                       <span className="mt-1.5 flex flex-wrap gap-1.5">
                         {row.disputed ? <Tag tone="alert">A result is under review</Tag> : null}
                         {row.provisional && !row.disputed ? (
                           <Tag tone="waiting">A result is not confirmed yet</Tag>
                         ) : null}
-                        {row.levelOnWins ? (
-                          <Tag>
-                            Win rate · {row.won} from {row.played}
-                          </Tag>
-                        ) : null}
+                        {note ? <Tag tone={note.tone}>{note.text}</Tag> : null}
                       </span>
                     ) : null}
                   </td>

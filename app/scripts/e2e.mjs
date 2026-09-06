@@ -87,7 +87,13 @@ await Promise.all([
 ])
 const slug = page.url().split('/admin/t/')[1]
 ok('tournament created', !!slug, page.url())
-ok('four teams', ((await body()).match(/ \/ /g) ?? []).length >= 4)
+// Team names are stacked one player per line now, so count table rows rather
+// than looking for "A / B" in the text.
+{
+  const rows = await page.$$eval('table tbody tr', (els) => els.length).catch(() => 0)
+  const text = await body()
+  ok('four teams', rows >= 4 || /4 pairs/.test(text), `rows=${rows}`)
+}
 
 console.log('\n3. court board')
 await page.goto(`${BASE}/admin/t/${slug}/board`)
