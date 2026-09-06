@@ -210,9 +210,9 @@ function orderGroup(
     const sorted = [...tied].sort(step.compare)
     const buckets = bucket(sorted, step.compare)
     if (buckets.length > 1) {
-      return buckets.flatMap((b) =>
+      return buckets.flatMap((b, i) =>
         b.length === 1
-          ? tag(b, step.label, step)
+          ? tag(b, sideOf(i, buckets.length, step.label), step)
           : orderGroup(b, allMatches, rule, depth + 1),
       )
     }
@@ -237,10 +237,10 @@ function orderGroup(
       const sorted = [...miniRows].sort(step.compare)
       const buckets = bucket(sorted, step.compare)
       if (buckets.length > 1) {
-        return buckets.flatMap((b) => {
+        return buckets.flatMap((b, i) => {
           const back = b.map((r) => tied.find((t) => t.teamId === r.teamId)!)
           return back.length === 1
-            ? tag(back, `${step.label} between the tied teams`)
+            ? tag(back, sideOf(i, buckets.length, `${step.label} between the tied teams`))
             : orderGroup(back, allMatches, rule, depth + 1)
         })
       }
@@ -258,13 +258,24 @@ function orderGroup(
     const sorted = [...tied].sort(step.compare)
     const buckets = bucket(sorted, step.compare)
     if (buckets.length > 1) {
-      return buckets.flatMap((b) =>
-        b.length === 1 ? tag(b, step.label, step) : orderGroup(b, allMatches, rule, depth + 1),
+      return buckets.flatMap((b, i) =>
+        b.length === 1
+          ? tag(b, sideOf(i, buckets.length, step.label), step)
+          : orderGroup(b, allMatches, rule, depth + 1),
       )
     }
   }
 
-  return tag(tied, 'drawn — the organiser decides')
+  // Nothing separates them. The order they came in — the order the pairs
+  // were made — stands, and the row says so rather than pretending a rule
+  // decided it.
+  return tag(tied, 'drawn — level on everything, kept in the order the pairs were made')
+}
+
+/** "ahead on point difference" / "behind on point difference". */
+function sideOf(index: number, count: number, label: string) {
+  if (count < 2) return label
+  return `${index === 0 ? 'ahead' : index === count - 1 ? 'behind' : 'between the others'} on ${label}`
 }
 
 function bucket(sorted: TeamRow[], compare: (x: TeamRow, y: TeamRow) => number): TeamRow[][] {
@@ -307,8 +318,11 @@ export function tiebreakNote(rule: TiebreakRule): string {
  */
 export function tieNote(reason: string | undefined, leagueDone: boolean): string | null {
   if (!reason) return null
-  if (reason.startsWith('wins') || reason.startsWith('total points scored')) return null
+  // Wins and points are the two columns beside the name; no need to say them again.
+  if (/\bwins\b/.test(reason) || /total points scored/.test(reason)) return null
   // Nothing separates them YET is not a decision for anyone to make.
-  if (reason.startsWith('drawn')) return leagueDone ? 'level — the organiser decides' : 'level so far'
+  if (reason.startsWith('drawn')) {
+    return leagueDone ? 'level on everything — kept in the order the pairs were made' : 'level so far'
+  }
   return reason
 }

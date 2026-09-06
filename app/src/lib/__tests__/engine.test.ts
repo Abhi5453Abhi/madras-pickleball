@@ -292,7 +292,7 @@ describe('standings', () => {
     const top = rows[0]
     const byPoints = [...rows].sort((x, y) => y.pointsFor - x.pointsFor)[0]
     expect(top.teamId).toBe(byPoints.teamId)
-    expect(top.reason).toBe('total points scored')
+    expect(top.reason).toBe('ahead on total points scored')
   })
 
   it('settles a two-way tie by head-to-head once points are equal too', () => {

@@ -73,6 +73,25 @@ export function normalizedDigest(input: {
   return sha256Hex(canonical)
 }
 
+/**
+ * The rules a match was actually played under. After "Shorten what's left"
+ * the category says one game to 11, but a result that was already in was
+ * best of three — correcting it under the new rules would refuse its own
+ * second game. The stored games say what shape it had.
+ */
+function rulesForMatch(
+  category: Parameters<typeof rulesFor>[0],
+  existing: Array<{ scoreA: number; scoreB: number }>,
+): ScoringRules {
+  const rules = rulesFor(category)
+  if (!existing.length) return rules
+  const bestOf = existing.length > 1 ? Math.max(rules.bestOf, 3) : rules.bestOf
+  const tops = existing.map((g) => Math.max(g.scoreA, g.scoreB))
+  const pointsToWin =
+    rules.pointsToWin < 15 && tops.every((t) => t >= 15) ? 15 : rules.pointsToWin
+  return { ...rules, bestOf, pointsToWin }
+}
+
 export async function getMatchForScoring(matchId: string) {
   const rows = await db
     .select({
@@ -105,7 +124,7 @@ export async function getMatchForScoring(matchId: string) {
   return {
     match,
     category,
-    rules: rulesFor(category),
+    rules: rulesForMatch(category, existingGames),
     nameA: sides.find((s) => s.id === match.teamAId)?.name ?? null,
     nameB: sides.find((s) => s.id === match.teamBId)?.name ?? null,
     games: existingGames,

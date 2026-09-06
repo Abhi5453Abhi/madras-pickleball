@@ -133,7 +133,9 @@ export default async function AdminMatchPage(props: PageProps<'/admin/m/[matchId
       {disputePanel}
       <AdminEntry
       matchId={matchId}
-      courtName={court?.name ?? null}
+      // The court only matters while they are on it; a correction an hour
+      // later has no business shouting COURT 1.
+      courtName={loaded.match.status === 'live' ? (court?.name ?? null) : null}
       courtColor={court?.colorKey}
       categoryName={loaded.category.name}
       roundName={loaded.match.roundName}

@@ -236,7 +236,9 @@ export async function withdrawTeam(teamId: string) {
 
   await resolveSlotsFor(team.categoryId)
   await bumpStreamVersion(category.tournamentId)
-  return { ok: true as const, walkovers: remaining.length }
+  // Only the matches that became walkovers: a slot they vacated is not one.
+  const walkovers = remaining.filter((m) => m.teamAId && m.teamBId).length
+  return { ok: true as const, walkovers }
 }
 
 /** Put a withdrawn pair back. Their walkovers are undone, not left standing. */

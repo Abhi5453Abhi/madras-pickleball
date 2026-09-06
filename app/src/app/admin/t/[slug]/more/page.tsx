@@ -282,11 +282,16 @@ async function SwapData({ slug, tournamentId }: { slug: string; tournamentId: st
     substitutionOptions(tournamentId),
     listTournamentPlayers(tournamentId),
   ])
+  // Only people not already in a pair can step in — a name from another
+  // pair would put one person on two sides of the draw.
+  const inAPair = new Set(teams.flatMap((t) => t.members.map((m) => m.id)))
   return (
     <Swap
       slug={slug}
       teams={teams}
-      roster={roster.filter((p) => !p.withdrawn).map((p) => ({ id: p.id, name: p.name }))}
+      roster={roster
+        .filter((p) => !p.withdrawn && !inAPair.has(p.id))
+        .map((p) => ({ id: p.id, name: p.name }))}
     />
   )
 }

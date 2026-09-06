@@ -382,7 +382,8 @@ async function Running({
                       <span className="min-w-0 flex-1">
                         <span className="block text-row text-text">{w}</span>
                         <span className="block text-meta text-text-3">
-                          {m.resultType === 'walkover' ? 'walkover over' : 'beat'} {l}
+                          {m.resultType === 'walkover' ? 'walkover against' : 'beat'} {l}
+                          {m.resultType === 'retired' ? ' · retired' : ''}
                           {m.roundName ? ` · ${m.roundName}` : ''}
                         </span>
                       </span>

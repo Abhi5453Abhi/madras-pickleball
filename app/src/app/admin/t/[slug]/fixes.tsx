@@ -1,6 +1,6 @@
 import { clsx } from 'clsx'
 import Link from 'next/link'
-import { Card, Confirm, Notice, Tag, TeamName } from '@/components/ui'
+import { Card, Chevron, Confirm, Notice, Tag, TeamName } from '@/components/ui'
 import type { SubstituteTarget } from '@/server/chaos'
 import { SECONDARY_LINK } from '../../_ui'
 import {
@@ -137,7 +137,7 @@ function withdrawalSentence(w: WithdrawDetail, unit: string): string {
     parts.push(
       `The ${w.toWalkover} they had left ${
         w.toWalkover === 1 ? 'becomes a walkover' : 'become walkovers'
-      } to the other ${unit} — a win for them, but no points added, so it can't decide the table.`,
+      } to the other ${unit} — a win for them, but no points added, so it can’t decide the table.`,
     )
   }
   if (w.vacates > 0) {
@@ -183,7 +183,13 @@ export function Withdraw({
                 <span className="min-w-0 flex-1">
                   <TeamName name={r.name} players={r.players} muted={r.withdrawn} />
                 </span>
-                <Tag tone={r.withdrawn ? 'waiting' : 'neutral'}>{r.withdrawn ? 'Out' : 'Tap'}</Tag>
+                {r.withdrawn ? (
+                  <Tag tone="waiting">Out</Tag>
+                ) : (
+                  <span aria-hidden className="text-text-3">
+                    <Chevron className="-rotate-90" />
+                  </span>
+                )}
               </Link>
             </li>
           ))}
@@ -245,6 +251,14 @@ export function Swap({
   if (!teams.length) {
     return <p className="text-body text-text-2">No pairs yet — make the teams first.</p>
   }
+  if (!roster.length) {
+    return (
+      <p className="text-body text-text-2">
+        Nobody is free to step in. Add the substitute under Registration first — everyone on the
+        list is already in a pair.
+      </p>
+    )
+  }
   return (
     <div className="rounded-card border border-line-strong bg-paper p-4 shadow-card">
       <p className="text-body text-text-2">
@@ -287,7 +301,12 @@ export function Swap({
             ))}
           </select>
         </div>
-        <button className={INK_BUTTON}>Make the swap</button>
+        <Confirm
+          label="Make the swap"
+          question="The name changes on the board, the table and the public page straight away. Matches already played stay as they were."
+        >
+          <button className={INK_BUTTON}>Yes, swap them</button>
+        </Confirm>
       </form>
     </div>
   )

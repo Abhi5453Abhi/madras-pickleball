@@ -89,6 +89,26 @@ export default async function LiveBoardPage(props: PageProps<'/admin/live'>) {
 
       {running.length ? <Strip tournaments={running} /> : null}
 
+      {/* A stopped tournament is said once, above its courts, with the way
+          to start it again — not on every one of its cards. */}
+      {running
+        .filter((t) => t.paused)
+        .map((t) => (
+          <Notice
+            key={t.id}
+            tone="waiting"
+            title={`${t.name} is stopped`}
+            action={
+              <form action={resumeFromBoard}>
+                <input type="hidden" name="tournamentId" value={t.id} />
+                <button className={`${PRIMARY_LINK} w-full`}>Start it again</button>
+              </form>
+            }
+          >
+            {t.paused}. Nothing goes on its courts until it starts again — the public page says so.
+          </Notice>
+        ))}
+
       {/* Everything played: finishing is the one thing left to do, so it is
           the first thing on the board, not a text link inside a court card. */}
       {running
@@ -161,18 +181,6 @@ function CourtCard({ court, board }: { court: VenueCourt; board: VenueBoard }) {
         <p className="bg-waiting-soft px-4 py-2 text-meta font-semibold text-waiting">
           On for {live.overrunMinutes} min and no score — did they finish?
         </p>
-      ) : null}
-
-      {t.paused ? (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 bg-waiting-soft px-4 py-2 text-meta font-semibold text-waiting">
-          <span>
-            {t.categoryName} is paused — {t.paused}.
-          </span>
-          <form action={resumeFromBoard} className="-my-2">
-            <input type="hidden" name="tournamentId" value={t.id} />
-            <button className="tap px-1 text-[15px] font-bold text-link">Start again</button>
-          </form>
-        </div>
       ) : null}
 
       {court.closedReason ? (

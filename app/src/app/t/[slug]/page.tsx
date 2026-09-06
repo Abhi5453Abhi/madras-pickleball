@@ -289,6 +289,7 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
                         <span className="block text-row font-bold text-text">{w ?? '—'}</span>
                         <span className="block text-meta text-text-3">
                           {walkover ? 'walkover against' : 'beat'} {l ?? '—'}
+                          {m.resultType === 'retired' ? ' · retired' : ''}
                           {m.roundName ? ` · ${m.roundName}` : ''}
                         </span>
                       </span>
