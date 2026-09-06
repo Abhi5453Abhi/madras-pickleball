@@ -93,19 +93,7 @@ type generateDrawOut struct {
 func registerTournaments(reg *rpc.Registry, d *core.Deps) {
 	rpc.Register(reg, "tournaments.getTournamentBySlug", rpc.Organiser,
 		func(ctx context.Context, in slugIn) (tournamentOut, error) {
-			t, err := mustTournamentBySlug(ctx, d, in.Slug)
-			if err != nil {
-				return tournamentOut{}, err
-			}
-			return tournamentOut{
-				ID: t.ID, Slug: t.Slug, Name: t.Name, Day: t.Day, Status: t.Status,
-				Gender: t.Gender, Discipline: t.Discipline, FinalsStage: t.FinalsStage,
-				AdvancePerGroup: t.AdvancePerGroup, BestOf: t.BestOf, PointsToWin: t.PointsToWin,
-				RegistrationClosedAt: core.ISO(t.RegistrationClosedAt),
-				PausedAt:             core.ISO(t.PausedAt),
-				PauseNote:            t.PauseNote,
-				UpdatedAt:            t.UpdatedAt.UTC().Format(time.RFC3339Nano),
-			}, nil
+			return getTournamentBySlug(ctx, d, in.Slug)
 		})
 
 	rpc.Register(reg, "tournaments.listMatches", rpc.Organiser,
@@ -116,19 +104,7 @@ func registerTournaments(reg *rpc.Registry, d *core.Deps) {
 
 	rpc.Register(reg, "tournaments.listTournamentPlayers", rpc.Organiser,
 		func(ctx context.Context, in tournamentIDIn) ([]playerOut, error) {
-			t, err := mustTournament(ctx, d, d.DB, in.TournamentID)
-			if err != nil {
-				return nil, err
-			}
-			roster, err := store.Roster(ctx, d.DB, t.ID)
-			if err != nil {
-				return nil, err
-			}
-			out := make([]playerOut, 0, len(roster))
-			for _, r := range roster {
-				out = append(out, playerOut{ID: r.Player.ID, Name: r.Player.Name})
-			}
-			return out, nil
+			return listTournamentPlayers(ctx, d, in)
 		})
 
 	rpc.Register(reg, "tournaments.standingsFor", rpc.Organiser,
@@ -136,11 +112,7 @@ func registerTournaments(reg *rpc.Registry, d *core.Deps) {
 
 	rpc.Register(reg, "tournaments.teamNameMap", rpc.Organiser,
 		func(ctx context.Context, in tournamentIDIn) (map[string]string, error) {
-			t, err := mustTournament(ctx, d, d.DB, in.TournamentID)
-			if err != nil {
-				return nil, err
-			}
-			return store.TeamNames(ctx, d.DB, t.ID)
+			return teamNameMap(ctx, d, in)
 		})
 
 	rpc.Register(reg, "tournaments.gamesByMatch", rpc.Organiser,
@@ -150,6 +122,51 @@ func registerTournaments(reg *rpc.Registry, d *core.Deps) {
 
 	rpc.Register(reg, "tournaments.generateDraw", rpc.Organiser,
 		func(ctx context.Context, in tournamentIDIn) (generateDrawOut, error) { return generateDraw(ctx, d, in) })
+}
+
+// getTournamentBySlug is the only place a screen turns a slug into an id;
+// every write RPC then takes the id.
+func getTournamentBySlug(ctx context.Context, d *core.Deps, slug string) (tournamentOut, error) {
+	t, err := mustTournamentBySlug(ctx, d, slug)
+	if err != nil {
+		return tournamentOut{}, err
+	}
+	return tournamentOut{
+		ID: t.ID, Slug: t.Slug, Name: t.Name, Day: t.Day, Status: t.Status,
+		Gender: t.Gender, Discipline: t.Discipline, FinalsStage: t.FinalsStage,
+		AdvancePerGroup: t.AdvancePerGroup, BestOf: t.BestOf, PointsToWin: t.PointsToWin,
+		RegistrationClosedAt: core.ISO(t.RegistrationClosedAt),
+		PausedAt:             core.ISO(t.PausedAt),
+		PauseNote:            t.PauseNote,
+		UpdatedAt:            t.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}, nil
+}
+
+// listTournamentPlayers is the roster as ids and names, in sign-up order.
+func listTournamentPlayers(ctx context.Context, d *core.Deps, in tournamentIDIn) ([]playerOut, error) {
+	t, err := mustTournament(ctx, d, d.DB, in.TournamentID)
+	if err != nil {
+		return nil, err
+	}
+	roster, err := store.Roster(ctx, d.DB, t.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]playerOut, 0, len(roster))
+	for _, r := range roster {
+		out = append(out, playerOut{ID: r.Player.ID, Name: r.Player.Name})
+	}
+	return out, nil
+}
+
+// teamNameMap is id → shown name, withdrawn pairs included: the screens print
+// "—" for an id that is not in it.
+func teamNameMap(ctx context.Context, d *core.Deps, in tournamentIDIn) (map[string]string, error) {
+	t, err := mustTournament(ctx, d, d.DB, in.TournamentID)
+	if err != nil {
+		return nil, err
+	}
+	return store.TeamNames(ctx, d.DB, t.ID)
 }
 
 func listMatches(ctx context.Context, d *core.Deps, in tournamentIDIn) ([]matchOut, error) {

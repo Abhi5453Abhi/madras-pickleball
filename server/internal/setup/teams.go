@@ -242,8 +242,12 @@ func insertTeam(ctx context.Context, tx *sql.Tx, tournamentID string, members []
 	}
 
 	id := ids.New("tm")
+	// clock_timestamp(), not the column's default: now() is the TRANSACTION's
+	// time, and four pairs made at random in one go would all share it — which
+	// is the order of the table's last-resort dead heat and of the draw's
+	// seeding, so it must be the order they were actually made in.
 	if _, err := tx.ExecContext(ctx,
-		`insert into teams (id, tournament_id, name, seed) values ($1, $2, $3, $4)`,
+		`insert into teams (id, tournament_id, name, seed, created_at) values ($1, $2, $3, $4, clock_timestamp())`,
 		id, tournamentID, name, maxSeed+1); err != nil {
 		return "", err
 	}

@@ -454,8 +454,12 @@ func addPlayer(ctx context.Context, tx *sql.Tx, d *core.Deps, t *store.Tournamen
 		if phoneKey != "" && !phoneTaken {
 			storedKey = phoneKey
 		}
+		// clock_timestamp(), not the column's default: now() is the
+		// TRANSACTION's time, so a pasted list of forty names would land on one
+		// instant and "the order they arrived" would come back shuffled.
 		if _, err := tx.ExecContext(ctx,
-			`insert into players (id, venue_id, name, name_key, phone, phone_key) values ($1,$2,$3,$4,$5,$6)`,
+			`insert into players (id, venue_id, name, name_key, phone, phone_key, created_at)
+			 values ($1,$2,$3,$4,$5,$6, clock_timestamp())`,
 			id, d.Venue.ID, name, nameKey, storedPhone, storedKey); err != nil {
 			return addResult{}, err
 		}
@@ -469,8 +473,8 @@ func addPlayer(ctx context.Context, tx *sql.Tx, d *core.Deps, t *store.Tournamen
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `
-		insert into tournament_players (id, tournament_id, player_id, source, partner_wish, partner_player_id)
-		values ($1,$2,$3,$4,$5,$6)`,
+		insert into tournament_players (id, tournament_id, player_id, source, partner_wish, partner_player_id, created_at)
+		values ($1,$2,$3,$4,$5,$6, clock_timestamp())`,
 		ids.New("tp"), t.ID, id, in.source, nullable(partnerWish), partnerPlayerID); err != nil {
 		return addResult{}, err
 	}
@@ -1000,24 +1004,38 @@ func str(p *string) string {
 // group is not unusual and the organiser knows which is which.
 func submitRegistration(ctx context.Context, d *core.Deps, in submitIn) (submitOut, error) {
 	device := safeDeviceID(in.DeviceID)
+	// The guard is per browser as well as per link: the link is public, so
+	// the only other thing a script and a person do differently is how often
+	// they get it wrong. A refusal counts; a sign-up clears the count.
+	deviceKey := ""
 	if device != "" {
-		gate, err := core.CheckAllowed(ctx, d.DB, d.Now(), kindSignup, "dev:"+device)
+		deviceKey = "dev:" + device
+		gate, err := core.CheckAllowed(ctx, d.DB, d.Now(), kindSignup, deviceKey)
 		if err != nil {
 			return submitOut{}, err
 		}
 		if !gate.Allowed {
+			// Already waiting: saying so again would only extend the wait.
 			return submitOut{Error: "This link doesn’t work any more. Ask the organiser."}, nil
 		}
+	}
+	no := func(msg string) (submitOut, error) {
+		if deviceKey != "" {
+			if err := core.RecordAttempt(ctx, d.DB, kindSignup, deviceKey, false); err != nil {
+				return submitOut{}, err
+			}
+		}
+		return submitOut{Error: msg}, nil
 	}
 	t, err := resolveToken(ctx, d, in.Token)
 	if err != nil {
 		return submitOut{}, err
 	}
 	if t == nil {
-		return submitOut{Error: "This link doesn’t work any more. Ask the organiser."}, nil
+		return no("This link doesn’t work any more. Ask the organiser.")
 	}
 	if signupsClosed(t) {
-		return submitOut{Error: "Sign-ups have closed — ask the organiser."}, nil
+		return no("Sign-ups have closed — ask the organiser.")
 	}
 
 	// Cut before validating, so a 5,000-character paste is a name that is too
@@ -1029,15 +1047,15 @@ func submitRegistration(ctx context.Context, d *core.Deps, in submitIn) (submitO
 		partner = ""
 	}
 	if len([]rune(name)) < 2 {
-		return submitOut{Error: "Put your name in."}, nil
+		return no("Put your name in.")
 	}
 	if len([]rune(name)) > 60 {
-		return submitOut{Error: "That name is too long."}, nil
+		return no("That name is too long.")
 	}
 	nameKey := engine.NormalizeName(name)
 	phoneKey := engine.NormalizePhone(phone)
 	if phone != "" && phoneKey == "" {
-		return submitOut{Error: "That phone number doesn’t look right — ten digits, or leave it blank."}, nil
+		return no("That phone number doesn’t look right — ten digits, or leave it blank.")
 	}
 
 	var out submitOut
@@ -1047,6 +1065,7 @@ func submitRegistration(ctx context.Context, d *core.Deps, in submitIn) (submitO
 			return err
 		}
 		if signupsClosed(locked) {
+			// Closed between the read and the lock: two taps, one moment.
 			out = submitOut{Error: "Sign-ups have closed — ask the organiser."}
 			return nil
 		}
@@ -1107,6 +1126,13 @@ func submitRegistration(ctx context.Context, d *core.Deps, in submitIn) (submitO
 	})
 	if err != nil {
 		return submitOut{}, err
+	}
+	if deviceKey != "" {
+		// A sign-up that took clears this browser's count; one that was
+		// refused adds to it.
+		if err := core.RecordAttempt(ctx, d.DB, kindSignup, deviceKey, out.OK); err != nil {
+			return submitOut{}, err
+		}
 	}
 	return out, nil
 }
