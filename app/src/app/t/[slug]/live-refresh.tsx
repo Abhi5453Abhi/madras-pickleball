@@ -4,9 +4,9 @@ import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 
 /**
- * Polls one integer — `tournaments.stream_version` — and only refetches the
- * page when it moves. Naive 5s polling of the whole payload is ~230,000
- * function calls and ~46GB of egress in a single tournament day (SPEC A9).
+ * Polls one integer — a stream version — and only refetches the page when it
+ * moves. Naive 5s polling of the whole payload is ~230,000 function calls and
+ * ~46GB of egress in a single tournament day.
  *
  * Three speeds, because the cost is per phone in the venue:
  *   live — something is on court, and a score can change any second
@@ -16,11 +16,12 @@ import { useRouter } from 'next/navigation'
  * Only while the tab is visible. A phone in a pocket polls nothing.
  */
 export function LiveRefresh({
-  slug,
+  endpoint,
   version,
   mode,
 }: {
-  slug: string
+  /** Where the number lives — `/api/public/t/<slug>/version` or `/api/public/today/version`. */
+  endpoint: string
   version: number
   mode: 'live' | 'idle' | 'off'
 }) {
@@ -34,7 +35,7 @@ export function LiveRefresh({
     async function tick() {
       if (stopped || document.visibilityState !== 'visible') return
       try {
-        const res = await fetch(`/api/public/t/${slug}/version`, { cache: 'no-store' })
+        const res = await fetch(endpoint, { cache: 'no-store' })
         if (!res.ok) return
         const data = (await res.json()) as { v: number }
         if (data.v !== version) router.refresh()
@@ -52,7 +53,7 @@ export function LiveRefresh({
       clearInterval(id)
       document.removeEventListener('visibilitychange', tick)
     }
-  }, [slug, version, mode, router])
+  }, [endpoint, version, mode, router])
 
   return null
 }

@@ -277,7 +277,9 @@ export async function reinstateTeam(teamId: string) {
             eq(matches.resultType, 'walkover'),
             sql`(${matches.teamAId} = ${teamId} or ${matches.teamBId} = ${teamId})`,
             ne(matches.winnerTeamId, teamId),
-            sql`${matches.updatedAt} >= ${since}`,
+            // As ISO text: a Date handed straight to a raw fragment is not
+            // something the driver can bind, and the query failed outright.
+            sql`${matches.updatedAt} >= ${since.toISOString()}::timestamptz`,
           ),
         )
     : []

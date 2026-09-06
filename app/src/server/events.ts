@@ -673,6 +673,41 @@ export async function startEvent(tournamentId: string) {
   return { ok: true as const }
 }
 
+/**
+ * Delete a tournament. Soft: the row keeps its `deletedAt` and everything
+ * under it stays for the record, but it leaves every list and its public page
+ * stops answering. Its courts are freed for the day — that is a hard delete of
+ * the `tournament_courts` rows, because the one-tournament-per-court-per-day
+ * index would otherwise keep the courts held by something nobody can see.
+ *
+ * Refused while a match is on court: those players are standing on it.
+ */
+export async function deleteEvent(tournamentId: string) {
+  const [live] = await db
+    .select({ courtName: courts.name })
+    .from(matches)
+    .leftJoin(courts, eq(courts.id, matches.courtId))
+    .where(and(eq(matches.tournamentId, tournamentId), eq(matches.status, 'live')))
+    .limit(1)
+  if (live) {
+    return {
+      ok: false as const,
+      error: `There is a match on ${live.courtName ?? 'a court'} right now. Let it finish, or take it off court, then delete.`,
+    }
+  }
+  await transact(async (tx) => {
+    await tx
+      .update(tournaments)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(tournaments.id, tournamentId), isNull(tournaments.deletedAt)))
+    await tx.delete(tournamentCourts).where(eq(tournamentCourts.tournamentId, tournamentId))
+  })
+  // Nothing to flow here: the courts come free, but they belong to no
+  // tournament until the organiser gives them to one under Schedule & courts.
+  await bumpStreamVersion(tournamentId)
+  return { ok: true as const }
+}
+
 /** Everything has a result. Close it off so it moves to "Finished". */
 export async function finishEvent(tournamentId: string) {
   const [agg] = await db
