@@ -21,6 +21,25 @@ var courtColours = []string{"blue", "orange", "teal", "violet"}
 // run at every start; it only fills in what is missing. Returns the venue.
 func Seed(ctx context.Context, d *sql.DB) (Venue, error) {
 	var v Venue
+	// One transaction under the same lock the migrations take, so two
+	// containers waking together cannot both make a venue.
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	if _, err := tx.ExecContext(ctx, `select pg_advisory_xact_lock(7231001)`); err != nil {
+		return v, err
+	}
+	v, err = seedIn(ctx, tx)
+	if err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
+}
+
+func seedIn(ctx context.Context, d *sql.Tx) (Venue, error) {
+	var v Venue
 	err := d.QueryRowContext(ctx, `select id, name, slug from venues order by created_at limit 1`).
 		Scan(&v.ID, &v.Name, &v.Slug)
 	if errors.Is(err, sql.ErrNoRows) {

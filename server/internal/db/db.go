@@ -37,28 +37,27 @@ func Open(url string) (*sql.DB, error) {
 }
 
 // Migrate applies every migrations/*.sql the database has not seen, in
-// name order, each in its own transaction, under an advisory lock so two
-// containers starting together take turns. A statement that fails rolls its
-// whole file back, so a crash halfway leaves nothing half-made.
+// name order, all inside ONE transaction that holds an advisory lock — so
+// two containers starting together take turns, a crash halfway leaves
+// nothing half-made, and it works through a connection pooler like Neon's,
+// which only keeps a transaction on one backend (a session-level lock would
+// be taken on one connection and the DDL run on another).
 func Migrate(ctx context.Context, d *sql.DB, log *slog.Logger) error {
-	conn, err := d.Conn(ctx)
+	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer tx.Rollback() //nolint:errcheck
 
-	// Session-level lock on this one connection; released when it closes.
-	if _, err := conn.ExecContext(ctx, `select pg_advisory_lock(7231001)`); err != nil {
+	if _, err := tx.ExecContext(ctx, `select pg_advisory_xact_lock(7231001)`); err != nil {
 		return fmt.Errorf("db: advisory lock: %w", err)
 	}
-	defer conn.ExecContext(context.Background(), `select pg_advisory_unlock(7231001)`) //nolint:errcheck
-
-	if _, err := conn.ExecContext(ctx, `create table if not exists schema_migrations (
+	if _, err := tx.ExecContext(ctx, `create table if not exists schema_migrations (
 		name text primary key, applied_at timestamptz not null default now())`); err != nil {
 		return err
 	}
 	applied := map[string]bool{}
-	rows, err := conn.QueryContext(ctx, `select name from schema_migrations`)
+	rows, err := tx.QueryContext(ctx, `select name from schema_migrations`)
 	if err != nil {
 		return err
 	}
@@ -77,6 +76,7 @@ func Migrate(ctx context.Context, d *sql.DB, log *slog.Logger) error {
 		return err
 	}
 	sort.Strings(names)
+	var done []string
 	for _, name := range names {
 		if applied[name] {
 			continue
@@ -85,21 +85,18 @@ func Migrate(ctx context.Context, d *sql.DB, log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		tx, err := conn.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
 		if _, err := tx.ExecContext(ctx, string(body)); err != nil {
-			tx.Rollback()
 			return fmt.Errorf("db: migration %s: %w", name, err)
 		}
 		if _, err := tx.ExecContext(ctx, `insert into schema_migrations (name) values ($1)`, name); err != nil {
-			tx.Rollback()
 			return err
 		}
-		if err := tx.Commit(); err != nil {
-			return err
-		}
+		done = append(done, name)
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, name := range done {
 		log.Info("migration applied", "name", name)
 	}
 	return nil
