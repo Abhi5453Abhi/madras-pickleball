@@ -8,6 +8,7 @@ import { matches } from '@/db/schema'
 import { requireUser } from '@/lib/auth'
 import { recordAudit } from '@/lib/audit'
 import { assignCourts, primaryCategory } from '@/server/events'
+import { settleTeams } from '@/server/teams'
 import { generateDrawForCategory, getTournamentBySlug } from '@/server/tournaments'
 
 async function load(formData: FormData) {
@@ -54,6 +55,7 @@ export async function makeScheduleAction(formData: FormData) {
   }
 
   try {
+    await settleTeams(tournament.id)
     await generateDrawForCategory(category.id)
   } catch {
     redirect(`${back}?err=${encodeURIComponent('You need at least two pairs before there is a schedule to make.')}` as never)

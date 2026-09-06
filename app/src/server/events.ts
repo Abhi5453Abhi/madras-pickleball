@@ -526,10 +526,11 @@ export async function hub(slug: string): Promise<Hub | null> {
   const [courtList, [playerAgg], [teamAgg], [matchAgg], [signupAgg], pairedRows] =
     await Promise.all([
       myCourts(t.id),
+      // Withdrawn players are out of the day: not "in", not waiting for a pair.
       db
         .select({ n: sql<number>`cast(count(*) as int)` })
         .from(tournamentPlayers)
-        .where(eq(tournamentPlayers.tournamentId, t.id)),
+        .where(and(eq(tournamentPlayers.tournamentId, t.id), eq(tournamentPlayers.withdrawn, false))),
       db
         .select({ n: sql<number>`cast(count(*) as int)` })
         .from(teams)
@@ -596,7 +597,9 @@ export async function hub(slug: string): Promise<Hub | null> {
           ? `${players} in the draw`
           : teamsNeeded === 0
             ? 'Once players are in'
-            : `${teamsMade} of ${teamsNeeded} pairs made${unpaired ? ` · ${unpaired} still to pair` : ''}`,
+            : `${teamsMade} of ${teamsNeeded} pairs made${
+                unpaired ? ` · ${unpaired} ${unpaired === 1 ? 'player' : 'players'} still to pair` : ''
+              }`,
       state: teamsDone ? 'done' : regDone ? 'current' : 'todo',
       href: `${base}/teams`,
     },

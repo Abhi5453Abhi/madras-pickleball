@@ -4,7 +4,8 @@ import { notFound } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
 import { Chevron, CourtSwatch, Notice, Panel, TeamName } from '@/components/ui'
 import { courtOptions, hub } from '@/server/events'
-import { listMatches, teamNameMap } from '@/server/tournaments'
+import { settleTeams } from '@/server/teams'
+import { getTournamentBySlug, listMatches, teamNameMap } from '@/server/tournaments'
 import { PRIMARY_LINK, SECONDARY_LINK } from '../../../_ui'
 import { startEventAction } from '../hub-actions'
 import { makeScheduleAction, setCourtsAction } from './actions'
@@ -20,6 +21,11 @@ export default async function SchedulePage(props: PageProps<'/admin/t/[slug]/sch
   await requireUser('admin')
   const { slug } = await props.params
   const { err } = await props.searchParams
+  // Mutual pairs and singles' teams of one are made on the way in, so the
+  // schedule has something to draw from even if Teams was never opened.
+  const found = await getTournamentBySlug(slug)
+  if (!found) notFound()
+  await settleTeams(found.id)
   const h = await hub(slug)
   if (!h) notFound()
   const { tournament: t, category } = h
