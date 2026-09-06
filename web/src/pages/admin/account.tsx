@@ -169,7 +169,7 @@ function Organisers({
       ) : (
         <Notice tone="alert">{organisers.error}</Notice>
       )}
-      <AddOrganiserForm onAdded={() => void organisers.reload()} />
+      <AddOrganiserForm onAdded={() => organisers.reload()} />
       <p className="text-meta text-text-3">
         They get a PIN of their own, shown here once. Every organiser can do everything except this
         list.
@@ -253,7 +253,7 @@ function PinForm({ forced }: { forced?: boolean }) {
  * here — it never travels in a URL, which would put it in browser history and
  * in the host's logs.
  */
-function AddOrganiserForm({ onAdded }: { onAdded: () => void }) {
+function AddOrganiserForm({ onAdded }: { onAdded: () => Promise<unknown> }) {
   const { run, pending } = useAction()
   const [name, setName] = useState('')
   const [made, setMade] = useState<{ name: string; pin: string } | null>(null)
@@ -263,10 +263,12 @@ function AddOrganiserForm({ onAdded }: { onAdded: () => void }) {
     e.preventDefault()
     const res = await run('organisers.addOrganiser', { name })
     if (res.ok) {
+      // The list first, then the PIN: the new name should be on the list
+      // by the time the owner reads the PIN out to them.
+      await onAdded()
       setError(null)
       setMade({ name: res.name, pin: res.pin })
       setName('')
-      onAdded()
     } else {
       setError(res.error)
     }
