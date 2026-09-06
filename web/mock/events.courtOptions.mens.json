@@ -1,0 +1,32 @@
+[
+  {
+    "id": "crt_1",
+    "name": "Court 1",
+    "colorKey": "blue",
+    "takenBy": null,
+    "mine": true
+  },
+  {
+    "id": "crt_2",
+    "name": "Court 2",
+    "colorKey": "orange",
+    "takenBy": null,
+    "mine": true
+  },
+  {
+    "id": "crt_3",
+    "name": "Court 3",
+    "colorKey": "teal",
+    "takenBy": {
+      "name": "Mixed Doubles — September"
+    },
+    "mine": false
+  },
+  {
+    "id": "crt_4",
+    "name": "Court 4",
+    "colorKey": "violet",
+    "takenBy": null,
+    "mine": false
+  }
+]

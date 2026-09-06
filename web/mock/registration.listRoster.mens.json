@@ -1,0 +1,93 @@
+[
+  {
+    "playerId": "ply_1",
+    "name": "Karthik Subramanian",
+    "source": "hand",
+    "partner": "Sathish Kumar",
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_2",
+    "name": "Sathish Kumar",
+    "source": "link",
+    "partner": null,
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_3",
+    "name": "Hari Venkatesh",
+    "source": "link",
+    "partner": "Naveen Krishnan",
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_4",
+    "name": "Naveen Krishnan",
+    "source": "hand",
+    "partner": null,
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_5",
+    "name": "Arun Prakash",
+    "source": "link",
+    "partner": "Ganesh Iyer",
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_6",
+    "name": "Ganesh Iyer",
+    "source": "link",
+    "partner": null,
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_7",
+    "name": "Deepak Raj",
+    "source": "hand",
+    "partner": "Bala Murugan",
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_8",
+    "name": "Bala Murugan",
+    "source": "link",
+    "partner": null,
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_9",
+    "name": "Suresh Babu",
+    "source": "link",
+    "partner": "Manoj Pillai",
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_10",
+    "name": "Manoj Pillai",
+    "source": "hand",
+    "partner": null,
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_11",
+    "name": "Ravi Shankar",
+    "source": "link",
+    "partner": "Meera Nair",
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_12",
+    "name": "Meera Nair",
+    "source": "link",
+    "partner": null,
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_13",
+    "name": "Vignesh Kumar",
+    "source": "hand",
+    "partner": null,
+    "duplicateOf": null
+  }
+]

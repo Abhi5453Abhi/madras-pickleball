@@ -1,0 +1,183 @@
+{
+  "now": "2026-09-06T06:12:00.000Z",
+  "tournaments": [
+    {
+      "id": "tr_mens",
+      "slug": "mens-doubles-september",
+      "name": "Men's Doubles — September",
+      "categoryName": "Men's Doubles",
+      "shortName": "Men's",
+      "running": true,
+      "paused": null,
+      "played": 7,
+      "total": 16,
+      "toPlay": 7,
+      "remaining": 9,
+      "finishAt": "2026-09-06T09:40:00.000Z",
+      "courtIds": [
+        "crt_1",
+        "crt_2"
+      ]
+    },
+    {
+      "id": "tr_mixed",
+      "slug": "mixed-doubles-september",
+      "name": "Mixed Doubles — September",
+      "categoryName": "Mixed Doubles",
+      "shortName": "Mixed",
+      "running": false,
+      "paused": null,
+      "played": 0,
+      "total": 0,
+      "toPlay": 0,
+      "remaining": 0,
+      "finishAt": null,
+      "courtIds": [
+        "crt_3"
+      ]
+    }
+  ],
+  "courts": [
+    {
+      "id": "crt_1",
+      "name": "Court 1",
+      "colorKey": "blue",
+      "tournament": {
+        "id": "tr_mens",
+        "slug": "mens-doubles-september",
+        "name": "Men's Doubles — September",
+        "categoryName": "Men's Doubles",
+        "shortName": "Men's",
+        "running": true,
+        "paused": null,
+        "played": 7,
+        "total": 16,
+        "toPlay": 7,
+        "remaining": 9,
+        "finishAt": "2026-09-06T09:40:00.000Z",
+        "courtIds": [
+          "crt_1",
+          "crt_2"
+        ]
+      },
+      "closedReason": null,
+      "live": {
+        "id": "mt_8",
+        "roundName": "Round 3",
+        "nameA": "Suresh Babu / Manoj Pillai",
+        "nameB": "Arun Prakash / Ganesh Iyer",
+        "overrunMinutes": null
+      },
+      "next": {
+        "id": "mt_10",
+        "roundName": "Round 4",
+        "nameA": "Karthik Subramanian / Sathish Kumar",
+        "nameB": "Arun Prakash / Ganesh Iyer",
+        "overrunMinutes": null
+      },
+      "nextNote": null,
+      "offer": null,
+      "idleReason": null
+    },
+    {
+      "id": "crt_2",
+      "name": "Court 2",
+      "colorKey": "orange",
+      "tournament": {
+        "id": "tr_mens",
+        "slug": "mens-doubles-september",
+        "name": "Men's Doubles — September",
+        "categoryName": "Men's Doubles",
+        "shortName": "Men's",
+        "running": true,
+        "paused": null,
+        "played": 7,
+        "total": 16,
+        "toPlay": 7,
+        "remaining": 9,
+        "finishAt": "2026-09-06T09:40:00.000Z",
+        "courtIds": [
+          "crt_1",
+          "crt_2"
+        ]
+      },
+      "closedReason": null,
+      "live": {
+        "id": "mt_9",
+        "roundName": "Round 3",
+        "nameA": "Ravi Shankar / Meera Nair",
+        "nameB": "Hari Venkatesh / Naveen Krishnan",
+        "overrunMinutes": 54
+      },
+      "next": {
+        "id": "mt_11",
+        "roundName": "Round 4",
+        "nameA": "Deepak Raj / Bala Murugan",
+        "nameB": "Hari Venkatesh / Naveen Krishnan",
+        "overrunMinutes": null
+      },
+      "nextNote": null,
+      "offer": null,
+      "idleReason": null
+    },
+    {
+      "id": "crt_3",
+      "name": "Court 3",
+      "colorKey": "teal",
+      "tournament": {
+        "id": "tr_mixed",
+        "slug": "mixed-doubles-september",
+        "name": "Mixed Doubles — September",
+        "categoryName": "Mixed Doubles",
+        "shortName": "Mixed",
+        "running": false,
+        "paused": null,
+        "played": 0,
+        "total": 0,
+        "toPlay": 0,
+        "remaining": 0,
+        "finishAt": null,
+        "courtIds": [
+          "crt_3"
+        ]
+      },
+      "closedReason": null,
+      "live": null,
+      "next": null,
+      "nextNote": null,
+      "offer": null,
+      "idleReason": null
+    },
+    {
+      "id": "crt_4",
+      "name": "Court 4",
+      "colorKey": "violet",
+      "tournament": null,
+      "closedReason": null,
+      "live": null,
+      "next": null,
+      "nextNote": null,
+      "offer": null,
+      "idleReason": null
+    }
+  ],
+  "liveCount": 2,
+  "wants": {
+    "id": "tr_mens",
+    "slug": "mens-doubles-september",
+    "name": "Men's Doubles — September",
+    "categoryName": "Men's Doubles",
+    "shortName": "Men's",
+    "running": true,
+    "paused": null,
+    "played": 7,
+    "total": 16,
+    "toPlay": 7,
+    "remaining": 9,
+    "finishAt": "2026-09-06T09:40:00.000Z",
+    "courtIds": [
+      "crt_1",
+      "crt_2"
+    ]
+  }
+}

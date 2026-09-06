@@ -1,0 +1,65 @@
+{
+  "tournament": {
+    "id": "tr_mixed",
+    "slug": "mixed-doubles-september",
+    "name": "Mixed Doubles — September",
+    "day": "2026-09-06",
+    "status": "setup",
+    "gender": "mixed",
+    "discipline": "doubles",
+    "finalsStage": "final_only",
+    "advancePerGroup": 0,
+    "bestOf": 3,
+    "pointsToWin": 11,
+    "registrationClosedAt": null,
+    "pausedAt": null,
+    "pauseNote": null,
+    "updatedAt": "2026-09-06T06:12:00.000Z"
+  },
+  "courts": [
+    {
+      "id": "crt_3",
+      "name": "Court 3",
+      "colorKey": "teal"
+    }
+  ],
+  "players": 8,
+  "teamsMade": 2,
+  "teamsNeeded": 4,
+  "unpaired": 4,
+  "matchesTotal": 0,
+  "matchesPlayed": 0,
+  "matchesLive": 0,
+  "pendingSignups": 1,
+  "steps": [
+    {
+      "key": "registration",
+      "title": "Registration",
+      "detail": "8 players in · link is open · 1 possible duplicate",
+      "state": "done",
+      "href": "/admin/t/mixed-doubles-september/registration"
+    },
+    {
+      "key": "teams",
+      "title": "Teams",
+      "detail": "2 of 4 pairs made · 4 players still to pair",
+      "state": "current",
+      "href": "/admin/t/mixed-doubles-september/teams"
+    },
+    {
+      "key": "schedule",
+      "title": "Schedule & courts",
+      "detail": "Court 3 · schedule not made yet",
+      "state": "todo",
+      "href": "/admin/t/mixed-doubles-september/schedule"
+    },
+    {
+      "key": "start",
+      "title": "Start",
+      "detail": "Once the schedule is made",
+      "state": "todo",
+      "href": "/admin/t/mixed-doubles-september/schedule"
+    }
+  ],
+  "phase": "setup"
+}

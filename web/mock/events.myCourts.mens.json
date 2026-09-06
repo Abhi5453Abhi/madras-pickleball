@@ -1,0 +1,12 @@
+[
+  {
+    "id": "crt_1",
+    "name": "Court 1",
+    "colorKey": "blue"
+  },
+  {
+    "id": "crt_2",
+    "name": "Court 2",
+    "colorKey": "orange"
+  }
+]

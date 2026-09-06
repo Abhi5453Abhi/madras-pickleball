@@ -1,0 +1,41 @@
+{
+  "courts": [
+    {
+      "id": "crt_1",
+      "name": "Court 1",
+      "colorKey": "blue"
+    },
+    {
+      "id": "crt_2",
+      "name": "Court 2",
+      "colorKey": "orange"
+    },
+    {
+      "id": "crt_3",
+      "name": "Court 3",
+      "colorKey": "teal"
+    },
+    {
+      "id": "crt_4",
+      "name": "Court 4",
+      "colorKey": "violet"
+    }
+  ],
+  "held": [
+    {
+      "courtId": "crt_1",
+      "dayKey": "2026-09-06",
+      "name": "Men's Doubles — September"
+    },
+    {
+      "courtId": "crt_2",
+      "dayKey": "2026-09-06",
+      "name": "Men's Doubles — September"
+    },
+    {
+      "courtId": "crt_3",
+      "dayKey": "2026-09-06",
+      "name": "Mixed Doubles — September"
+    }
+  ]
+}

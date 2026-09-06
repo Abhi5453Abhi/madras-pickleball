@@ -1,0 +1,17 @@
+{
+  "id": "tr_mens",
+  "slug": "mens-doubles-september",
+  "name": "Men's Doubles — September",
+  "day": "2026-09-06",
+  "status": "live",
+  "gender": "mens",
+  "discipline": "doubles",
+  "finalsStage": "final_only",
+  "advancePerGroup": 2,
+  "bestOf": 3,
+  "pointsToWin": 11,
+  "registrationClosedAt": "2026-09-06T02:55:00.000Z",
+  "pausedAt": null,
+  "pauseNote": null,
+  "updatedAt": "2026-09-06T06:12:00.000Z"
+}

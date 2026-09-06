@@ -1,0 +1,32 @@
+[
+  {
+    "id": "crt_1",
+    "name": "Court 1",
+    "colorKey": "blue",
+    "heldBy": [
+      "Men's Doubles — September"
+    ]
+  },
+  {
+    "id": "crt_2",
+    "name": "Court 2",
+    "colorKey": "orange",
+    "heldBy": [
+      "Men's Doubles — September"
+    ]
+  },
+  {
+    "id": "crt_3",
+    "name": "Court 3",
+    "colorKey": "teal",
+    "heldBy": [
+      "Mixed Doubles — September"
+    ]
+  },
+  {
+    "id": "crt_4",
+    "name": "Court 4",
+    "colorKey": "violet",
+    "heldBy": []
+  }
+]

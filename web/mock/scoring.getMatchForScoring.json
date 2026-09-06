@@ -1,0 +1,25 @@
+{
+  "match": {
+    "id": "mt_8",
+    "tournamentId": "tr_mens",
+    "roundName": "Round 3",
+    "teamAId": "tm_5",
+    "teamBId": "tm_3",
+    "status": "live",
+    "resultState": "none",
+    "resultType": "normal",
+    "winnerTeamId": null
+  },
+  "categoryName": "Men's Doubles",
+  "courtName": "Court 1",
+  "courtColorKey": "blue",
+  "nameA": "Suresh Babu / Manoj Pillai",
+  "nameB": "Arun Prakash / Ganesh Iyer",
+  "rules": {
+    "bestOf": 3,
+    "pointsToWin": 11,
+    "winBy": 2,
+    "hardCap": null
+  },
+  "games": []
+}

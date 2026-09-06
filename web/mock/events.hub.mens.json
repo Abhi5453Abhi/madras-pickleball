@@ -1,0 +1,70 @@
+{
+  "tournament": {
+    "id": "tr_mens",
+    "slug": "mens-doubles-september",
+    "name": "Men's Doubles — September",
+    "day": "2026-09-06",
+    "status": "live",
+    "gender": "mens",
+    "discipline": "doubles",
+    "finalsStage": "final_only",
+    "advancePerGroup": 2,
+    "bestOf": 3,
+    "pointsToWin": 11,
+    "registrationClosedAt": "2026-09-06T02:55:00.000Z",
+    "pausedAt": null,
+    "pauseNote": null,
+    "updatedAt": "2026-09-06T06:12:00.000Z"
+  },
+  "courts": [
+    {
+      "id": "crt_1",
+      "name": "Court 1",
+      "colorKey": "blue"
+    },
+    {
+      "id": "crt_2",
+      "name": "Court 2",
+      "colorKey": "orange"
+    }
+  ],
+  "players": 13,
+  "teamsMade": 6,
+  "teamsNeeded": 6,
+  "unpaired": 1,
+  "matchesTotal": 16,
+  "matchesPlayed": 7,
+  "matchesLive": 2,
+  "pendingSignups": 0,
+  "steps": [
+    {
+      "key": "registration",
+      "title": "Registration",
+      "detail": "13 players in · sign-ups closed",
+      "state": "done",
+      "href": "/admin/t/mens-doubles-september/registration"
+    },
+    {
+      "key": "teams",
+      "title": "Teams",
+      "detail": "6 of 6 pairs made",
+      "state": "done",
+      "href": "/admin/t/mens-doubles-september/teams"
+    },
+    {
+      "key": "schedule",
+      "title": "Schedule & courts",
+      "detail": "Court 1, Court 2 · 16 matches",
+      "state": "done",
+      "href": "/admin/t/mens-doubles-september/schedule"
+    },
+    {
+      "key": "start",
+      "title": "Start",
+      "detail": "Everything is ready",
+      "state": "done",
+      "href": "/admin/t/mens-doubles-september/schedule"
+    }
+  ],
+  "phase": "running"
+}

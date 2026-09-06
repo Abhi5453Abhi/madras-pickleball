@@ -1,0 +1,32 @@
+{
+  "tournament": {
+    "name": "Mixed Doubles — September",
+    "day": "2026-09-06",
+    "status": "setup",
+    "pauseNote": null,
+    "registrationClosedAt": null,
+    "updatedAt": "2026-09-06T06:12:00.000Z"
+  },
+  "discipline": "doubles",
+  "finalsStage": "final_only",
+  "cut": 2,
+  "courts": [
+    {
+      "id": "crt_3",
+      "name": "Court 3"
+    }
+  ],
+  "players": [
+    "Priya Raman",
+    "Ganesh Iyer",
+    "Meera Nair",
+    "Suresh Babu",
+    "Anita Rao",
+    "Vikram Sethu",
+    "Lakshmi Iyer",
+    "Rahul Menon"
+  ],
+  "matches": [],
+  "table": [],
+  "version": "v-mixed-1"
+}

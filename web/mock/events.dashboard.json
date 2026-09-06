@@ -1,0 +1,112 @@
+{
+  "today": [
+    {
+      "id": "tr_mens",
+      "slug": "mens-doubles-september",
+      "name": "Men's Doubles — September",
+      "day": "2026-09-06",
+      "status": "live",
+      "category": "Men's Doubles",
+      "discipline": "doubles",
+      "format": "final_only",
+      "players": 13,
+      "teams": 6,
+      "courts": [
+        {
+          "id": "crt_1",
+          "name": "Court 1",
+          "colorKey": "blue"
+        },
+        {
+          "id": "crt_2",
+          "name": "Court 2",
+          "colorKey": "orange"
+        }
+      ],
+      "matchesTotal": 16,
+      "matchesPlayed": 7,
+      "matchesLive": 2,
+      "registrationOpen": false,
+      "pendingSignups": 0,
+      "winnerName": null
+    },
+    {
+      "id": "tr_mixed",
+      "slug": "mixed-doubles-september",
+      "name": "Mixed Doubles — September",
+      "day": "2026-09-06",
+      "status": "setup",
+      "category": "Mixed Doubles",
+      "discipline": "doubles",
+      "format": "final_only",
+      "players": 8,
+      "teams": 2,
+      "courts": [
+        {
+          "id": "crt_3",
+          "name": "Court 3",
+          "colorKey": "teal"
+        }
+      ],
+      "matchesTotal": 0,
+      "matchesPlayed": 0,
+      "matchesLive": 0,
+      "registrationOpen": true,
+      "pendingSignups": 1,
+      "winnerName": null
+    }
+  ],
+  "upcoming": [
+    {
+      "id": "tr_womens",
+      "slug": "womens-singles-october",
+      "name": "Women's Singles — October",
+      "day": "2026-10-04",
+      "status": "setup",
+      "category": "Women's Singles",
+      "discipline": "singles",
+      "format": "semis_and_final",
+      "players": 5,
+      "teams": 5,
+      "courts": [],
+      "matchesTotal": 0,
+      "matchesPlayed": 0,
+      "matchesLive": 0,
+      "registrationOpen": true,
+      "pendingSignups": 0,
+      "winnerName": null
+    }
+  ],
+  "finished": [
+    {
+      "id": "tr_aug",
+      "slug": "mens-doubles-august",
+      "name": "Men's Doubles — August",
+      "day": "2026-08-02",
+      "status": "completed",
+      "category": "Men's Doubles",
+      "discipline": "doubles",
+      "format": "final_only",
+      "players": 12,
+      "teams": 6,
+      "courts": [
+        {
+          "id": "crt_1",
+          "name": "Court 1",
+          "colorKey": "blue"
+        },
+        {
+          "id": "crt_2",
+          "name": "Court 2",
+          "colorKey": "orange"
+        }
+      ],
+      "matchesTotal": 16,
+      "matchesPlayed": 16,
+      "matchesLive": 0,
+      "registrationOpen": false,
+      "pendingSignups": 0,
+      "winnerName": "Hari Venkatesh / Naveen Krishnan"
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "mt_1": [
+    {
+      "scoreA": 11,
+      "scoreB": 7
+    },
+    {
+      "scoreA": 11,
+      "scoreB": 9
+    }
+  ],
+  "mt_2": [
+    {
+      "scoreA": 11,
+      "scoreB": 5
+    },
+    {
+      "scoreA": 9,
+      "scoreB": 11
+    },
+    {
+      "scoreA": 11,
+      "scoreB": 8
+    }
+  ],
+  "mt_3": [
+    {
+      "scoreA": 11,
+      "scoreB": 9
+    },
+    {
+      "scoreA": 11,
+      "scoreB": 6
+    }
+  ],
+  "mt_4": [
+    {
+      "scoreA": 8,
+      "scoreB": 11
+    },
+    {
+      "scoreA": 11,
+      "scoreB": 7
+    },
+    {
+      "scoreA": 11,
+      "scoreB": 9
+    }
+  ],
+  "mt_5": [
+    {
+      "scoreA": 11,
+      "scoreB": 4
+    },
+    {
+      "scoreA": 11,
+      "scoreB": 8
+    }
+  ],
+  "mt_6": [
+    {
+      "scoreA": 11,
+      "scoreB": 8
+    },
+    {
+      "scoreA": 11,
+      "scoreB": 6
+    }
+  ],
+  "mt_7": [
+    {
+      "scoreA": 11,
+      "scoreB": 9
+    },
+    {
+      "scoreA": 7,
+      "scoreB": 11
+    },
+    {
+      "scoreA": 11,
+      "scoreB": 7
+    }
+  ]
+}
