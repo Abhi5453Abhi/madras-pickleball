@@ -8,6 +8,8 @@ import { ensureReady } from '@/server/bootstrap'
 
 export const metadata = { title: 'Sign in · Madras Pickleball' }
 
+export const dynamic = 'force-dynamic'
+
 /**
  * The front door for the one person who has a key. Players never see it —
  * the sign-up link and the results page are open — so it does not explain

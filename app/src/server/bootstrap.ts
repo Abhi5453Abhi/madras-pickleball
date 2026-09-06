@@ -31,13 +31,19 @@ const globalForBoot = globalThis as unknown as { mpbBooted?: Promise<void> }
 
 const COURT_COLOURS = ['blue', 'orange', 'teal', 'violet']
 
-async function tablesExist() {
+/**
+ * Whether the LAST migration has landed — not just the first table. A schema
+ * that got halfway (an instance recycled mid-bootstrap) would otherwise pass
+ * as complete; re-applying is safe, every "already exists" is ignored below.
+ */
+async function schemaComplete() {
   try {
     const res = await db.execute(
-      sql`select to_regclass('public.tournaments') is not null as ok`,
+      sql`select count(*)::int as n from information_schema.columns
+          where table_name = 'tournament_players' and column_name = 'partner_wish'`,
     )
-    const rows = (res as unknown as { rows?: Array<{ ok: boolean }> }).rows ?? (res as unknown as Array<{ ok: boolean }>)
-    return !!rows?.[0]?.ok
+    const rows = (res as unknown as { rows?: Array<{ n: number }> }).rows ?? (res as unknown as Array<{ n: number }>)
+    return (rows?.[0]?.n ?? 0) > 0
   } catch {
     return false
   }
@@ -179,7 +185,10 @@ async function seedDemo() {
 
 async function run() {
   if (!isEmbeddedDb) return
-  if (!(await tablesExist())) await applySchema()
+  // `next build` renders pages to collect their shells; a database opened
+  // in the build worker would be thrown away — and the embedded one aborts.
+  if (process.env.NEXT_PHASE === 'phase-production-build') return
+  if (!(await schemaComplete())) await applySchema()
   await seedCore()
   // A deployment with no database of its own arrives looking like a real
   // Saturday, so there is something to look at; a laptop asks for it.

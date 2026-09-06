@@ -5,7 +5,10 @@ import { gzipSync } from 'node:zlib'
 const files = readdirSync('drizzle')
   .filter((f) => f.endsWith('.sql'))
   .sort()
-const sql = files.map((f) => readFileSync(`drizzle/${f}`, 'utf8')).join('\n')
+// Joined with a breakpoint: the app runs this one statement at a time, and
+// the last statement of one migration glued to the first of the next is a
+// multi-statement query the embedded database refuses.
+const sql = files.map((f) => readFileSync(`drizzle/${f}`, 'utf8')).join('\n--> statement-breakpoint\n')
 
 const packed = gzipSync(Buffer.from(sql, 'utf8'), { level: 9 }).toString('base64')
 

@@ -80,8 +80,24 @@ function build(): DbHandle {
   return drizzlePglite(client, { schema, casing: 'snake_case' })
 }
 
-export const db: DbHandle = globalForDb.db ?? build()
-if (process.env.NODE_ENV !== 'production') globalForDb.db = db
+/**
+ * Built on first use, not on import. `next build` imports every server module
+ * while collecting page data, and with no DATABASE_URL that used to start the
+ * embedded database inside the build worker — where its WASM aborts, and
+ * where no database should be opened at all.
+ */
+function handle(): DbHandle {
+  if (!globalForDb.db) globalForDb.db = build()
+  return globalForDb.db
+}
+
+export const db: DbHandle = new Proxy({} as DbHandle, {
+  get(_target, prop) {
+    const real = handle() as unknown as Record<string | symbol, unknown>
+    const value = real[prop]
+    return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(real) : value
+  },
+})
 
 export const isEmbeddedDb = dbTarget().kind === 'embedded'
 export { schema }

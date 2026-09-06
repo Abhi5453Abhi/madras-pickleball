@@ -14,7 +14,7 @@ describe('the packed schema', () => {
     const files = readdirSync('drizzle')
       .filter((f) => f.endsWith('.sql'))
       .sort()
-    const fromDisk = files.map((f) => readFileSync(`drizzle/${f}`, 'utf8')).join('\n')
+    const fromDisk = files.map((f) => readFileSync(`drizzle/${f}`, 'utf8')).join('\n--> statement-breakpoint\n')
 
     expect(files.length).toBeGreaterThan(0)
     expect(bootstrapSql()).toBe(fromDisk)
