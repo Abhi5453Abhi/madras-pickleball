@@ -6,9 +6,9 @@ import { atLeast, requireUser } from '@/lib/auth'
 import { getMatchForScoring, projectedState } from '@/server/scoring'
 import { umpireMayScore } from '@/server/umpire'
 import { AdminEntry } from './entry'
-import { useSubmission } from './actions'
+import { useSubmission, voidThisMatch } from './actions'
 import Link from 'next/link'
-import { Notice, Panel, SectionHead, TeamName } from '@/components/ui'
+import { Confirm, Notice, Panel, SectionHead, TeamName } from '@/components/ui'
 import { SECONDARY_LINK } from '../../_ui'
 
 export const dynamic = 'force-dynamic'
@@ -23,6 +23,7 @@ const STATE_WORDS: Record<string, string> = {
 export default async function AdminMatchPage(props: PageProps<'/admin/m/[matchId]'>) {
   const user = await requireUser('umpire')
   const { matchId } = await props.params
+  const { err } = await props.searchParams
 
   const loaded = await getMatchForScoring(matchId)
   if (!loaded || !loaded.match.teamAId || !loaded.match.teamBId) notFound()
@@ -147,8 +148,19 @@ export default async function AdminMatchPage(props: PageProps<'/admin/m/[matchId
 
   const back = atLeast(user, 'admin') ? `/admin/t/${tournament?.slug ?? ''}/board` : '/umpire'
 
+  const isAdmin = atLeast(user, 'admin')
+
   return (
     <div className="flex flex-col gap-7">
+      {/* `voidMatch` refuses by naming the later match that was built off this
+          result. Throwing that sentence away is the bug that had to be fixed on
+          `sendToCourt`; it is the only thing that tells the organiser what to
+          sort out first. */}
+      {err ? (
+        <Notice tone="alert" title="Not done">
+          {String(err)}
+        </Notice>
+      ) : null}
       {disputePanel}
       <AdminEntry
       matchId={matchId}
@@ -169,8 +181,35 @@ export default async function AdminMatchPage(props: PageProps<'/admin/m/[matchId
           often as to change one, and leaving with the browser button loses the
           scroll position on the page they came from. */}
       <Link href={back as never} className={SECONDARY_LINK}>
-        {atLeast(user, 'admin') ? 'Back to the court board' : 'Back to your matches'}
+        {isAdmin ? 'Back to the court board' : 'Back to your matches'}
       </Link>
+
+      {/* Cancelling is not correcting: the match counts for nobody afterwards,
+          in no table and no difference column. Organiser only, never while it
+          is on court, and never silently — the reason is required. */}
+      {isAdmin && loaded.match.status !== 'live' ? (
+        <Confirm
+          label="Cancel this match"
+          question={`${loaded.nameA} v ${loaded.nameB} stops counting for anybody — no winner, no points, and it leaves both pairs' tables.`}
+          detail="Use this when a match should never have existed. To fix a wrong score, change the score above instead."
+        >
+          <form action={voidThisMatch} className="flex flex-col gap-2">
+            <input type="hidden" name="matchId" value={matchId} />
+            <input type="hidden" name="back" value={back} />
+            <input
+              name="reason"
+              required
+              minLength={3}
+              placeholder="Why — e.g. entered against the wrong pair"
+              aria-label="Why this match is being cancelled"
+              className="tap w-full rounded-control border border-line-key bg-paper px-3.5 text-body text-text placeholder:text-text-3"
+            />
+            <button className="tap-lg w-full rounded-control bg-ink px-4 text-[18px] font-bold text-white">
+              Cancel it
+            </button>
+          </form>
+        </Confirm>
+      ) : null}
     </div>
   )
 }

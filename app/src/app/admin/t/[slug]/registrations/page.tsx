@@ -1,11 +1,11 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
-import { EmptyState, Panel, SectionHead, Tag } from '@/components/ui'
+import { Confirm, EmptyState, Panel, SectionHead, Tag } from '@/components/ui'
 import { venueDate } from '@/lib/time'
 import { currentRegistrationToken, listPendingRegistrations } from '@/server/registration'
 import { getTournamentBySlug, listCategories } from '@/server/tournaments'
-import { Confirm, ROW_BUTTON, SECONDARY_LINK } from '../../../_ui'
+import { ROW_BUTTON, SECONDARY_LINK } from '../../../_ui'
 import { approve, closeLink, makePair, reject } from './actions'
 import { LinkPanel } from './link-panel'
 

@@ -1,9 +1,9 @@
 import { Fragment } from 'react'
 import { clsx } from 'clsx'
 import Link from 'next/link'
-import { Disclosure, EmptyState, Panel, Tag, TeamName, type Status } from '@/components/ui'
+import { Confirm, Disclosure, EmptyState, Panel, Tag, TeamName, type Status } from '@/components/ui'
 import { MatchRow } from '@/components/match-row'
-import { Confirm, SECONDARY_LINK } from '../../_ui'
+import { SECONDARY_LINK } from '../../_ui'
 import { makeDraw } from './actions'
 
 /**
@@ -311,7 +311,7 @@ export function Draw({
                   className={clsx(
                     'flex min-h-[60px] w-full cursor-pointer items-center justify-center rounded-control',
                     'border px-2 py-2 text-center text-row text-balance',
-                    'border-line-strong bg-paper text-text-2',
+                    'border-line-key bg-paper text-text-2',
                     'peer-checked:border-ink peer-checked:bg-ink peer-checked:text-white',
                   )}
                 >

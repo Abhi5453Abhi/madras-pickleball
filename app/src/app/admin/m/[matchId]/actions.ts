@@ -5,8 +5,20 @@ import { redirect } from 'next/navigation'
 import { atLeast, requireUser } from '@/lib/auth'
 import { newId } from '@/lib/ids'
 import { adminSetResult, getMatchForScoring, submitResult } from '@/server/scoring'
+import { voidMatch } from '@/server/chaos'
+import { recordAudit } from '@/lib/audit'
 import { umpireMayScore } from '@/server/umpire'
 import type { GameScore } from '@/lib/rules'
+
+/**
+ * `back` arrives from a hidden form field, and `redirect()` will happily send
+ * somebody to another origin. Every legitimate destination here is one of two
+ * paths inside this app, so anything else falls back to the admin home.
+ */
+function safeBack(value: unknown): string {
+  const s = String(value ?? '')
+  return s.startsWith('/admin/') || s === '/admin' || s === '/umpire' ? s : '/admin'
+}
 
 export type SavePayload = {
   matchId: string
@@ -107,7 +119,7 @@ export async function useSubmission(formData: FormData) {
   const user = await requireUser('admin')
   const matchId = String(formData.get('matchId'))
   const submissionId = String(formData.get('submissionId'))
-  const back = String(formData.get('back') || '/admin')
+  const back = safeBack(formData.get('back'))
 
   const loaded = await getMatchForScoring(matchId)
   if (!loaded) return
@@ -139,4 +151,45 @@ export async function useSubmission(formData: FormData) {
 
   revalidatePath('/admin', 'layout')
   redirect(back as never)
+}
+
+/**
+ * Cancel a match outright — SPEC A7. It counts for nothing and for nobody: not
+ * in the table, not in anyone's difference column, not as a walkover.
+ *
+ * It lives here rather than on the tournament page because this is the screen
+ * where you are already looking at the one match, and because the refusal names
+ * the later match that was built off this result — a sentence that is only
+ * useful next to the thing it is about.
+ */
+export async function voidThisMatch(formData: FormData) {
+  const user = await requireUser('admin')
+  const matchId = String(formData.get('matchId'))
+  const reason = String(formData.get('reason') ?? '').trim()
+
+  if (reason.length < 3) {
+    redirect(
+      `/admin/m/${matchId}?err=${encodeURIComponent('Say why it is being cancelled — it goes in the log next to your name.')}` as never,
+    )
+  }
+
+  const loaded = await getMatchForScoring(matchId)
+  if (!loaded) return
+
+  const res = await voidMatch(matchId)
+  if (!res.ok) {
+    redirect(`/admin/m/${matchId}?err=${encodeURIComponent(res.error)}` as never)
+  }
+
+  await recordAudit({
+    userId: user.id,
+    actorLabel: user.name,
+    action: 'match.voided',
+    entity: 'match',
+    entityId: matchId,
+    reason,
+    before: { nameA: loaded.nameA, nameB: loaded.nameB, resultState: loaded.match.resultState },
+  })
+  revalidatePath('/admin', 'layout')
+  redirect(safeBack(formData.get('back')) as never)
 }

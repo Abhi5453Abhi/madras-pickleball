@@ -4,20 +4,20 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
 import {
-  CourtSwatch,
   Disclosure,
   EmptyState,
+  Meter,
   Notice,
   Panel,
-  SectionHead,
   StatusPill,
-  TeamName,
   statusWords,
   type Status,
 } from '@/components/ui'
 import { formatDuration, venueDate, venueTime } from '@/lib/time'
+import { estimateDay, minutesPerMatch } from '@/lib/estimate'
 import { tiebreakNote } from '@/lib/standings'
 import { boardData } from '@/server/board'
+import { substitutionOptions, withdrawalEffect } from '@/server/chaos'
 import { listPendingRegistrations } from '@/server/registration'
 import {
   gamesByMatch,
@@ -31,17 +31,16 @@ import {
 import {
   Attention,
   AttentionRow,
-  Confirm,
-  Meter,
   PRIMARY_LINK,
   ROW_BUTTON,
   ROW_BUTTON_ACCENT,
   SECONDARY_LINK,
 } from '../../_ui'
 import { Draw, type CategoryView, type MatchView } from './draw'
+import { Fixes, type ShortenView, type WithdrawView } from './fixes'
 import { offersForFreeCourts } from './suggestions'
 import { placeMatch } from './board/actions'
-import { setCourtClosed } from './actions'
+import { resumeDayAction } from './actions'
 
 /**
  * The tournament page — SPEC A2/A3/A7.
@@ -65,23 +64,39 @@ export const dynamic = 'force-dynamic'
 /** One row of the attention block, already rendered, with a key to put it under. */
 type Item = { key: string; node: React.ReactElement }
 
+/**
+ * The three shapes a match can be shortened to, in the order they cost time.
+ * `minutesPerMatch` decides which of them is actually shorter than what a
+ * category is playing now — never a hardcoded ranking, or the two would drift.
+ */
+const SHORTER_SHAPES = [
+  { bestOf: 3, pointsToWin: 11 },
+  { bestOf: 1, pointsToWin: 15 },
+  { bestOf: 1, pointsToWin: 11 },
+]
+
+const shapeLabel = (bestOf: number, pointsToWin: number) =>
+  bestOf === 1 ? `One game to ${pointsToWin}` : `Best of ${bestOf} to ${pointsToWin}`
+
 export default async function TournamentPage(props: PageProps<'/admin/t/[slug]'>) {
   await requireUser('admin')
   const { slug } = await props.params
-  const { err } = await props.searchParams
+  const { err, fix } = await props.searchParams
 
   const tournament = await getTournamentBySlug(slug)
   if (!tournament) notFound()
 
-  const [cats, roster, allMatches, names, scores, board, registrations] = await Promise.all([
-    listCategories(tournament.id),
-    listTournamentPlayers(tournament.id),
-    listMatches(tournament.id),
-    teamNameMap(tournament.id),
-    gamesByMatch(tournament.id),
-    boardData(tournament.id),
-    listPendingRegistrations(tournament.id),
-  ])
+  const [cats, roster, allMatches, names, scores, board, registrations, subTeams] =
+    await Promise.all([
+      listCategories(tournament.id),
+      listTournamentPlayers(tournament.id),
+      listMatches(tournament.id),
+      teamNameMap(tournament.id),
+      gamesByMatch(tournament.id),
+      boardData(tournament.id),
+      listPendingRegistrations(tournament.id),
+      substitutionOptions(tournament.id),
+    ])
   const tables = await Promise.all(cats.map((c) => standingsFor(c.id)))
 
   const status = statusWords(tournament.status)
@@ -308,6 +323,76 @@ export default async function TournamentPage(props: PageProps<'/admin/t/[slug]'>
 
   const closedCourts = board.courts.filter((c) => c.closed)
 
+  // ── what the emergency tools would cost (SPEC A7) ──────────────────────────
+
+  const everyTeam = cats.flatMap((c, i) =>
+    tables[i].teams.map((t) => ({ ...t, categoryName: c.name })),
+  )
+  // The engine's own answer, not one rebuilt from the match list: the number in
+  // the confirm has to be the number the write acts on. They go out together,
+  // so this is two round trips rather than two per pair.
+  const effects = await Promise.all(everyTeam.map((t) => withdrawalEffect(t.id)))
+  const withdrawals: WithdrawView[] = everyTeam.map((t, i) => {
+    const e = effects[i]
+    return {
+      teamId: t.id,
+      name: t.name,
+      categoryName: t.categoryName,
+      withdrawn: t.status === 'withdrawn',
+      played: e?.played ?? 0,
+      toWalkover: e?.toWalkover ?? 0,
+      blockedBy: e?.blocked.length ? (e.blocked[0].roundName ?? 'A match of theirs') : null,
+    }
+  })
+
+  // Shortening is reached for because of one number — when the day ends — so
+  // every option carries that number rather than a format name. One `now` for
+  // all of them, or three estimates taken a millisecond apart disagree.
+  const now = new Date()
+  const load = cats.map((c) => ({
+    id: c.id,
+    name: c.name,
+    bestOf: c.bestOf,
+    pointsToWin: c.pointsToWin,
+    outstanding: allMatches.filter((m) => m.categoryId === c.id && m.resultState === 'none').length,
+    live: allMatches.some((m) => m.categoryId === c.id && m.status === 'live'),
+  }))
+  const dayWith = (categoryId?: string, minutes?: number) =>
+    estimateDay({
+      categories: load.map((c) => ({
+        name: c.name,
+        matchCount: c.outstanding,
+        minutesPerMatch: c.id === categoryId && minutes ? minutes : minutesPerMatch(c),
+        minMatchesPerEntry: 0,
+      })),
+      courts: board.openCourts,
+      startAt: now,
+      sunsetAt: tournament.sunsetAt,
+    })
+  const baseline = dayWith()
+  const shortenViews: ShortenView[] = load.map((c) => {
+    const currentMinutes = minutesPerMatch(c)
+    return {
+      categoryId: c.id,
+      name: c.name,
+      currentLabel: shapeLabel(c.bestOf, c.pointsToWin),
+      outstanding: c.outstanding,
+      live: c.live,
+      // Only what is actually shorter. Offering the format they are already
+      // playing, or a longer one, is offering to make the problem worse.
+      options: SHORTER_SHAPES.filter((s) => minutesPerMatch(s) < currentMinutes).map((s) => {
+        const est = dayWith(c.id, minutesPerMatch(s))
+        return {
+          bestOf: s.bestOf,
+          pointsToWin: s.pointsToWin,
+          label: shapeLabel(s.bestOf, s.pointsToWin),
+          finishAt: est.finishAt ? venueTime(est.finishAt) : null,
+          savedMinutes: baseline.minutes - est.minutes,
+        }
+      }),
+    }
+  })
+
   return (
     <div className="flex flex-col gap-7">
       <header>
@@ -323,7 +408,46 @@ export default async function TournamentPage(props: PageProps<'/admin/t/[slug]'>
         </p>
       </header>
 
-      {err ? <Notice>{String(err)}</Notice> : null}
+      {err ? (
+        <Notice
+          tone="alert"
+          title="Not done"
+          action={
+            fix === 'board' ? (
+              <Link href={`/admin/t/${slug}/board`} className={`${SECONDARY_LINK} w-full`}>
+                Open the court board
+              </Link>
+            ) : fix === 'signups' ? (
+              <Link href={`/admin/t/${slug}/registrations`} className={`${SECONDARY_LINK} w-full`}>
+                Open sign-ups
+              </Link>
+            ) : undefined
+          }
+        >
+          {String(err)}
+        </Notice>
+      ) : null}
+
+      {/* Everybody's phone says this too, so it is the first thing on the page
+          — a stopped day that only the organiser knows about is worse than no
+          pause at all. */}
+      {tournament.pauseNote ? (
+        <Notice
+          tone="waiting"
+          title="The day is stopped"
+          detail="The public page is showing this, so nobody is staring at a board that has not moved."
+          action={
+            <form action={resumeDayAction}>
+              <input type="hidden" name="slug" value={slug} />
+              <button className="tap-lg w-full rounded-control bg-ink px-4 text-[18px] font-bold text-white">
+                Start the day again
+              </button>
+            </form>
+          }
+        >
+          {tournament.pauseNote}
+        </Notice>
+      ) : null}
 
       <Attention count={shown.length}>
         {shown.map((i) => (
@@ -365,7 +489,11 @@ export default async function TournamentPage(props: PageProps<'/admin/t/[slug]'>
           </div>
 
           <div className="mt-3">
-            <Meter done={played} total={allMatches.length} />
+            <Meter
+              done={played}
+              total={allMatches.length}
+              label={`${played} of ${allMatches.length} matches played`}
+            />
           </div>
           <p className="num mt-2 text-meta text-text-2">
             {played} of {allMatches.length} played · {board.openCourts} court
@@ -433,115 +561,17 @@ export default async function TournamentPage(props: PageProps<'/admin/t/[slug]'>
       ) : null}
 
       {/* ── the escape hatch (SPEC A7) ───────────────────────────────────── */}
-      <section className="flex flex-col gap-3">
-        <SectionHead
-          title="If something's gone wrong"
-          meta="All of it is reversible, and all of it goes in the log with your name on it."
-        />
-
-        <Disclosure
-          summary="Change a score that's already in"
-          meta={
-            withResults.length
-              ? `${withResults.length} entered · newest first`
-              : 'Nothing has a score yet'
-          }
-        >
-          {withResults.length ? (
-            <Panel>
-              <ul className="divide-y divide-line">
-                {withResults.slice(0, 20).map((m) => (
-                  <li key={m.id}>
-                    <Link href={`/admin/m/${m.id}`} className="block hover:bg-ground">
-                      <MatchLine m={m} />
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-              {withResults.length > 20 ? (
-                <p className="border-t border-line bg-sunken px-4 py-3 text-meta text-text-2">
-                  The oldest {withResults.length - 20} are under “Show the draw” in their category.
-                </p>
-              ) : null}
-            </Panel>
-          ) : (
-            <p className="rounded-card border border-line-strong bg-paper px-4 py-4 text-body text-text-2">
-              When a score is wrong, it turns up here the moment it is entered.
-            </p>
-          )}
-        </Disclosure>
-
-        <Disclosure
-          summary="Take a court out of action"
-          meta={
-            closedCourts.length
-              ? `${closedCourts.length} closed right now`
-              : `${board.openCourts} court${board.openCourts === 1 ? '' : 's'} in use`
-          }
-        >
-          <Panel>
-            <ul className="divide-y divide-line">
-              {board.courts.map((c) => {
-                const leftOpen = board.openCourts - 1
-                const leftLabel =
-                  leftOpen <= 0
-                    ? 'Nothing else is open, so the day stops until a court comes back.'
-                    : `The finish estimate recomputes on ${leftOpen} court${leftOpen === 1 ? '' : 's'}.`
-                return (
-                  <li key={c.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-                    <span className="flex min-w-[7rem] flex-1 items-center gap-2">
-                      <CourtSwatch colorKey={c.colorKey} />
-                      <span className="text-row text-text">{c.name}</span>
-                      {c.closed ? (
-                        <span className="text-meta text-waiting">{c.closedReason}</span>
-                      ) : null}
-                    </span>
-                    {c.closed ? (
-                      <form action={setCourtClosed} className="ml-auto">
-                        <input type="hidden" name="slug" value={slug} />
-                        <input type="hidden" name="courtId" value={c.id} />
-                        <input type="hidden" name="close" value="0" />
-                        <button className="tap rounded-control border border-line-strong bg-paper px-4 text-[16px] font-semibold text-text">
-                          Back in action
-                        </button>
-                      </form>
-                    ) : (
-                      <Confirm
-                        className="ml-auto [&[open]]:w-full"
-                        label="Close it"
-                        question={
-                          c.live
-                            ? `${c.name} stops taking matches, and ${c.live.nameA} v ${c.live.nameB} comes off it with no score — nothing is lost, it goes back in the queue. ${leftLabel}`
-                            : `${c.name} stops taking matches. ${leftLabel} You can put it back any time.`
-                        }
-                      >
-                        <form action={setCourtClosed} className="flex flex-col gap-2">
-                          <input type="hidden" name="slug" value={slug} />
-                          <input type="hidden" name="courtId" value={c.id} />
-                          <input type="hidden" name="close" value="1" />
-                          <input
-                            name="reason"
-                            defaultValue="Out of action"
-                            aria-label={`Why ${c.name} is out of action`}
-                            className="tap w-full rounded-control border border-line-strong bg-paper px-3.5 text-body text-text"
-                          />
-                          <button className="tap-lg w-full rounded-control bg-ink px-4 text-[18px] font-bold text-white">
-                            Take {c.name} out
-                          </button>
-                        </form>
-                      </Confirm>
-                    )}
-                  </li>
-                )
-              })}
-            </ul>
-          </Panel>
-        </Disclosure>
-
-        <Link href={`/admin/t/${slug}/results`} className={SECONDARY_LINK}>
-          Somebody didn’t turn up →
-        </Link>
-      </section>
+      <Fixes
+        slug={slug}
+        withResults={withResults}
+        courts={board.courts}
+        openCourts={board.openCourts}
+        withdrawals={withdrawals}
+        subTeams={subTeams}
+        roster={roster}
+        shorten={shortenViews}
+        paused={!!tournament.pauseNote}
+      />
 
       {/* ── reference ────────────────────────────────────────────────────── */}
       {cats.length > 0 ? (
@@ -561,29 +591,6 @@ export default async function TournamentPage(props: PageProps<'/admin/t/[slug]'>
           </Panel>
         </Disclosure>
       ) : null}
-    </div>
-  )
-}
-
-/**
- * A result row inside the escape hatch. Deliberately not `MatchRow`: this list
- * is scanned for one specific match, so the round and the score carry it, and
- * the winner's emphasis would just be noise.
- */
-function MatchLine({ m }: { m: MatchView }) {
-  return (
-    <div className="flex items-center gap-3 px-4 py-3">
-      <div className="min-w-0 flex-1">
-        <TeamName name={m.nameA} />
-        <TeamName name={m.nameB} />
-        <p className="mt-0.5 text-meta text-text-3">
-          {m.roundName}
-          {m.scoreLine ? ` · ${m.scoreLine}` : ''}
-        </p>
-      </div>
-      <span className="num shrink-0 text-[22px] font-bold text-text">
-        {m.gamesWonA}–{m.gamesWonB}
-      </span>
     </div>
   )
 }

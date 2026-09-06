@@ -51,7 +51,7 @@ export function LinkPanel({ slug, hasActive }: { slug: string; hasActive: boolea
             href={`https://wa.me/?text=${encodeURIComponent(`Sign up for this Sunday: ${full}`)}`}
             target="_blank"
             rel="noreferrer"
-            className="tap-lg inline-flex flex-1 basis-[9rem] items-center justify-center rounded-control border border-line-strong bg-paper px-5 text-[18px] font-bold text-text"
+            className="tap-lg inline-flex flex-1 basis-[9rem] items-center justify-center rounded-control border border-line-key bg-paper px-5 text-[18px] font-bold text-text"
           >
             Send on WhatsApp
           </a>

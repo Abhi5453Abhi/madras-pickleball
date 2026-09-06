@@ -85,7 +85,7 @@ export function QuickForm({ defaultName, courts }: { defaultName: string; courts
                 'flex min-h-[84px] flex-col justify-center rounded-control border px-3.5 py-2 text-left transition-colors',
                 shape === s.key
                   ? 'border-ink bg-ink text-white'
-                  : 'border-line-strong bg-paper text-text hover:bg-ground',
+                  : 'border-line-key bg-paper text-text hover:bg-ground',
               )}
             >
               <span className="block text-row text-balance">{s.label}</span>
@@ -113,7 +113,7 @@ export function QuickForm({ defaultName, courts }: { defaultName: string; courts
           onChange={(e) => setPaste(e.target.value)}
           rows={8}
           placeholder={'1. Ravi Kumar\n2. Priya S 9840012345\n3. Karthik\n…'}
-          className="w-full rounded-control border border-line-strong bg-paper p-3.5 font-mono text-body text-text placeholder:text-text-3 focus:border-link focus:ring-2 focus:ring-link/25 focus:outline-none"
+          className="w-full rounded-control border border-line-key bg-paper p-3.5 font-mono text-body text-text placeholder:text-text-3 focus:border-link focus:ring-2 focus:ring-link/25 focus:outline-none"
         />
         <p className="text-meta text-text-3">
           Numbering, bullets, ticks and phone numbers are all fine — they get stripped. Nothing is

@@ -4,52 +4,11 @@ import type { ReactNode } from 'react'
 /**
  * Organiser-side primitives.
  *
- * These live here rather than in `src/components/ui.tsx` because they are only
- * ever used behind a login: the attention block, the two-step confirm and the
- * three link shapes every organiser screen is built from. `Confirm` is the one
- * worth promoting if the integrator wants it shared — the court page has the
- * same problem.
+ * What is left here is what only exists behind a login: the attention block,
+ * and the link shapes every organiser screen is built from. `Confirm` and
+ * `Meter` used to live here and now come from `@/components/ui` — the court
+ * screen had the same two problems.
  */
-
-/**
- * A destructive or surprising action, in two taps.
- *
- * Every button here fires a server action that changes the day: a walkover is
- * awarded, a live match loses its start time, a link everybody in the group
- * chat is holding stops working. One tap in the sun with a paddle in the other
- * hand is not consent, and an undo that costs a page load and a reason string
- * is not a substitute for being told first.
- *
- * `details` rather than a dialog: no JavaScript, no focus trap to get wrong,
- * and tapping the summary again is the cancel. The summary text says what the
- * button is FOR; the sentence inside says what it will DO.
- */
-export function Confirm({
-  label,
-  question,
-  children,
-  className,
-}: {
-  label: ReactNode
-  /** What will happen, in a sentence, before it happens. */
-  question: ReactNode
-  /** The real form, with the real submit button inside it. */
-  children: ReactNode
-  className?: string
-}) {
-  return (
-    <details className={clsx('group min-w-0', className)}>
-      <summary className="tap flex items-center justify-center rounded-control border border-line-strong bg-paper px-3.5 text-center text-[16px] font-semibold text-text-2">
-        {label}
-      </summary>
-      <div className="mt-2 rounded-control border border-line-strong bg-sunken p-3.5">
-        <p className="text-body text-text">{question}</p>
-        <div className="mt-3">{children}</div>
-        <p className="mt-2 text-meta text-text-3">Tap the button above again to leave it alone.</p>
-      </div>
-    </details>
-  )
-}
 
 type AttentionTone = 'alert' | 'accent' | 'waiting'
 
@@ -111,34 +70,17 @@ export function Attention({ children, count }: { children: ReactNode; count: num
   )
 }
 
-/**
- * How far through the day it is. A bar rather than a percentage: the organiser
- * is reading it at arm's length while walking, and "two thirds" is the whole
- * content of the number.
- */
-export function Meter({ done, total }: { done: number; total: number }) {
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0
-  return (
-    <div
-      role="progressbar"
-      aria-valuemin={0}
-      aria-valuemax={total}
-      aria-valuenow={done}
-      aria-label={`${done} of ${total} matches played`}
-      className="h-2 w-full overflow-hidden rounded-full bg-sunken"
-    >
-      <div className="h-full rounded-full bg-ink" style={{ width: `${pct}%` }} />
-    </div>
-  )
-}
-
 /** The one big button on a screen. A link, not a form, so it prefetches. */
 export const PRIMARY_LINK =
   'tap-lg flex w-full items-center justify-center rounded-control bg-ink px-5 text-[19px] font-bold text-white'
 
-/** Everything else that navigates: 56px, bounded, readable at arm's length. */
+/**
+ * Everything else that navigates: 56px, bounded, readable at arm's length.
+ * line-key, not line-strong — an outlined control has no fill, so its border is
+ * the only thing saying where to press.
+ */
 export const SECONDARY_LINK =
-  'tap flex items-center justify-center rounded-control border border-line-strong bg-paper px-3 text-center text-[16px] font-semibold text-text'
+  'tap flex items-center justify-center rounded-control border border-line-key bg-paper px-3 text-center text-[16px] font-semibold text-text'
 
 /** A small ink button inside a row — "Settle it", "Enter". */
 export const ROW_BUTTON =

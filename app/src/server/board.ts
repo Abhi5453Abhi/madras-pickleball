@@ -74,6 +74,8 @@ export type BoardData = {
   waiting: BoardMatch[]
   liveCount: number
   remaining: number
+  /** Set while the day is stopped: the note the organiser gave. */
+  pausedNote: string | null
   /** Courts actually available — the basis the finish estimate is computed on. */
   openCourts: number
   finishEstimateMinutes: number
@@ -352,10 +354,18 @@ export async function boardData(tournamentId: string): Promise<BoardData> {
     byCategory.set(r.categoryId, entry)
   }
 
+  // A stopped day does not finish any earlier for standing still. Counting the
+  // minutes since the pause is what makes the sunset warning tell the truth
+  // while everyone is sheltering under the awning.
+  const pausedMinutes = tournament?.breakStartsAt
+    ? Math.max(0, Math.floor((now - tournament.breakStartsAt.getTime()) / 60_000))
+    : 0
+
   const est = estimateDay({
     categories: [...byCategory.values()].map((c) => ({ ...c, minMatchesPerEntry: 0 })),
     courts: openCourts,
-    startAt: new Date(),
+    startAt: new Date(now),
+    breakMinutes: pausedMinutes,
     sunsetAt: tournament?.sunsetAt ?? null,
   })
 
@@ -365,6 +375,7 @@ export async function boardData(tournamentId: string): Promise<BoardData> {
     waiting,
     liveCount: boardCourts.filter((c) => c.live).length,
     remaining: outstanding.length,
+    pausedNote: tournament?.pauseNote ?? null,
     openCourts,
     finishEstimateMinutes: est.minutes,
     finishAt: est.finishAt,

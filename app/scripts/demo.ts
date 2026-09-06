@@ -143,7 +143,7 @@ async function main() {
       if (!m.teamAId || !m.teamBId) continue
       const line = scorelines[n++ % scorelines.length]
       const gs = line.map(([scoreA, scoreB], idx) => ({ gameNo: idx + 1, scoreA, scoreB }))
-      await submitResult({
+      const res = await submitResult({
         matchId: m.id,
         games: gs,
         resultType: 'normal',
@@ -154,6 +154,7 @@ async function main() {
         clientEventId: newId('ce'),
         authoritative: true,
       })
+      if (!res.ok) console.error('  submit failed:', res.error)
     }
   }
 

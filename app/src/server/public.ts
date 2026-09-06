@@ -354,6 +354,10 @@ export const publicTournament = cache(async function publicTournament(slug: stri
     upNext: allMatches.filter((m) => m.status === 'ready' && m.state === 'none').slice(0, 6),
     results: allMatches.filter((m) => m.state === 'final' || m.state === 'reported'),
     tables,
+    // Rain, a missing net, lunch. Forty people looking at a board that has not
+    // moved for twenty minutes deserve a sentence saying why.
+    pausedNote: tournament.pauseNote,
+    pausedSince: tournament.breakStartsAt,
     courtsInPlay,
     streamVersion: composeVersion(
       tournament.streamVersion,

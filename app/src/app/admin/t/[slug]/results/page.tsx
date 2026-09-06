@@ -1,14 +1,22 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
-import { Disclosure, EmptyState, Panel, SectionHead, StatusPill, Tag } from '@/components/ui'
+import {
+  Confirm,
+  Disclosure,
+  EmptyState,
+  Panel,
+  SectionHead,
+  StatusPill,
+  Tag,
+} from '@/components/ui'
 import {
   getTournamentBySlug,
   listCategories,
   listMatches,
   teamNameMap,
 } from '@/server/tournaments'
-import { Confirm, ROW_BUTTON, SECONDARY_LINK } from '../../../_ui'
+import { ROW_BUTTON, SECONDARY_LINK } from '../../../_ui'
 import { confirmAll, markNoShow } from './actions'
 
 /**
@@ -98,7 +106,7 @@ export default async function ResultsPage(props: PageProps<'/admin/t/[slug]/resu
                   <input type="hidden" name="matchId" value={m.id} />
                   <input type="hidden" name="absent" value={side} />
                   <input type="hidden" name="slug" value={slug} />
-                  <button className="tap-lg w-full rounded-control border border-line-strong bg-paper px-4 text-left text-[17px] font-semibold text-text">
+                  <button className="tap-lg w-full rounded-control border border-line-key bg-paper px-4 text-left text-[17px] font-semibold text-text">
                     {side === 'A' ? a : b} didn’t come
                   </button>
                 </form>

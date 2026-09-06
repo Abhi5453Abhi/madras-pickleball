@@ -2,11 +2,18 @@ import { clsx } from 'clsx'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
-import { CourtSwatch, Disclosure, NetRule, Notice, Panel, StatusPill } from '@/components/ui'
+import {
+  Confirm,
+  CourtSwatch,
+  Disclosure,
+  NetRule,
+  Notice,
+  Panel,
+  StatusPill,
+} from '@/components/ui'
 import { elapsedLabel, formatDuration, venueTime } from '@/lib/time'
 import { boardData, type BoardCourt, type BoardMatch } from '@/server/board'
 import { getTournamentBySlug } from '@/server/tournaments'
-import { Confirm } from '../../../_ui'
 import { offersForFreeCourts } from '../suggestions'
 import { placeMatch, takeOffCourt } from './actions'
 
@@ -46,7 +53,7 @@ function CourtCard({
       <article data-court className="hatched rounded-card border border-dashed border-line-strong bg-sunken">
         <div className="px-4 py-3">
           <div className="flex items-center gap-2">
-            <CourtSwatch colorKey={court.colorKey} />
+            <CourtSwatch colorKey={court.colorKey} size="md" />
             <span className="font-score text-eyebrow text-text-3 uppercase">{court.name}</span>
             <StatusPill state="waiting">Out of action</StatusPill>
           </div>
@@ -75,7 +82,7 @@ function CourtCard({
       >
         <div aria-hidden className={clsx('h-1', stale ? 'bg-waiting' : 'bg-live')} />
         <div className="flex items-center gap-2 px-4 pt-3">
-          <CourtSwatch colorKey={court.colorKey} />
+          <CourtSwatch colorKey={court.colorKey} size="md" />
           <span className="font-score text-eyebrow text-text-2 uppercase">{court.name}</span>
           {stale ? (
             <StatusPill state="waiting">Finished?</StatusPill>
@@ -133,7 +140,7 @@ function CourtCard({
     <article data-court className="overflow-hidden rounded-card border border-line-strong bg-paper shadow-card">
       <div aria-hidden className="h-1 bg-line-strong" />
       <div className="flex items-center gap-2 px-4 pt-3">
-        <CourtSwatch colorKey={court.colorKey} />
+        <CourtSwatch colorKey={court.colorKey} size="md" />
         <span className="font-score text-eyebrow text-text-2 uppercase">{court.name}</span>
         <StatusPill state="done">Free</StatusPill>
         {court.freeSinceMinutes !== null && court.freeSinceMinutes > 0 ? (

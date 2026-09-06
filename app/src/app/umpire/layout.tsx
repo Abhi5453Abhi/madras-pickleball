@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { requireUser } from '@/lib/auth'
-import { CourtMark, NetRule } from '@/components/ui'
+import { NetRule, Wordmark } from '@/components/ui'
 
 export default async function UmpireLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser('umpire', { allowPasswordChange: true })
@@ -9,9 +9,10 @@ export default async function UmpireLayout({ children }: { children: React.React
     <div className="flex min-h-dvh flex-col">
       <header className="sticky top-0 z-20 bg-ink text-white">
         <div className="mx-auto flex h-14 w-full max-w-3xl items-center gap-3 px-4">
-          <Link href="/umpire" className="tap -ml-1 flex items-center gap-2.5 px-1">
-            <CourtMark className="size-7 text-white" />
-            <span className="font-score text-[19px] font-bold tracking-[0.02em]">Scoring</span>
+          {/* The same lockup as everywhere else — the role is said once, in
+              the page's own heading, not baked into the brand. */}
+          <Link href="/umpire" className="tap -ml-1 flex items-center px-1">
+            <Wordmark />
           </Link>
           <Link
             href="/admin/account"

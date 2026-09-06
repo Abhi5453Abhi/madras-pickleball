@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { homeFor, requireUser } from '@/lib/auth'
-import { Card, Notice } from '@/components/ui'
-import { Confirm, SECONDARY_LINK } from '../_ui'
+import { Card, Confirm, Notice } from '@/components/ui'
+import { SECONDARY_LINK } from '../_ui'
 import { logout } from '../../login/actions'
 import { PasswordForm } from './password-form'
 
@@ -27,9 +27,13 @@ export default async function AccountPage(props: PageProps<'/admin/account'>) {
       </header>
 
       {forced ? (
-        <Notice tone="info">
-          Pick your own password before you carry on — the one you were given is temporary, and it
-          was typed on somebody else&rsquo;s phone to get here.
+        <Notice
+          tone="info"
+          title="Temporary password"
+          detail="Nothing else in the app opens until this is done."
+        >
+          Pick your own before you carry on — the one you were given was typed on somebody
+          else&rsquo;s phone to get here.
         </Notice>
       ) : null}
 

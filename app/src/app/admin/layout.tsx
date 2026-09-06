@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { homeFor, requireUser } from '@/lib/auth'
-import { CourtMark, NetRule } from '@/components/ui'
+import { NetRule, Wordmark } from '@/components/ui'
 
 function initials(name: string) {
   return name
@@ -19,11 +19,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           becomes a brand instead of five thousand tiny glyph strokes. */}
       <header className="sticky top-0 z-20 bg-ink text-white">
         <div className="mx-auto flex h-14 w-full max-w-3xl items-center gap-3 px-4">
-          <Link href={homeFor(user) as never} className="tap -ml-1 flex items-center gap-2.5 px-1">
-            <CourtMark className="size-7 text-white" />
-            <span className="font-score text-[19px] font-bold tracking-[0.02em]">
-              Madras Pickleball
-            </span>
+          <Link href={homeFor(user) as never} className="tap -ml-1 flex items-center px-1">
+            <Wordmark />
           </Link>
           <Link
             href="/admin/account"
