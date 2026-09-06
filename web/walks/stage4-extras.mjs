@@ -97,7 +97,13 @@ await page.click('button:has-text("Create")')
 await page.waitForURL(/\/admin\/t\//, { timeout: 20000 })
 const slug = page.url().split('/admin/t/')[1].split(/[/?]/)[0]
 t = await goto(`${BASE}/admin/courts`)
-ok('Centre Court says who uses it', /Centre Court[\s\S]*Used by Men's Doubles/.test(t), t.slice(0, 500))
+// The court's name lives in its rename field, not in the page text (the
+// Next.js walk only saw it in the RSC payload); ask the field directly.
+const centreUsedBy = await page
+  .locator('li:has(input[aria-label="Name of Centre Court"])')
+  .innerText()
+  .catch(() => '')
+ok('Centre Court says who uses it', /Used by Men's Doubles/.test(centreUsedBy), centreUsedBy.slice(0, 200))
 const takeOut = await page.$$eval('summary', (ss) => ss.filter((s) => /Take it out/.test(s.textContent ?? '')).length)
 ok('four courts can be taken out, not the one in use', takeOut === 4, String(takeOut))
 // take Court 4 out

@@ -23,6 +23,9 @@ export function CourtsPage() {
 
   /** After every one: reload the list and show `note` or `error`. */
   async function settle(res: { ok: true; note: string } | { ok: false; error: string }) {
+    // The list first, then the word: a "Renamed." over a list that still
+    // shows the old name reads as a lie for the half second it lasts.
+    if (res.ok) await courts.reload()
     if (res.ok) {
       setErr(null)
       setNote(res.note)
@@ -30,7 +33,6 @@ export function CourtsPage() {
       setNote(null)
       setErr(res.error)
     }
-    await courts.reload()
   }
 
   async function add(e: FormEvent<HTMLFormElement>) {

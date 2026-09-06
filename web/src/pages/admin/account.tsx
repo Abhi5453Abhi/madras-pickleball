@@ -112,9 +112,11 @@ function Organisers({
     e.preventDefault()
     const res = await run('organisers.removeOrganiser', { userId })
     if (res.ok) {
+      // The list first, then the word, so "Removed" never sits over a
+      // list that still shows the person.
+      await organisers.reload()
       onFailed(null)
       onDone(res.note)
-      void organisers.reload()
     } else {
       onDone(null)
       onFailed(res.error)
