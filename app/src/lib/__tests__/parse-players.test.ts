@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { parsePlayerList, normalizeName, normalizePhone, findDuplicates } from '../parse-players'
+import {
+  parsePlayerList,
+  normalizeName,
+  normalizePhone,
+  findDuplicates,
+  looksLikeSamePerson,
+} from '../parse-players'
 
 describe('parsing a WhatsApp list', () => {
   it('strips numbering, bullets, emoji and paid markers', () => {
@@ -83,5 +89,28 @@ describe('duplicate detection', () => {
 
   it('leaves genuinely new people alone', () => {
     expect(findDuplicates(parsePlayerList('Anjali R'), roster).size).toBe(0)
+  })
+})
+
+describe('the same person, typed differently', () => {
+  const same = (a: string, b: string) => looksLikeSamePerson(normalizeName(a), normalizeName(b))
+
+  it('spots an initial, a first name alone, and the words the other way round', () => {
+    expect(same('Ravi S', 'Ravi Shankar')).toBe(true)
+    expect(same('Ravi', 'Ravi Shankar')).toBe(true)
+    expect(same('S Ravi', 'Ravi Shankar')).toBe(true)
+    expect(same('R. Shankar', 'Ravi Shankar')).toBe(true)
+    expect(same('Ravi Shankar', 'ravi   shankar')).toBe(true)
+  })
+
+  it('leaves two people who share a first name alone', () => {
+    expect(same('Ravi Kumar', 'Ravi Shankar')).toBe(false)
+    expect(same('Arun Prakash', 'Arun Kumar')).toBe(false)
+    expect(same('Karthik', 'Sathish Kumar')).toBe(false)
+  })
+
+  it('does not let a pair of initials match everybody', () => {
+    expect(same('R S', 'Ravi Shankar')).toBe(false)
+    expect(same('', 'Ravi Shankar')).toBe(false)
   })
 })

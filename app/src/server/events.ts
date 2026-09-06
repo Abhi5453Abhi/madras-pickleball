@@ -584,7 +584,7 @@ export async function hub(slug: string): Promise<Hub | null> {
       title: 'Registration',
       detail: `${players} ${players === 1 ? 'player' : 'players'} in · ${
         t.registrationClosedAt ? 'sign-ups closed' : 'link is open'
-      }${pendingSignups ? ` · ${pendingSignups} waiting for you` : ''}`,
+      }${pendingSignups ? ` · ${pendingSignups} possible ${pendingSignups === 1 ? 'duplicate' : 'duplicates'}` : ''}`,
       state: regDone ? 'done' : 'current',
       href: `${base}/registration`,
     },

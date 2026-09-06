@@ -4,135 +4,136 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
 import { recordAudit } from '@/lib/audit'
-import { endOfVenueDay } from '@/lib/time'
-import {
-  approveRegistration,
-  listPendingRegistrations,
-  issueRegistrationLink,
-  pairApproved,
-  rejectRegistration,
-  revokeRegistrationLink,
-} from '@/server/registration'
+import { closeRegistration, reopenRegistration } from '@/server/events'
+import { addPlayerByHand, keepBoth, mergePlayers, removePlayer } from '@/server/registration'
 import { getTournamentBySlug } from '@/server/tournaments'
 
-export type LinkState = { link?: string; error?: string }
-
 /**
- * The link is shown ONCE, right after it's made. Storing only the hash means
- * nobody — including a leaked database — can reconstruct it later, which is the
- * point; it also means the organiser has to copy it now.
+ * Every action re-resolves the tournament from the slug in the form and checks
+ * the player ids against it. The ids arrive from a form; the slug is the only
+ * thing the URL vouches for.
  */
-export async function makeLink(_prev: LinkState, formData: FormData): Promise<LinkState> {
-  const user = await requireUser('admin')
-  const slug = String(formData.get('slug'))
-  const t = await getTournamentBySlug(slug)
-  if (!t) return { error: 'That tournament no longer exists.' }
 
-  const raw = await issueRegistrationLink(t.id, endOfVenueDay(t.endDate))
+function back(slug: string, q?: { note?: string; err?: string }): never {
+  const qs = q?.err
+    ? `?err=${encodeURIComponent(q.err)}`
+    : q?.note
+      ? `?note=${encodeURIComponent(q.note)}`
+      : ''
+  revalidatePath(`/admin/t/${slug}/registration`)
+  revalidatePath(`/admin/t/${slug}`)
+  redirect(`/admin/t/${slug}/registration${qs}` as never)
+}
+
+export async function closeSignups(formData: FormData) {
+  const user = await requireUser('admin')
+  const slug = String(formData.get('slug') ?? '')
+  const t = await getTournamentBySlug(slug)
+  if (!t) return
+  await closeRegistration(t.id)
   await recordAudit({
     userId: user.id,
     actorLabel: user.username,
-    action: 'registration.link_issued',
+    action: 'registration.closed',
     entity: 'tournament',
     entityId: t.id,
   })
-  revalidatePath(`/admin/t/${slug}/registration`)
-  return { link: `/r/${raw}` }
+  back(slug)
 }
 
-export async function closeLink(formData: FormData) {
+export async function reopenSignups(formData: FormData) {
   const user = await requireUser('admin')
-  const slug = String(formData.get('slug'))
+  const slug = String(formData.get('slug') ?? '')
   const t = await getTournamentBySlug(slug)
   if (!t) return
-  await revokeRegistrationLink(t.id)
+  if (t.status === 'live' || t.status === 'completed' || t.status === 'archived') {
+    back(slug, { err: 'The tournament has started, so sign-ups stay closed.' })
+  }
+  await reopenRegistration(t.id)
   await recordAudit({
     userId: user.id,
     actorLabel: user.username,
-    action: 'registration.link_closed',
+    action: 'registration.reopened',
     entity: 'tournament',
     entityId: t.id,
   })
-  revalidatePath(`/admin/t/${slug}/registration`)
+  back(slug)
 }
 
-export async function approve(formData: FormData) {
+export type AddState = { error?: string; done: number }
+
+/** "Add a player — name, phone optional". One line, parsed like a pasted list. */
+export async function addByHand(prev: AddState, formData: FormData): Promise<AddState> {
   const user = await requireUser('admin')
-  const slug = String(formData.get('slug'))
-  const id = String(formData.get('id'))
-  const linkPlayerId = String(formData.get('linkPlayerId') ?? '') || null
-
-  // The id comes off a form. Like every other action here, it has to resolve
-  // back to the tournament named in the URL.
+  const slug = String(formData.get('slug') ?? '')
+  const text = String(formData.get('text') ?? '')
   const t = await getTournamentBySlug(slug)
-  if (!t) return
-  const rows = await listPendingRegistrations(t.id)
-  if (!rows.some((r) => r.id === id)) return
+  if (!t) return { error: 'That tournament no longer exists.', done: prev.done }
 
-  const res = await approveRegistration(id, { linkPlayerId })
-  if (res.ok) {
-    await recordAudit({
-      userId: user.id,
-      actorLabel: user.username,
-      action: 'registration.approved',
-      entity: 'registration',
-      entityId: id,
-      after: { playerId: res.playerId, mergedWithExisting: !!linkPlayerId },
-    })
-  }
-  revalidatePath(`/admin/t/${slug}/registration`)
-  revalidatePath(`/admin/t/${slug}`)
-  if (!res.ok) {
-    redirect(`/admin/t/${slug}/registration?err=${encodeURIComponent(res.error)}` as never)
-  }
-}
-
-export async function reject(formData: FormData) {
-  const user = await requireUser('admin')
-  const slug = String(formData.get('slug'))
-  const id = String(formData.get('id'))
-
-  const t = await getTournamentBySlug(slug)
-  if (!t) return
-  const rows = await listPendingRegistrations(t.id)
-  if (!rows.some((r) => r.id === id)) return
-
-  await rejectRegistration(id, 'not going ahead')
+  const res = await addPlayerByHand(t.id, text)
+  if (!res.ok) return { error: res.error, done: prev.done }
   await recordAudit({
     userId: user.id,
     actorLabel: user.username,
-    action: 'registration.rejected',
-    entity: 'registration',
-    entityId: id,
+    action: 'registration.added_by_hand',
+    entity: 'player',
+    entityId: res.playerId,
+    after: { flagged: res.flagged?.name ?? null },
   })
   revalidatePath(`/admin/t/${slug}/registration`)
+  revalidatePath(`/admin/t/${slug}`)
+  return { done: prev.done + 1 }
 }
 
-/** Both of them named each other and both are on the roster — make the team. */
-export async function makePair(formData: FormData) {
+export async function remove(formData: FormData) {
   const user = await requireUser('admin')
-  const slug = String(formData.get('slug'))
-  const categoryId = String(formData.get('categoryId'))
-  const playerIds = String(formData.get('playerIds')).split(',').filter(Boolean)
+  const slug = String(formData.get('slug') ?? '')
+  const playerId = String(formData.get('playerId') ?? '')
+  const t = await getTournamentBySlug(slug)
+  if (!t) return
+  const res = await removePlayer(t.id, playerId)
+  if (!res.ok) back(slug, { err: res.error })
+  await recordAudit({
+    userId: user.id,
+    actorLabel: user.username,
+    action: 'registration.removed',
+    entity: 'player',
+    entityId: playerId,
+  })
+  back(slug, { note: res.note })
+}
 
+/** "Same as Ravi Shankar?" — Same person merges, Different clears the flag. */
+export async function settleDuplicate(formData: FormData) {
+  const user = await requireUser('admin')
+  const slug = String(formData.get('slug') ?? '')
+  const playerId = String(formData.get('playerId') ?? '')
+  const keepId = String(formData.get('keepId') ?? '')
+  const same = String(formData.get('decision') ?? '') === 'same'
   const t = await getTournamentBySlug(slug)
   if (!t) return
 
-  // The names come from the players' own rows, not from the form.
-  const res = await pairApproved(t.id, categoryId, playerIds)
-  if (res.ok) {
+  if (!same) {
+    await keepBoth(t.id, playerId)
     await recordAudit({
       userId: user.id,
       actorLabel: user.username,
-      action: 'team.created_from_registration',
-      entity: 'team',
-      entityId: res.teamId,
-      after: { name: res.name },
+      action: 'registration.kept_both',
+      entity: 'player',
+      entityId: playerId,
     })
+    back(slug)
   }
-  revalidatePath(`/admin/t/${slug}/registration`)
-  revalidatePath(`/admin/t/${slug}`)
-  if (!res.ok) {
-    redirect(`/admin/t/${slug}/registration?err=${encodeURIComponent(res.error)}` as never)
-  }
+
+  const res = await mergePlayers(t.id, keepId, playerId)
+  if (!res.ok) back(slug, { err: res.error })
+  await recordAudit({
+    userId: user.id,
+    actorLabel: user.username,
+    action: 'registration.merged',
+    entity: 'player',
+    entityId: keepId,
+    after: { droppedPlayerId: playerId },
+  })
+  back(slug, { note: res.note })
 }

@@ -1,16 +1,14 @@
 'use client'
 
-import { useActionState, useEffect, useState } from 'react'
-import { Button, Input, NetRule } from '@/components/ui'
-import { register, type RegState } from './actions'
-
-type Cat = { id: string; name: string; discipline: string; needsPartner: boolean }
+import { useActionState } from 'react'
+import { Button, Input } from '@/components/ui'
+import { signUp, type SignupState } from './actions'
 
 /**
- * A stable id for this browser, so the person who signed up under a name is the
- * only one who can change it. Best effort by design: a private window or
- * cleared storage simply means the organiser sorts it out, which they were
- * always going to have to do.
+ * A stable id for this browser, read at the moment of sending rather than on
+ * mount, so there is no effect and nothing to hydrate. Best effort by design:
+ * a private window or cleared storage simply means the organiser sorts it out,
+ * which they were always going to have to do.
  */
 function deviceId(): string {
   const KEY = 'mpb.device'
@@ -25,32 +23,33 @@ function deviceId(): string {
   }
 }
 
-export function RegisterForm({ token, categories }: { token: string; categories: Cat[] }) {
-  const [state, action, pending] = useActionState<RegState, FormData>(register, {})
-  const [device, setDevice] = useState('')
-  useEffect(() => setDevice(deviceId()), [])
+export function SignupForm({ token, doubles }: { token: string; doubles: boolean }) {
+  const [state, action, pending] = useActionState<SignupState, FormData>(signUp, {})
 
   if (state.ok) {
     return (
-      <div className="rounded-card border border-line-strong bg-paper p-5 shadow-card">
-        <p className="text-title text-text">
-          {state.alreadyIn ? 'You’re already in.' : 'You’re in the list.'}
+      <div className="rounded-card border border-live bg-live-soft p-4">
+        <p className="text-section text-text">
+          {state.alreadyIn ? 'You’re already on the list.' : 'You’re on the list.'}
         </p>
-        <p className="mt-2 text-body text-text-2">
-          {state.alreadyIn
-            ? 'The organiser has already added you to the draw.'
-            : 'The organiser checks the list before the draw. If you named a partner, ask them to sign up too — a pair only counts when you’ve both put each other down.'}
+        <p className="mt-1 text-body text-text-2">
+          {doubles
+            ? 'The organiser sorts the pairs before the day. Ask your partner to sign up too and put your name down.'
+            : 'The organiser makes the schedule before the day.'}
         </p>
       </div>
     )
   }
 
-  const doublesCats = categories.filter((c) => c.needsPartner)
-
   return (
-    <form action={action} className="flex flex-col gap-5">
+    <form
+      action={(formData) => {
+        formData.set('deviceId', deviceId())
+        action(formData)
+      }}
+      className="flex flex-col gap-5"
+    >
       <input type="hidden" name="token" value={token} />
-      <input type="hidden" name="deviceId" value={device} />
 
       {state.error ? (
         <p role="alert" className="rounded-control bg-alert-soft px-3.5 py-3 text-body font-medium text-alert">
@@ -59,14 +58,13 @@ export function RegisterForm({ token, categories }: { token: string; categories:
       ) : null}
 
       <label className="block">
-        <span className="text-section text-text">Your name</span>
-        <Input name="name" required autoComplete="name" className="mt-2 h-14" placeholder="Ravi Kumar" />
+        <span className="text-row text-text">Your name</span>
+        <Input name="name" required autoComplete="name" className="mt-2 h-14" placeholder="Deepak Raj" />
       </label>
 
       <label className="block">
-        <span className="text-section text-text">Phone</span>
-        <span className="mt-0.5 block text-meta text-text-3">
-          Optional. Only the organiser sees it — it never goes on the public page.
+        <span className="text-row text-text">
+          Phone <span className="font-normal text-text-3">· optional, only the organiser sees it</span>
         </span>
         <Input
           name="phone"
@@ -78,41 +76,13 @@ export function RegisterForm({ token, categories }: { token: string; categories:
         />
       </label>
 
-      <NetRule />
-
-      <fieldset>
-        <legend className="text-section text-text">What do you want to play?</legend>
-        <div className="mt-3 flex flex-col gap-2">
-          {categories.map((c) => (
-            <label
-              key={c.id}
-              className="tap-lg flex items-center gap-3 rounded-control border border-line-strong bg-paper px-4"
-            >
-              <input
-                type="checkbox"
-                name="categoryIds"
-                value={c.id}
-                className="size-6 accent-[var(--color-ink)]"
-              />
-              <span className="text-row text-text">{c.name}</span>
-            </label>
-          ))}
-          {categories.length === 0 ? (
-            <p className="text-body text-text-2">
-              The organiser hasn’t opened any categories yet. Try again shortly.
-            </p>
-          ) : null}
-        </div>
-      </fieldset>
-
-      {doublesCats.length ? (
+      {doubles ? (
         <label className="block">
-          <span className="text-section text-text">Playing with someone?</span>
-          <span className="mt-0.5 block text-meta text-text-3">
-            Put their name in and ask them to put yours. If you leave this blank the organiser
-            will pair you with someone.
+          <span className="text-row text-text">Playing with someone?</span>
+          <Input name="partnerName" autoComplete="off" className="mt-2 h-14" placeholder="Their name" />
+          <span className="mt-1.5 block text-meta text-text-3">
+            If you leave this blank the organiser pairs you up.
           </span>
-          <Input name="partnerName" className="mt-2 h-14" placeholder="Priya S" />
         </label>
       ) : null}
 

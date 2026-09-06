@@ -92,6 +92,33 @@ export function parsePlayerList(text: string): ParsedRow[] {
   return rows
 }
 
+/**
+ * "Ravi S", "S Ravi", "Ravi" and "Ravi Shankar" are, more often than not, one
+ * man typing his name four ways into a group chat. Two name keys look like the
+ * same person when every word of the shorter one is a whole word, or the start
+ * of a word, in the longer one — and at least one of them is a whole word, so a
+ * pair of initials does not match everybody.
+ *
+ * It is a flag for the organiser, never a decision: "Ravi Kumar" and "Ravi
+ * Shankar" share a first name and are two people, and this says so.
+ */
+export function looksLikeSamePerson(a: string, b: string): boolean {
+  if (!a || !b) return false
+  if (a === b) return true
+  const wa = a.split(' ')
+  const wb = b.split(' ')
+  const [short, long] = wa.length <= wb.length ? [wa, wb] : [wb, wa]
+  const unused = [...long]
+  let whole = false
+  for (const w of short) {
+    const i = unused.findIndex((u) => u === w || u.startsWith(w) || w.startsWith(u))
+    if (i === -1) return false
+    if (unused[i] === w) whole = true
+    unused.splice(i, 1)
+  }
+  return whole
+}
+
 /** Flags rows that look like the same human, so the roster stays one row per person. */
 export function findDuplicates(
   rows: ParsedRow[],

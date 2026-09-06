@@ -2,10 +2,11 @@ import { CourtMark, NetRule } from '@/components/ui'
 import { venueDate } from '@/lib/time'
 import { resolveRegistrationToken } from '@/server/registration'
 import { ensureReady } from '@/server/bootstrap'
-import { RegisterForm } from './form'
+import { SignupForm } from './form'
 
 /**
- * Player self-registration — SPEC A2. One link, shared in the group chat.
+ * The sign-up form — SPEC v4. Opens from the link in the group. Name, phone if
+ * they want, and who they would like to play with. No password, no cookie.
  *
  * Never indexed: it is a capability URL, and a search engine holding it is the
  * same as the link having leaked.
@@ -16,7 +17,7 @@ export const metadata = {
   robots: { index: false, follow: false },
 }
 
-export default async function RegisterPage(props: PageProps<'/r/[token]'>) {
+export default async function SignupPage(props: PageProps<'/r/[token]'>) {
   await ensureReady()
   const { token } = await props.params
   const view = await resolveRegistrationToken(token)
@@ -26,7 +27,7 @@ export default async function RegisterPage(props: PageProps<'/r/[token]'>) {
       <div className="mx-auto max-w-lg px-4 py-16">
         <h1 className="text-title text-text">This link doesn’t work any more</h1>
         <p className="mt-2 text-body text-text-2">
-          Sign-ups may have closed, or the organiser has issued a new link. Ask in the group.
+          Sign-ups may have closed, or the organiser has sent a new link. Ask in the group.
         </p>
       </div>
     )
@@ -39,19 +40,27 @@ export default async function RegisterPage(props: PageProps<'/r/[token]'>) {
         <p className="font-score text-eyebrow text-accent-line uppercase">Madras Pickleball</p>
         <h1 className="mt-1 text-hero">{view.tournament.name}</h1>
         <p className="num mt-1.5 text-body text-on-ink-2">
-          {venueDate(view.tournament.startDate)}
+          {venueDate(view.tournament.startDate)} · sign up
         </p>
         <div aria-hidden className="absolute inset-x-0 bottom-0 h-[3px] bg-accent-line" />
       </header>
 
-      <div className="mx-auto w-full max-w-lg px-4 pt-6">
-        <RegisterForm token={token} categories={view.categories} />
-        <NetRule className="mt-8" />
-        <p className="mt-3 text-meta text-text-3">
-          Your name appears on the public page once the organiser puts you in the draw. Your phone
-          number never does.
-        </p>
-      </div>
+      <main className="mx-auto w-full max-w-lg px-4 pt-6">
+        {view.closed ? (
+          <div className="rounded-card border border-line-key bg-paper p-4 shadow-card">
+            <p className="text-section text-text">Sign-ups have closed — ask the organiser.</p>
+          </div>
+        ) : (
+          <>
+            <SignupForm token={token} doubles={view.discipline === 'doubles'} />
+            <NetRule className="mt-8" />
+            <p className="mt-3 text-meta text-text-3">
+              Your name goes on the public page once the schedule is made. Your phone number never
+              does.
+            </p>
+          </>
+        )}
+      </main>
     </div>
   )
 }

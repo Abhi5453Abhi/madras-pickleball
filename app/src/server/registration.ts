@@ -1,10 +1,10 @@
 import 'server-only'
-import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm'
 import { headers } from 'next/headers'
-import { db, transact } from '@/db'
+import { db, transact, type Tx } from '@/db'
 import {
   categories,
-  categoryPlayers,
+  matches,
   pendingRegistrations,
   players,
   registrationTokens,
@@ -13,32 +13,54 @@ import {
   tournamentPlayers,
   tournaments,
 } from '@/db/schema'
-import { hashIp, newCourtToken, normalizeCrockford, sha256Hex } from '@/lib/crypto'
+import { hashIp, normalizeCrockford, sha256Hex } from '@/lib/crypto'
 import { newId } from '@/lib/ids'
-import { normalizeName, normalizePhone } from '@/lib/parse-players'
+import {
+  looksLikeSamePerson,
+  normalizeName,
+  normalizePhone,
+  parsePlayerList,
+} from '@/lib/parse-players'
 import { bumpStreamVersion } from '@/lib/stream'
 import { checkTokenLookupAllowed, recordTokenAttempt } from '@/lib/rate-limit'
+import { primaryCategory, syncCategoryPlayers } from './events'
 
 /**
- * Player self-registration — SPEC A2.
+ * Registration — SPEC v4.
  *
- * One link per tournament, shared in the WhatsApp group. A player types their
- * name, picks the categories they want, and names a partner if they already
- * have one. Nothing they submit touches the draw: it lands in a review list,
- * because the organiser is the one who knows that "Ravi" and "Ravi S" are the
- * same person and that the third Karthik never actually turns up.
+ * One link per tournament, dropped in the WhatsApp group. A player types their
+ * name, a phone number if they like, and who they want to play with, and they
+ * are on the list — there is no queue for the organiser to wave people through.
+ * The organiser adds the ones who phoned, removes the ones who cannot make it,
+ * and closes the link when the list is full.
+ *
+ * The one thing the machine cannot decide is whether "Ravi S" is Ravi Shankar.
+ * It says so, on the row, and the organiser answers with one tap.
  */
 
-export type RegistrationView = {
-  tournament: { id: string; name: string; slug: string; startDate: Date }
-  categories: Array<{ id: string; name: string; discipline: string; needsPartner: boolean }>
+// ───────────────────────────── the link ─────────────────────────────
+
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+
+/**
+ * The link sits on the organiser's screen every time they open Registration,
+ * so it has to be reconstructible. It is derived from the token row's own
+ * random id rather than drawn fresh, and the hash of it is stored beside the
+ * row as before — the lookup path did not change, and a row issued the old way
+ * simply fails the check in `currentRegistrationToken` and is replaced.
+ */
+function tokenFromId(id: string): string {
+  const hex = sha256Hex(`registration-link:${id}`)
+  let out = ''
+  for (let i = 0; i < 10; i++) out += CROCKFORD[parseInt(hex.slice(i * 2, i * 2 + 2), 16) % 32]
+  return `${out.slice(0, 5)}-${out.slice(5)}`
 }
 
 export async function issueRegistrationLink(tournamentId: string, expiresAt: Date) {
-  const { raw, hash, prefix } = newCourtToken()
+  const id = newId('rt')
+  const raw = tokenFromId(id)
   // One transaction: the partial unique index allows exactly one active link
-  // per tournament, so revoking and issuing have to land together or the second
-  // attempt fails on a constraint the organiser cannot see.
+  // per tournament, so revoking and issuing have to land together.
   await transact(async (tx) => {
     await tx
       .update(registrationTokens)
@@ -50,10 +72,10 @@ export async function issueRegistrationLink(tournamentId: string, expiresAt: Dat
         ),
       )
     await tx.insert(registrationTokens).values({
-      id: newId('rt'),
+      id,
       tournamentId,
-      tokenHash: hash,
-      tokenPrefix: prefix,
+      tokenHash: sha256Hex(normalizeCrockford(raw)),
+      tokenPrefix: raw.slice(0, 5),
       expiresAt,
     })
   })
@@ -62,28 +84,34 @@ export async function issueRegistrationLink(tournamentId: string, expiresAt: Dat
 
 export async function currentRegistrationToken(tournamentId: string) {
   const [row] = await db
-    .select()
+    .select({ id: registrationTokens.id, tokenHash: registrationTokens.tokenHash, expiresAt: registrationTokens.expiresAt })
     .from(registrationTokens)
     .where(
       and(
         eq(registrationTokens.tournamentId, tournamentId),
         eq(registrationTokens.status, 'active'),
+        sql`${registrationTokens.expiresAt} > now()`,
       ),
     )
     .limit(1)
-  return row ?? null
+  if (!row) return null
+  const raw = tokenFromId(row.id)
+  if (sha256Hex(normalizeCrockford(raw)) !== row.tokenHash) return null
+  return { raw, expiresAt: row.expiresAt }
 }
 
-export async function revokeRegistrationLink(tournamentId: string) {
-  await db
-    .update(registrationTokens)
-    .set({ status: 'revoked', revokedAt: new Date() })
-    .where(
-      and(
-        eq(registrationTokens.tournamentId, tournamentId),
-        eq(registrationTokens.status, 'active'),
-      ),
-    )
+/** The link the organiser sees. Made the first time it is asked for. */
+export async function ensureRegistrationLink(tournamentId: string, expiresAt: Date) {
+  const current = await currentRegistrationToken(tournamentId)
+  if (current) return current.raw
+  return issueRegistrationLink(tournamentId, expiresAt)
+}
+
+export type RegistrationView = {
+  tournament: { id: string; name: string; slug: string; startDate: Date }
+  discipline: 'singles' | 'doubles'
+  /** The organiser closed sign-ups, or the tournament has started. */
+  closed: boolean
 }
 
 /** Resolve a registration link. Rate-limited exactly like a court token. */
@@ -109,424 +137,584 @@ export async function resolveRegistrationToken(raw: string): Promise<Registratio
   await recordTokenAttempt('registration', normalized.slice(0, 5), ipHash, !!token)
   if (!token) return null
 
-  // The tournament and its categories are both keyed off the token's
-  // tournament id, so neither has to wait for the other.
-  const [tournament, cats] = await Promise.all([
-    db
-      .select({
-        id: tournaments.id,
-        name: tournaments.name,
-        slug: tournaments.slug,
-        startDate: tournaments.startDate,
-      })
-      .from(tournaments)
-      .where(and(eq(tournaments.id, token.tournamentId), isNull(tournaments.deletedAt)))
-      .limit(1)
-      .then((r) => r[0]),
-    db
-      .select({
-        id: categories.id,
-        name: categories.name,
-        discipline: categories.discipline,
-      })
-      .from(categories)
-      .where(and(eq(categories.tournamentId, token.tournamentId), isNull(categories.deletedAt)))
-      .orderBy(asc(categories.seq)),
-  ])
-  if (!tournament) return null
+  const [row] = await db
+    .select({
+      id: tournaments.id,
+      name: tournaments.name,
+      slug: tournaments.slug,
+      startDate: tournaments.startDate,
+      status: tournaments.status,
+      registrationClosedAt: tournaments.registrationClosedAt,
+      discipline: categories.discipline,
+    })
+    .from(tournaments)
+    .innerJoin(categories, eq(categories.tournamentId, tournaments.id))
+    .where(
+      and(
+        eq(tournaments.id, token.tournamentId),
+        isNull(tournaments.deletedAt),
+        isNull(categories.deletedAt),
+      ),
+    )
+    .orderBy(asc(categories.seq))
+    .limit(1)
+  if (!row) return null
 
   return {
-    tournament: {
-      id: tournament.id,
-      name: tournament.name,
-      slug: tournament.slug,
-      startDate: tournament.startDate,
-    },
-    categories: cats.map((c) => ({
-      id: c.id,
-      name: c.name,
-      discipline: c.discipline,
-      needsPartner: c.discipline !== 'singles',
-    })),
+    tournament: { id: row.id, name: row.name, slug: row.slug, startDate: row.startDate },
+    discipline: row.discipline === 'singles' ? 'singles' : 'doubles',
+    closed: signupsClosed(row),
   }
+}
+
+export function signupsClosed(t: { status: string; registrationClosedAt: Date | null }) {
+  return !!t.registrationClosedAt || t.status === 'live' || t.status === 'completed' || t.status === 'archived'
+}
+
+// ───────────────────────────── the list ─────────────────────────────
+
+type RosterRow = {
+  tpId: string
+  playerId: string
+  name: string
+  nameKey: string
+  phone: string | null
+  phoneKey: string | null
+  source: string
+  partnerWish: string | null
+  partnerPlayerId: string | null
+  registeredAt: Date
+}
+
+async function rosterRows(tournamentId: string): Promise<RosterRow[]> {
+  return db
+    .select({
+      tpId: tournamentPlayers.id,
+      playerId: players.id,
+      name: players.name,
+      nameKey: players.nameKey,
+      phone: players.phone,
+      phoneKey: players.phoneKey,
+      source: tournamentPlayers.source,
+      partnerWish: tournamentPlayers.partnerWish,
+      partnerPlayerId: tournamentPlayers.partnerPlayerId,
+      registeredAt: tournamentPlayers.registeredAt,
+    })
+    .from(tournamentPlayers)
+    .innerJoin(players, eq(players.id, tournamentPlayers.playerId))
+    .where(eq(tournamentPlayers.tournamentId, tournamentId))
+    .orderBy(asc(tournamentPlayers.registeredAt), asc(players.name))
+}
+
+export type RosterEntry = {
+  playerId: string
+  name: string
+  source: 'link' | 'hand'
+  /** The roster player they named, or the name as they typed it. */
+  partner: string | null
+  partnerOnList: boolean
+  registeredAt: Date
+  /** Somebody already on the list who looks like the same person. */
+  duplicateOf: { playerId: string; name: string } | null
+}
+
+/**
+ * Who is in, in the order they arrived. A row flagged at sign-up as a possible
+ * duplicate carries the earlier person it looks like, worked out the same way
+ * it was at sign-up, so the organiser's answer is about two names they can see.
+ */
+export async function listRoster(tournamentId: string): Promise<RosterEntry[]> {
+  const [roster, flags] = await Promise.all([
+    rosterRows(tournamentId),
+    db
+      .select({ playerId: pendingRegistrations.mergedPlayerId })
+      .from(pendingRegistrations)
+      .where(
+        and(
+          eq(pendingRegistrations.tournamentId, tournamentId),
+          eq(pendingRegistrations.status, 'pending'),
+        ),
+      ),
+  ])
+  const flagged = new Set(flags.map((f) => f.playerId))
+  const byId = new Map(roster.map((r) => [r.playerId, r]))
+
+  return roster.map((r) => {
+    const named = r.partnerPlayerId ? byId.get(r.partnerPlayerId) : undefined
+    const earlier = flagged.has(r.playerId)
+      ? roster.find((o) => o.playerId !== r.playerId && looksLikeSamePerson(o.nameKey, r.nameKey))
+      : undefined
+    return {
+      playerId: r.playerId,
+      name: r.name,
+      source: r.source === 'link' ? 'link' : 'hand',
+      partner: named?.name ?? r.partnerWish,
+      partnerOnList: !!named,
+      registeredAt: r.registeredAt,
+      duplicateOf: earlier ? { playerId: earlier.playerId, name: earlier.name } : null,
+    }
+  })
+}
+
+/**
+ * Kept for the console under More, which counts the sign-ups that still need
+ * a look. Since v4 that is only the possible duplicates.
+ */
+export async function listPendingRegistrations(tournamentId: string) {
+  return db
+    .select({
+      id: pendingRegistrations.id,
+      name: pendingRegistrations.name,
+      status: pendingRegistrations.status,
+    })
+    .from(pendingRegistrations)
+    .where(
+      and(
+        eq(pendingRegistrations.tournamentId, tournamentId),
+        eq(pendingRegistrations.status, 'pending'),
+      ),
+    )
+}
+
+// ───────────────────────────── adding ─────────────────────────────
+
+type AddInput = {
+  name: string
+  phone?: string | null
+  partnerWish?: string | null
+  source: 'link' | 'hand'
+  deviceId?: string | null
+  ipHash?: string | null
+}
+
+export type AddResult =
+  | { ok: true; playerId: string; flagged: { playerId: string; name: string } | null }
+  | { ok: false; error: string }
+
+/**
+ * Put one person on the list, whichever way they arrived.
+ *
+ * Who they are in the venue's book of players: the phone number if it is
+ * known, otherwise a player with exactly this name who is not already on this
+ * list and does not carry a different number, otherwise somebody new. If they
+ * look like somebody already on the list they still go on — the organiser is
+ * the one who knows — with a flag, stored as the sign-up record left open.
+ *
+ * Partner wishes resolve both ways: theirs to whoever on the list has that
+ * name, and anyone who had already named THEM gets the pointer filled in now.
+ */
+export async function addPlayer(tournamentId: string, input: AddInput): Promise<AddResult> {
+  const name = input.name.trim()
+  if (name.length < 2) return { ok: false, error: 'Put a name in.' }
+  if (name.length > 60) return { ok: false, error: 'That name is too long.' }
+  const nameKey = normalizeName(name)
+  if (!nameKey) return { ok: false, error: 'That doesn’t look like a name.' }
+  const phone = input.phone?.trim() || null
+  const phoneKey = normalizePhone(phone)
+  if (phone && !phoneKey) {
+    return { ok: false, error: 'That phone number doesn’t look right — ten digits, or leave it blank.' }
+  }
+  const partnerWish = input.partnerWish?.trim().slice(0, 60) || null
+  const partnerKey = partnerWish ? normalizeName(partnerWish) : null
+
+  const roster = await rosterRows(tournamentId)
+  const onList = new Set(roster.map((r) => r.playerId))
+
+  let playerId: string | null = null
+  if (phoneKey) {
+    const [byPhone] = await db
+      .select({ id: players.id, name: players.name })
+      .from(players)
+      .where(and(eq(players.phoneKey, phoneKey), isNull(players.deletedAt)))
+      .limit(1)
+    if (byPhone) {
+      if (onList.has(byPhone.id)) return { ok: false, error: `${byPhone.name} is already on the list.` }
+      playerId = byPhone.id
+    }
+  }
+  if (!playerId) {
+    const sameName = await db
+      .select({ id: players.id, phoneKey: players.phoneKey })
+      .from(players)
+      .where(and(eq(players.nameKey, nameKey), isNull(players.deletedAt)))
+      .orderBy(asc(players.createdAt))
+    playerId = sameName.find((p) => !onList.has(p.id) && (!phoneKey || !p.phoneKey))?.id ?? null
+  }
+  const isNew = !playerId
+  const id = playerId ?? newId('ply')
+
+  const looksLike = roster.find((r) => looksLikeSamePerson(r.nameKey, nameKey)) ?? null
+  const partner = partnerKey && partnerKey !== nameKey ? roster.find((r) => r.nameKey === partnerKey) : undefined
+  const namedMe = roster
+    .filter((r) => !r.partnerPlayerId && r.partnerWish && normalizeName(r.partnerWish) === nameKey)
+    .map((r) => r.tpId)
+
+  await transact(async (tx) => {
+    if (isNew) {
+      await tx.insert(players).values({ id, name, nameKey, phone, phoneKey })
+    } else if (phoneKey) {
+      // A number we did not have. Safe to set: nobody else carries it, or the
+      // phone lookup above would have found them.
+      await tx
+        .update(players)
+        .set({ phone, phoneKey, updatedAt: new Date() })
+        .where(and(eq(players.id, id), isNull(players.phoneKey)))
+    }
+    await tx.insert(tournamentPlayers).values({
+      id: newId('tp'),
+      tournamentId,
+      playerId: id,
+      source: input.source,
+      partnerWish,
+      partnerPlayerId: partner?.playerId ?? null,
+    })
+    if (namedMe.length) {
+      await tx
+        .update(tournamentPlayers)
+        .set({ partnerPlayerId: id })
+        .where(inArray(tournamentPlayers.id, namedMe))
+    }
+    // The sign-up record. Left 'pending' when the organiser has a question to
+    // answer about it; that is the whole of the duplicate flag.
+    await tx.insert(pendingRegistrations).values({
+      id: newId('reg'),
+      tournamentId,
+      name,
+      nameKey,
+      phone: phoneKey,
+      partnerName: partnerWish,
+      partnerNameKey: partnerKey,
+      deviceId: input.deviceId ?? null,
+      ipHash: input.ipHash ?? null,
+      status: looksLike ? 'pending' : 'approved',
+      mergedPlayerId: id,
+      reviewedAt: looksLike ? null : new Date(),
+    })
+    await bumpStreamVersion(tournamentId, tx)
+  })
+  await syncCategoryPlayers(tournamentId)
+
+  return {
+    ok: true,
+    playerId: id,
+    flagged: looksLike ? { playerId: looksLike.playerId, name: looksLike.name } : null,
+  }
+}
+
+/** The organiser's one-line box: "Name 98400 12345", phone optional. */
+export async function addPlayerByHand(tournamentId: string, text: string): Promise<AddResult> {
+  const [row] = parsePlayerList(text.slice(0, 120))
+  if (!row?.name) return { ok: false, error: 'Put a name in — the phone number is optional.' }
+  const nameKey = normalizeName(row.name)
+  const roster = await rosterRows(tournamentId)
+  // Typing a name that is already there is a slip, not a second person.
+  const same = roster.find((r) => r.nameKey === nameKey)
+  if (same) return { ok: false, error: `${same.name} is already on the list.` }
+  return addPlayer(tournamentId, { name: row.name, phone: row.phone, source: 'hand' })
 }
 
 export type SubmitRegistration = {
   tournamentId: string
   name: string
   phone?: string | null
-  categoryIds: string[]
   partnerName?: string | null
   deviceId?: string | null
 }
 
 export type RegistrationResult =
-  | { ok: true; id: string; alreadyIn: boolean }
+  | { ok: true; alreadyIn: boolean }
   | { ok: false; error: string }
 
-export async function submitRegistration(
-  input: SubmitRegistration,
-): Promise<RegistrationResult> {
+/**
+ * The public form. Straight onto the list — unless they are on it already,
+ * which is the common case: people reload, or come back to add a partner.
+ * "Already" is the same phone number, or the same name from the same browser.
+ * The same name from a different browser goes on with a flag, because two
+ * Karthiks in one group is not unusual and the organiser knows which is which.
+ */
+export async function submitRegistration(input: SubmitRegistration): Promise<RegistrationResult> {
   const name = input.name.trim()
   if (name.length < 2) return { ok: false, error: 'Put your name in.' }
   if (name.length > 60) return { ok: false, error: 'That name is too long.' }
-  if (input.categoryIds.length === 0) {
-    return { ok: false, error: 'Pick at least one — singles, doubles, or both.' }
+  const nameKey = normalizeName(name)
+  const phoneKey = normalizePhone(input.phone)
+  if (input.phone?.trim() && !phoneKey) {
+    return { ok: false, error: 'That phone number doesn’t look right — ten digits, or leave it blank.' }
   }
 
-  const nameKey = normalizeName(name)
-  const partnerName = input.partnerName?.trim() || null
+  const [t] = await db
+    .select({
+      status: tournaments.status,
+      registrationClosedAt: tournaments.registrationClosedAt,
+      discipline: categories.discipline,
+    })
+    .from(tournaments)
+    .innerJoin(categories, eq(categories.tournamentId, tournaments.id))
+    .where(and(eq(tournaments.id, input.tournamentId), isNull(tournaments.deletedAt), isNull(categories.deletedAt)))
+    .orderBy(asc(categories.seq))
+    .limit(1)
+  if (!t) return { ok: false, error: 'This link doesn’t work any more. Ask the organiser.' }
+  if (signupsClosed(t)) return { ok: false, error: 'Sign-ups have closed — ask the organiser.' }
+  const partnerWish = t.discipline === 'singles' ? null : input.partnerName?.trim() || null
 
-  // The categories have to belong to THIS tournament; the ids arrive from a
-  // form on a page anyone with the link can open. That check and the
-  // did-they-already-register lookup are independent, so they go out together.
-  const [valid, existing] = await Promise.all([
-    db
-      .select({ id: categories.id })
-      .from(categories)
-      .where(
-        and(
-          eq(categories.tournamentId, input.tournamentId),
-          inArray(categories.id, input.categoryIds),
-          isNull(categories.deletedAt),
-        ),
-      ),
-    // Registering twice from the same phone is the norm, not an attack: people
-    // reload, or add a second category later. Update rather than duplicate.
-    db
-      .select()
-      .from(pendingRegistrations)
-      .where(
-        and(
-          eq(pendingRegistrations.tournamentId, input.tournamentId),
-          eq(pendingRegistrations.nameKey, nameKey),
-        ),
-      )
-      .limit(1)
-      .then((r) => r[0]),
-  ])
-  if (valid.length !== input.categoryIds.length) {
-    return { ok: false, error: 'That form is out of date — reload the page and try again.' }
+  const roster = await rosterRows(input.tournamentId)
+  let mine = phoneKey ? roster.find((r) => r.phoneKey === phoneKey) : undefined
+  if (!mine && input.deviceId) {
+    const sameNameHere = roster.filter((r) => r.nameKey === nameKey)
+    if (sameNameHere.length) {
+      const [earlier] = await db
+        .select({ playerId: pendingRegistrations.mergedPlayerId })
+        .from(pendingRegistrations)
+        .where(
+          and(
+            eq(pendingRegistrations.tournamentId, input.tournamentId),
+            eq(pendingRegistrations.nameKey, nameKey),
+            eq(pendingRegistrations.deviceId, input.deviceId),
+            ne(pendingRegistrations.status, 'rejected'),
+          ),
+        )
+        .limit(1)
+      mine = sameNameHere.find((r) => r.playerId === earlier?.playerId)
+    }
+  }
+
+  if (mine) {
+    // Coming back to say who they are playing with is the one edit worth taking.
+    if (partnerWish && !mine.partnerWish) {
+      const partnerKey = normalizeName(partnerWish)
+      const partner = partnerKey !== mine.nameKey ? roster.find((r) => r.nameKey === partnerKey) : undefined
+      await db
+        .update(tournamentPlayers)
+        .set({ partnerWish, partnerPlayerId: partner?.playerId ?? null })
+        .where(eq(tournamentPlayers.id, mine.tpId))
+      await bumpStreamVersion(input.tournamentId)
+    }
+    return { ok: true, alreadyIn: true }
   }
 
   const h = await headers()
   const ipHash = hashIp(h.get('x-forwarded-for')?.split(',')[0]?.trim())
-
-  if (existing) {
-    if (existing.status === 'approved') return { ok: true, id: existing.id, alreadyIn: true }
-    // A name that is already in the list belongs to whoever put it there. The
-    // link is shared in a group chat, so without this anyone could resubmit as
-    // "Ravi Kumar", attach their own phone number, add categories he did not
-    // ask for, and un-reject an entry the organiser had already turned down.
-    if (existing.status === 'rejected') {
-      return {
-        ok: false,
-        error: 'The organiser has already looked at this one — have a word with them.',
-      }
-    }
-    if (existing.deviceId && input.deviceId && existing.deviceId !== input.deviceId) {
-      return {
-        ok: false,
-        error: 'Somebody has already signed up under that name. Add an initial, or ask the organiser.',
-      }
-    }
-    await db
-      .update(pendingRegistrations)
-      .set({
-        phone: normalizePhone(input.phone) ?? existing.phone,
-        categoryIds: [...new Set([...existing.categoryIds, ...input.categoryIds])],
-        partnerName: partnerName ?? existing.partnerName,
-        partnerNameKey: partnerName ? normalizeName(partnerName) : existing.partnerNameKey,
-        deviceId: input.deviceId ?? existing.deviceId,
-      })
-      .where(eq(pendingRegistrations.id, existing.id))
-    return { ok: true, id: existing.id, alreadyIn: false }
-  }
-
-  const id = newId('reg')
-  // Together, not in sequence, and deliberately not in a transaction: the use
-  // counter is a statistic on the link, and making a player on a phone wait for
-  // a BEGIN and a COMMIT to protect it would be the wrong trade.
-  await Promise.all([
-    db.insert(pendingRegistrations).values({
-      id,
-      tournamentId: input.tournamentId,
-      name,
-      nameKey,
-      phone: normalizePhone(input.phone),
-      categoryIds: input.categoryIds,
-      partnerName,
-      partnerNameKey: partnerName ? normalizeName(partnerName) : null,
-      deviceId: input.deviceId ?? null,
-      ipHash,
-    }),
-    db
-      .update(registrationTokens)
-      .set({ useCount: sql`${registrationTokens.useCount} + 1` })
-      .where(
-        and(
-          eq(registrationTokens.tournamentId, input.tournamentId),
-          eq(registrationTokens.status, 'active'),
-        ),
-      ),
-  ])
-
-  return { ok: true, id, alreadyIn: false }
-}
-
-export type PendingRow = {
-  id: string
-  name: string
-  phone: string | null
-  categoryIds: string[]
-  categoryNames: string[]
-  partnerName: string | null
-  /** The other pending registration that named this person back. */
-  mutualWith: { id: string; name: string } | null
-  /** An existing player with the same name — probably the same human. */
-  looksLike: { id: string; name: string } | null
-  status: string
-  /** Set once approved: the roster player this became. */
-  playerId: string | null
-  createdAt: Date
-}
-
-export async function listPendingRegistrations(tournamentId: string): Promise<PendingRow[]> {
-  // The roster match is expressed as a subquery on the same name keys rather
-  // than a second trip carrying the keys back down, so all three reads go out
-  // at once instead of one after another.
-  const [rows, cats, known] = await Promise.all([
-    db
-      .select()
-      .from(pendingRegistrations)
-      .where(eq(pendingRegistrations.tournamentId, tournamentId))
-      .orderBy(desc(pendingRegistrations.createdAt)),
-    db
-      .select({ id: categories.id, name: categories.name })
-      .from(categories)
-      .where(eq(categories.tournamentId, tournamentId)),
-    db
-      .select({ id: players.id, name: players.name, nameKey: players.nameKey })
-      .from(players)
-      .where(
-        inArray(
-          players.nameKey,
-          db
-            .select({ nameKey: pendingRegistrations.nameKey })
-            .from(pendingRegistrations)
-            .where(eq(pendingRegistrations.tournamentId, tournamentId)),
-        ),
-      ),
-  ])
-
-  const catName = new Map(cats.map((c) => [c.id, c.name]))
-  const knownByKey = new Map(known.map((p) => [p.nameKey, p]))
-
-  const byKey = new Map(rows.map((r) => [r.nameKey, r]))
-
-  return rows.map((r) => {
-    // A pair is only a pair when both of them said so. One person naming a
-    // partner who never registers is the common case, and it must not silently
-    // create a team of one.
-    const named = r.partnerNameKey ? byKey.get(r.partnerNameKey) : undefined
-    const mutual =
-      named && named.partnerNameKey === r.nameKey
-        ? { id: named.id, name: named.name }
-        : null
-    const seen = knownByKey.get(r.nameKey)
-    return {
-      id: r.id,
-      name: r.name,
-      phone: r.phone,
-      categoryIds: r.categoryIds,
-      categoryNames: r.categoryIds.map((c) => catName.get(c) ?? '—'),
-      partnerName: r.partnerName,
-      mutualWith: mutual,
-      looksLike: seen ? { id: seen.id, name: seen.name } : null,
-      status: r.status,
-      playerId: r.mergedPlayerId,
-      createdAt: r.createdAt,
-    }
+  const res = await addPlayer(input.tournamentId, {
+    name,
+    phone: input.phone,
+    partnerWish,
+    source: 'link',
+    deviceId: input.deviceId ?? null,
+    ipHash,
   })
-}
-
-/**
- * Approve one registration: it becomes a player on the roster and is added to
- * the categories they asked for. Teams are NOT built here — pairing is a
- * separate, deliberate act, and a pair that both named each other is offered
- * to the organiser rather than created behind their back.
- */
-export async function approveRegistration(
-  registrationId: string,
-  opts?: { categoryIds?: string[]; linkPlayerId?: string | null },
-) {
-  const [reg] = await db
-    .select()
-    .from(pendingRegistrations)
-    .where(eq(pendingRegistrations.id, registrationId))
-    .limit(1)
-  if (!reg) return { ok: false as const, error: 'That registration is gone.' }
-  if (reg.status === 'approved') return { ok: false as const, error: 'Already on the roster.' }
-
-  const wanted = opts?.categoryIds ?? reg.categoryIds
-
-  // The caller may propose an existing player to merge into, but only one this
-  // registration actually looks like. A player id from another tournament,
-  // arriving from a stale form, would otherwise be merged in silently.
-  let playerId: string | null = null
-  let isNewPlayer = false
-  if (opts?.linkPlayerId) {
-    const [proposed] = await db
-      .select({ id: players.id })
-      .from(players)
-      .where(and(eq(players.id, opts.linkPlayerId), eq(players.nameKey, reg.nameKey)))
-      .limit(1)
-    playerId = proposed?.id ?? null
-  }
-  if (!playerId) {
-    const [match] = await db
-      .select({ id: players.id })
-      .from(players)
-      .where(eq(players.nameKey, reg.nameKey))
-      .limit(1)
-    playerId = match?.id ?? null
-  }
-  if (!playerId) {
-    playerId = newId('ply')
-    isNewPlayer = true
-  }
-
-  // Everything an approval means happens together. Half of it — a player on the
-  // roster who is in none of the categories they asked for, or a registration
-  // still showing as pending after the player exists — is a review list the
-  // organiser cannot trust, and they are working through forty of these.
-  const player = playerId
-  await transact(async (tx) => {
-    if (isNewPlayer) {
-      await tx.insert(players).values({
-        id: player,
-        name: reg.name,
-        nameKey: reg.nameKey,
-        phone: reg.phone,
-        phoneKey: normalizePhone(reg.phone),
-      })
-    }
-
-    await tx
-      .insert(tournamentPlayers)
-      .values({ id: newId('tp'), tournamentId: reg.tournamentId, playerId: player })
-      .onConflictDoNothing()
-
-    // One insert for every category they asked for, not one per category.
-    // De-duplicated first: the list is a wire format, and the same category
-    // twice would put two identical rows in a single statement.
-    const uniqueCategories = [...new Set(wanted)]
-    if (uniqueCategories.length) {
-      await tx
-        .insert(categoryPlayers)
-        .values(
-          uniqueCategories.map((categoryId) => ({ id: newId('cp'), categoryId, playerId: player })),
-        )
-        .onConflictDoNothing()
-    }
-
-    await tx
-      .update(pendingRegistrations)
-      .set({
-        status: 'approved',
-        mergedPlayerId: player,
-        reviewedAt: new Date(),
-        categoryIds: wanted,
-      })
-      .where(eq(pendingRegistrations.id, registrationId))
-
-    await bumpStreamVersion(reg.tournamentId, tx)
-  })
-
-  return { ok: true as const, playerId }
-}
-
-export async function rejectRegistration(registrationId: string, note?: string) {
-  const [reg] = await db
-    .select({ tournamentId: pendingRegistrations.tournamentId })
-    .from(pendingRegistrations)
-    .where(eq(pendingRegistrations.id, registrationId))
-    .limit(1)
-  if (!reg) return
+  if (!res.ok) return res
+  // A statistic on the link, nothing more.
   await db
-    .update(pendingRegistrations)
-    .set({ status: 'rejected', reviewedAt: new Date(), reviewNote: note ?? null })
-    .where(eq(pendingRegistrations.id, registrationId))
-  await bumpStreamVersion(reg.tournamentId)
-}
-
-/**
- * Build a team from two approved registrations who named each other. Offered on
- * the review screen, never automatic.
- *
- * Everything is checked against the database rather than taken from the form:
- * the category has to belong to this tournament, both players have to be
- * approved registrants in it, and the team NAME is built from the players'
- * stored names. The name is the one string the public page, the board and every
- * blocked-match message identify a pair by — it is not a field a stale form
- * gets to set.
- */
-export async function pairApproved(
-  tournamentId: string,
-  categoryId: string,
-  playerIds: string[],
-) {
-  const ids = [...new Set(playerIds.filter(Boolean))]
-  if (ids.length !== 2) return { ok: false as const, error: 'A pair is two players.' }
-
-  const [category] = await db
-    .select({ id: categories.id, discipline: categories.discipline })
-    .from(categories)
+    .update(registrationTokens)
+    .set({ useCount: sql`${registrationTokens.useCount} + 1` })
     .where(
       and(
-        eq(categories.id, categoryId),
-        eq(categories.tournamentId, tournamentId),
-        isNull(categories.deletedAt),
+        eq(registrationTokens.tournamentId, input.tournamentId),
+        eq(registrationTokens.status, 'active'),
       ),
     )
-    .limit(1)
-  if (!category) return { ok: false as const, error: 'That category is not in this tournament.' }
-  if (category.discipline === 'singles') {
-    return { ok: false as const, error: 'Singles has no pairs.' }
-  }
+  return { ok: true, alreadyIn: false }
+}
 
-  const members = await db
-    .select({ id: players.id, name: players.name })
-    .from(categoryPlayers)
-    .innerJoin(players, eq(players.id, categoryPlayers.playerId))
-    .where(and(eq(categoryPlayers.categoryId, categoryId), inArray(categoryPlayers.playerId, ids)))
-  if (members.length !== 2) {
-    return { ok: false as const, error: 'Both of them have to be in this category first.' }
-  }
+// ───────────────────────── removing and merging ─────────────────────────
 
-  const already = await db
-    .select({ teamId: teamPlayers.teamId })
+/** The pair this player is in, and whether it is too late to take it apart. */
+async function pairOf(tournamentId: string, playerId: string) {
+  const category = await primaryCategory(tournamentId)
+  const [row] = await db
+    .select({ teamId: teams.id, name: teams.name })
     .from(teamPlayers)
     .innerJoin(teams, eq(teams.id, teamPlayers.teamId))
-    .where(and(eq(teams.categoryId, categoryId), inArray(teamPlayers.playerId, ids)))
-  if (already.length) {
-    return { ok: false as const, error: 'One of them is already in a team in this category.' }
-  }
+    .where(and(eq(teamPlayers.playerId, playerId), eq(teams.categoryId, category.id)))
+    .limit(1)
+  if (!row) return null
+  const [agg] = await db
+    .select({
+      n: sql<number>`cast(count(*) as int)`,
+      played: sql<number>`cast(count(*) filter (where ${matches.resultState} <> 'none') as int)`,
+    })
+    .from(matches)
+    .where(
+      and(
+        eq(matches.tournamentId, tournamentId),
+        or(
+          eq(matches.teamAId, row.teamId),
+          eq(matches.teamBId, row.teamId),
+          eq(matches.winnerTeamId, row.teamId),
+          eq(matches.retiredTeamId, row.teamId),
+        ),
+      ),
+    )
+  return { teamId: row.teamId, name: row.name, onSchedule: (agg?.n ?? 0) > 0, hasResult: (agg?.played ?? 0) > 0 }
+}
 
-  const byId = new Map(members.map((m) => [m.id, m.name]))
-  const name = ids.map((id) => byId.get(id) ?? '?').join(' / ')
+function tooLate(name: string, pair: { name: string; onSchedule: boolean; hasResult: boolean }) {
+  if (pair.hasResult) return `${name} is in ${pair.name}, and that pair has already played. Sort it out under More.`
+  if (pair.onSchedule) return `${name} is in ${pair.name}, which is on the schedule. Split the pair first, then make the schedule again.`
+  return null
+}
 
-  return transact(async (tx) => {
-    const [{ n }] = await tx
-      .select({ n: sql<number>`count(*)::int` })
-      .from(teams)
-      .where(eq(teams.categoryId, categoryId))
-
-    const teamId = newId('tm')
-    await tx.insert(teams).values({ id: teamId, categoryId, name, seed: Number(n) + 1 })
+/**
+ * Flags that no longer point at anybody — the person they looked like has gone
+ * — close themselves. Runs inside whichever transaction changed the list.
+ */
+async function settleOrphanFlags(tx: Tx, tournamentId: string, remaining: RosterRow[]) {
+  const flags = await tx
+    .select({ id: pendingRegistrations.id, playerId: pendingRegistrations.mergedPlayerId })
+    .from(pendingRegistrations)
+    .where(
+      and(
+        eq(pendingRegistrations.tournamentId, tournamentId),
+        eq(pendingRegistrations.status, 'pending'),
+      ),
+    )
+  const stale = flags
+    .filter((f) => {
+      const me = remaining.find((r) => r.playerId === f.playerId)
+      return !me || !remaining.some((r) => r.playerId !== me.playerId && looksLikeSamePerson(r.nameKey, me.nameKey))
+    })
+    .map((f) => f.id)
+  if (stale.length) {
     await tx
-      .insert(teamPlayers)
-      .values(ids.map((playerId, position) => ({ teamId, playerId, position })))
-    return { ok: true as const, teamId, name }
+      .update(pendingRegistrations)
+      .set({ status: 'approved', reviewedAt: new Date() })
+      .where(inArray(pendingRegistrations.id, stale))
+  }
+}
+
+export type ListChange = { ok: true; note: string } | { ok: false; error: string }
+
+/**
+ * Take somebody off the list. A pair they are in that has not played is taken
+ * apart with them; one that has played is not ours to touch from here.
+ */
+export async function removePlayer(tournamentId: string, playerId: string): Promise<ListChange> {
+  const roster = await rosterRows(tournamentId)
+  const row = roster.find((r) => r.playerId === playerId)
+  if (!row) return { ok: false, error: 'They are not on the list any more.' }
+  const pair = await pairOf(tournamentId, playerId)
+  const late = pair && tooLate(row.name, pair)
+  if (late) return { ok: false, error: late }
+
+  const remaining = roster.filter((r) => r.playerId !== playerId)
+  await transact(async (tx) => {
+    if (pair) await tx.delete(teams).where(eq(teams.id, pair.teamId))
+    await tx
+      .update(tournamentPlayers)
+      .set({ partnerPlayerId: null })
+      .where(
+        and(
+          eq(tournamentPlayers.tournamentId, tournamentId),
+          eq(tournamentPlayers.partnerPlayerId, playerId),
+        ),
+      )
+    await tx.delete(tournamentPlayers).where(eq(tournamentPlayers.id, row.tpId))
+    await tx
+      .update(pendingRegistrations)
+      .set({ status: 'rejected', reviewedAt: new Date(), reviewNote: 'Removed by the organiser' })
+      .where(
+        and(
+          eq(pendingRegistrations.tournamentId, tournamentId),
+          eq(pendingRegistrations.mergedPlayerId, playerId),
+        ),
+      )
+    await settleOrphanFlags(tx, tournamentId, remaining)
+    await bumpStreamVersion(tournamentId, tx)
   })
+  await syncCategoryPlayers(tournamentId)
+  return {
+    ok: true,
+    note: pair
+      ? `${row.name} is off the list, and the pair ${pair.name} is split.`
+      : `${row.name} is off the list.`,
+  }
+}
+
+/**
+ * "Same person": the earlier row stays, the later one goes, and anything the
+ * earlier row lacked — a partner wish, a phone number — comes across. Anyone
+ * who had named the later row now points at the one that stays.
+ */
+export async function mergePlayers(
+  tournamentId: string,
+  keepId: string,
+  dropId: string,
+): Promise<ListChange> {
+  const roster = await rosterRows(tournamentId)
+  const keep = roster.find((r) => r.playerId === keepId)
+  const drop = roster.find((r) => r.playerId === dropId)
+  if (!keep || !drop || keepId === dropId) {
+    return { ok: false, error: 'One of them is not on the list any more.' }
+  }
+  const pair = await pairOf(tournamentId, dropId)
+  const late = pair && tooLate(drop.name, pair)
+  if (late) return { ok: false, error: late }
+
+  const remaining = roster.filter((r) => r.playerId !== dropId)
+  await transact(async (tx) => {
+    if (pair) await tx.delete(teams).where(eq(teams.id, pair.teamId))
+    if (!keep.partnerWish && drop.partnerWish) {
+      await tx
+        .update(tournamentPlayers)
+        .set({
+          partnerWish: drop.partnerWish,
+          partnerPlayerId: drop.partnerPlayerId === keepId ? null : drop.partnerPlayerId,
+        })
+        .where(eq(tournamentPlayers.id, keep.tpId))
+    }
+    await tx
+      .update(tournamentPlayers)
+      .set({ partnerPlayerId: keepId })
+      .where(
+        and(
+          eq(tournamentPlayers.tournamentId, tournamentId),
+          eq(tournamentPlayers.partnerPlayerId, dropId),
+          ne(tournamentPlayers.playerId, keepId),
+        ),
+      )
+    await tx.delete(tournamentPlayers).where(eq(tournamentPlayers.id, drop.tpId))
+    if (!keep.phoneKey && drop.phoneKey) {
+      // The number is unique across players, so it has to leave one row before
+      // it can land on the other.
+      await tx.update(players).set({ phone: null, phoneKey: null }).where(eq(players.id, dropId))
+      await tx
+        .update(players)
+        .set({ phone: drop.phone, phoneKey: drop.phoneKey, updatedAt: new Date() })
+        .where(eq(players.id, keepId))
+    }
+    await tx
+      .update(pendingRegistrations)
+      .set({ status: 'approved', mergedPlayerId: keepId, reviewedAt: new Date() })
+      .where(
+        and(
+          eq(pendingRegistrations.tournamentId, tournamentId),
+          eq(pendingRegistrations.mergedPlayerId, dropId),
+        ),
+      )
+    // A player row that was only ever this one mistaken sign-up goes with it.
+    const [elsewhere] = await tx
+      .select({ n: sql<number>`cast(count(*) as int)` })
+      .from(tournamentPlayers)
+      .where(eq(tournamentPlayers.playerId, dropId))
+    if (!elsewhere?.n) await tx.delete(players).where(eq(players.id, dropId))
+    await settleOrphanFlags(tx, tournamentId, remaining)
+    await bumpStreamVersion(tournamentId, tx)
+  })
+  await syncCategoryPlayers(tournamentId)
+  return { ok: true, note: `${drop.name} and ${keep.name} are one person on the list now.` }
+}
+
+/** "Different": the flag comes off and both stay. */
+export async function keepBoth(tournamentId: string, playerId: string) {
+  await db
+    .update(pendingRegistrations)
+    .set({ status: 'approved', reviewedAt: new Date() })
+    .where(
+      and(
+        eq(pendingRegistrations.tournamentId, tournamentId),
+        eq(pendingRegistrations.mergedPlayerId, playerId),
+        eq(pendingRegistrations.status, 'pending'),
+      ),
+    )
+  await bumpStreamVersion(tournamentId)
 }
