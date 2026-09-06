@@ -10,7 +10,7 @@ import { eq } from 'drizzle-orm'
 import { db } from '../src/db'
 import { courts, tournaments } from '../src/db/schema'
 import { newId } from '../src/lib/ids'
-import { sendToCourt } from '../src/server/board'
+import { clearCourt, flowTournament, sendToCourt } from '../src/server/board'
 import { createEvent, finishEvent, startEvent, syncCategoryPlayers } from '../src/server/events'
 import { submitResult } from '../src/server/scoring'
 import {
@@ -89,24 +89,32 @@ async function make(
   return tournament
 }
 
-/** Play matches in order: send the next ready one to a free court, score it. */
+/**
+ * Score matches in play order. Starting a tournament puts the first matches
+ * on court by itself, and every saved score pulls the next one on, so this
+ * only ever scores whatever is live — and sends one itself only when the
+ * flow has nothing on court.
+ */
 async function play(tournamentId: string, courtIds: string[], results: number, leaveOnCourt: number) {
   let scored = 0
-  for (let guard = 0; guard < 60 && scored < results; guard++) {
+  for (let guard = 0; guard < 80 && scored < results; guard++) {
     const all = await listMatches(tournamentId)
-    const next = all.find((m) => m.status === 'ready' && m.resultState === 'none' && m.teamAId && m.teamBId)
-    if (!next) break
-    const live = new Set(all.filter((m) => m.status === 'live').map((m) => m.courtId))
-    const court = courtIds.find((c) => !live.has(c)) ?? courtIds[0]
-    const sent = await sendToCourt(next.id, court)
-    if (!sent.ok) throw new Error(sent.error)
+    let live = all.filter((m) => m.status === 'live' && m.teamAId && m.teamBId)
+    if (!live.length) {
+      const next = all.find((m) => m.status === 'ready' && m.resultState === 'none' && m.teamAId && m.teamBId)
+      if (!next) break
+      const sent = await sendToCourt(next.id, courtIds[0])
+      if (!sent.ok) throw new Error(sent.error)
+      live = [{ ...next, status: 'live' as const }]
+    }
+    const m = live.sort((a, b) => a.roundIndex - b.roundIndex || a.seq - b.seq)[0]
     const gs = SCORES[scored % SCORES.length].map(([scoreA, scoreB], i) => ({ gameNo: i + 1, scoreA, scoreB }))
     const aWins = gs.filter((g) => g.scoreA > g.scoreB).length
     const res = await submitResult({
-      matchId: next.id,
+      matchId: m.id,
       games: gs,
       resultType: 'normal',
-      winnerTeamId: aWins >= 2 ? next.teamAId! : next.teamBId!,
+      winnerTeamId: aWins >= 2 ? m.teamAId! : m.teamBId!,
       submittingTeamId: null,
       attributorKey: 'user:seed',
       actorType: 'user',
@@ -114,18 +122,14 @@ async function play(tournamentId: string, courtIds: string[], results: number, l
       authoritative: true,
     })
     if (!res.ok) throw new Error(res.error)
+    // `submitResult` from a script does not flow; the app's action does.
+    await flowTournament(tournamentId)
     scored++
   }
-  // Then put the next matches on court and leave them there.
-  for (let i = 0; i < leaveOnCourt; i++) {
-    const all = await listMatches(tournamentId)
-    const live = new Set(all.filter((m) => m.status === 'live').map((m) => m.courtId))
-    const court = courtIds.find((c) => !live.has(c))
-    const next = all.find((m) => m.status === 'ready' && m.resultState === 'none' && m.teamAId && m.teamBId)
-    if (!court || !next) break
-    const sent = await sendToCourt(next.id, court)
-    if (!sent.ok) throw new Error(sent.error)
-  }
+  // Leave the courts as asked: the flow fills them; clear the rest.
+  const all = await listMatches(tournamentId)
+  const live = all.filter((m) => m.status === 'live')
+  for (const m of live.slice(leaveOnCourt)) await clearCourt(m.id)
   return scored
 }
 
