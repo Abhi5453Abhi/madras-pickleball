@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { desc, isNull } from 'drizzle-orm'
 import { db } from '@/db'
 import { tournaments } from '@/db/schema'
@@ -23,15 +24,9 @@ export default async function AdminHome() {
             Start a tournament and you&apos;ll get a share link, a court board and a QR card for
             each court.
           </p>
-          <div className="flex flex-wrap gap-2">
-            <Button disabled>Start a tournament</Button>
-            <Button variant="secondary" disabled>
-              Try it with sample data
-            </Button>
-          </div>
-          <p className="text-xs text-muted">
-            Being built now — roster, categories and pairing land next.
-          </p>
+          <Link href="/admin/quick">
+            <Button>Start a tournament</Button>
+          </Link>
         </Card>
         <p className="px-1 text-xs text-muted">Signed in as {user.username}</p>
       </div>
@@ -40,9 +35,15 @@ export default async function AdminHome() {
 
   return (
     <div className="flex flex-col gap-3">
-      <h1 className="text-xl font-bold text-ink">Tournaments</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold text-ink">Tournaments</h1>
+        <Link href="/admin/quick">
+          <Button className="tap px-4 text-sm">New</Button>
+        </Link>
+      </div>
       {list.map((t) => (
-          <Card key={t.id} className="flex items-center gap-3">
+        <Link key={t.id} href={`/admin/t/${t.slug}`}>
+          <Card className="flex items-center gap-3">
             <StatusDot state={t.status === 'live' ? 'live' : t.status === 'completed' ? 'done' : 'waiting'} />
             <div className="min-w-0">
               <p className="truncate font-semibold text-ink">{t.name}</p>
@@ -51,6 +52,7 @@ export default async function AdminHome() {
               </p>
             </div>
           </Card>
+        </Link>
       ))}
     </div>
   )
