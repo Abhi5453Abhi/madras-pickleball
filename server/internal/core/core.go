@@ -184,23 +184,51 @@ func CheckAllowed(ctx context.Context, q Querier, now time.Time, kind, key strin
 }
 
 // RecordAttempt writes one try. A success also clears the key's failures, so
-// a right PIN after four wrong ones starts the count over.
+// a right PIN after four wrong ones starts the count over. Failures older
+// than a day are swept on the way past, so the table never grows.
 func RecordAttempt(ctx context.Context, q Querier, kind, key string, succeeded bool) error {
 	if succeeded {
 		_, err := q.ExecContext(ctx, `delete from attempts where kind = $1 and key = $2`, kind, key)
 		return err
 	}
-	_, err := q.ExecContext(ctx,
-		`insert into attempts (id, kind, key, succeeded) values ($1, $2, $3, false)`, ids.New("att"), kind, key)
+	if _, err := q.ExecContext(ctx,
+		`insert into attempts (id, kind, key, succeeded) values ($1, $2, $3, false)`, ids.New("att"), kind, key); err != nil {
+		return err
+	}
+	_, err := q.ExecContext(ctx, `delete from attempts where at < now() - interval '1 day'`)
 	return err
+}
+
+// GlobalFailures counts failed attempts of one kind under EVERY key in the
+// window — the brake on a guesser who rotates addresses.
+func GlobalFailures(ctx context.Context, q Querier, now time.Time, kind string) (int, error) {
+	var n int
+	err := q.QueryRowContext(ctx,
+		`select count(*) from attempts where kind = $1 and succeeded = false and at >= $2`, kind, now.Add(-guardWindow)).Scan(&n)
+	return n, err
 }
 
 // ── the caller ────────────────────────────────────────────────────────────
 
-// ClientIP is the address a request came from, through the host's proxy.
+// TrustedProxyHops is how many proxies of our own sit in front of the
+// server. Cloud Run's front end APPENDS the address it saw to whatever
+// X-Forwarded-For the client sent, so the trustworthy entry is the LAST one;
+// the leftmost is whatever the caller typed. Behind an extra load balancer
+// this would be 2.
+const TrustedProxyHops = 1
+
+// ClientIP is the address a request came from, as the nearest proxy we
+// trust saw it. It keys the PIN lockout, so it must not be forgeable.
 func ClientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
+		parts := strings.Split(xff, ",")
+		i := len(parts) - TrustedProxyHops
+		if i < 0 {
+			i = 0
+		}
+		if ip := strings.TrimSpace(parts[i]); ip != "" {
+			return ip
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

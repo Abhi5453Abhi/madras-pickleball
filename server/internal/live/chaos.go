@@ -553,7 +553,7 @@ func pauseDay(ctx context.Context, d *core.Deps, in pauseIn) (noteOut, error) {
 			out = noteOut{Error: "That tournament no longer exists."}
 			return nil
 		}
-		note := strings.TrimSpace(in.Note)
+		note := clip(strings.Join(strings.Fields(in.Note), " "), 120)
 		if note == "" {
 			note = "Paused"
 		}
@@ -796,4 +796,13 @@ func registerChaos(reg *rpc.Registry, d *core.Deps) {
 
 	rpc.Register(reg, "chaos.voidMatch", rpc.Organiser,
 		func(ctx context.Context, in voidIn) (okRedirect, error) { return voidMatch(ctx, d, in) })
+}
+
+// clip keeps a free-text field to a length a screen can show.
+func clip(s string, max int) string {
+	r := []rune(s)
+	if len(r) > max {
+		return string(r[:max])
+	}
+	return s
 }

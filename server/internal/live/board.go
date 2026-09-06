@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"mpb/internal/core"
+	"mpb/internal/db"
 	"mpb/internal/engine"
 	"mpb/internal/rpc"
 	"mpb/internal/store"
@@ -611,6 +612,11 @@ func sendToCourt(ctx context.Context, tx *sql.Tx, d *core.Deps, t *store.Tournam
 		update matches set court_id = $2, status = 'live', started_at = now(),
 			version = version + 1, updated_at = now()
 		where id = $1 and status <> 'live' and result_state = 'none'`, matchID, courtID)
+	if db.IsUniqueViolation(err) {
+		// The one-live-per-court index caught a race the checks above could
+		// not see (another tournament's match landed there this instant).
+		return court.Name + " already has a match on it.", nil
+	}
 	if err != nil {
 		return "", err
 	}

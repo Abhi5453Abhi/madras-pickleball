@@ -296,6 +296,12 @@ func generateDraw(ctx context.Context, d *core.Deps, in tournamentIDIn) (generat
 		if err != nil {
 			return err
 		}
+		// Once the tournament has started its matches are on court: remaking
+		// the draw would delete them from under the players.
+		if isLocked(t) {
+			out = generateDrawOut{Error: lockedMessage}
+			return nil
+		}
 		// Remaking a draw deletes the matches; a result already in it would go
 		// with them, and no screen can explain that.
 		var played sql.NullString

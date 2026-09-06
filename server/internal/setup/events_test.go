@@ -336,7 +336,22 @@ func TestFinishAndDelete(t *testing.T) {
 		t.Fatalf("generateDraw: %+v", res)
 	}
 
+	// Only a running tournament can be finished.
 	res, err := finishEvent(h.ctx, h.Deps, tournamentIDIn{TournamentID: tourney.ID})
+	if err != nil {
+		t.Fatalf("finishEvent: %v", err)
+	}
+	if res.OK || res.Error != "Only a running tournament can be finished." {
+		t.Fatalf("finishing before the start: %+v", res)
+	}
+	if res, _ := startEvent(h.ctx, h.Deps, tournamentIDIn{TournamentID: tourney.ID}); !res.OK {
+		t.Fatalf("startEvent: %+v", res)
+	}
+	// And not twice.
+	if res, _ := startEvent(h.ctx, h.Deps, tournamentIDIn{TournamentID: tourney.ID}); res.OK || res.Error != "That tournament has already started." {
+		t.Fatalf("starting twice: %+v", res)
+	}
+	res, err = finishEvent(h.ctx, h.Deps, tournamentIDIn{TournamentID: tourney.ID})
 	if err != nil {
 		t.Fatalf("finishEvent: %v", err)
 	}

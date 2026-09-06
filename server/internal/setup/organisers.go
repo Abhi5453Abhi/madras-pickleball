@@ -154,13 +154,16 @@ func addOrganiser(ctx context.Context, d *core.Deps, in addOrganiserIn) (addOrga
 		return addOrganiserOut{}, err
 	}
 	id := ids.New("usr")
-	if _, err := d.DB.ExecContext(ctx, `
-		insert into users (id, name, username, role, pin_hash, must_change_pin)
-		values ($1, $2, $3, 'organiser', $4, true)`,
-		id, name, usernameFor(name), hash); err != nil {
-		return addOrganiserOut{}, err
-	}
-	if err := core.Audit(ctx, d.DB, actor(ctx), "organiser.add", "user", id, "", map[string]string{"name": name}); err != nil {
+	err = d.Tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			insert into users (id, name, username, role, pin_hash, must_change_pin)
+			values ($1, $2, $3, 'organiser', $4, true)`,
+			id, name, usernameFor(name), hash); err != nil {
+			return err
+		}
+		return core.Audit(ctx, tx, actor(ctx), "organiser.add", "user", id, "", map[string]string{"name": name})
+	})
+	if err != nil {
 		return addOrganiserOut{}, err
 	}
 	return addOrganiserOut{OK: true, Name: name, Pin: p}, nil
@@ -222,12 +225,12 @@ func removeOrganiser(ctx context.Context, d *core.Deps, in removeOrganiserIn) (n
 		if _, err := tx.ExecContext(ctx, `update users set active = false where id = $1`, in.UserID); err != nil {
 			return err
 		}
-		return auth.RevokeSessions(ctx, tx, in.UserID)
+		if err := auth.RevokeSessions(ctx, tx, in.UserID); err != nil {
+			return err
+		}
+		return core.Audit(ctx, tx, actor(ctx), "organiser.remove", "user", in.UserID, "", nil)
 	})
 	if err != nil {
-		return noteOut{}, err
-	}
-	if err := core.Audit(ctx, d.DB, actor(ctx), "organiser.remove", "user", in.UserID, "", nil); err != nil {
 		return noteOut{}, err
 	}
 	return note("Removed. Their PIN no longer works."), nil

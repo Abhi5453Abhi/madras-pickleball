@@ -94,9 +94,16 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
+	// Every request gets a deadline the database calls inherit, so one hung
+	// query cannot pin a connection from a five-connection pool for a minute.
+	deadline := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		mux.ServeHTTP(w, r.WithContext(ctx))
+	})
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           auth.Middleware(deps, mux),
+		Handler:           auth.Middleware(deps, deadline),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,

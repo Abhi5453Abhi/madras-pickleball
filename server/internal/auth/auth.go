@@ -23,10 +23,15 @@ import (
 const (
 	// CookieName is plain (no __Host- prefix) so the same binary works over
 	// http on a laptop; Secure is added whenever the request came in over TLS.
-	CookieName = "mpb_session"
-	sessionTTL = 14 * 24 * time.Hour
-	kindPIN    = "pin"
+	CookieName        = "mpb_session"
+	sessionTTL        = 14 * 24 * time.Hour
+	kindPIN           = "pin"
+	globalMaxFailures = 50
 )
+
+// decoyHash is verified against when the PIN is malformed, so that path
+// takes as long as a wrong PIN does.
+var decoyHash, _ = pin.Hash("000000")
 
 // Middleware reads the session cookie and puts the organiser on the context.
 // It never refuses a request itself; the registry decides what needs one.
@@ -37,42 +42,48 @@ func Middleware(d *core.Deps, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		u, err := userForToken(r.Context(), d, c.Value)
+		u, refreshed, err := userForToken(r.Context(), d, c.Value)
 		if err != nil {
 			d.Log.Error("session lookup", "err", err)
+		}
+		if refreshed {
+			// The row slid forward; the cookie's own expiry must follow it,
+			// or an all-day organiser is signed out on day fourteen anyway.
+			setCookie(w, r, c.Value, d.Now().Add(sessionTTL))
 		}
 		next.ServeHTTP(w, r.WithContext(rpc.WithUser(r.Context(), u)))
 	})
 }
 
-func userForToken(ctx context.Context, d *core.Deps, raw string) (*rpc.User, error) {
+func userForToken(ctx context.Context, d *core.Deps, raw string) (u *rpc.User, refreshed bool, err error) {
 	h := core.Sha256Hex(raw)
 	now := d.Now()
-	var u rpc.User
+	var found rpc.User
 	var expires time.Time
 	var active bool
 	var deleted sql.NullTime
-	err := d.DB.QueryRowContext(ctx, `
+	err = d.DB.QueryRowContext(ctx, `
 		select u.id, u.name, u.role, u.must_change_pin, u.active, u.deleted_at, s.expires_at
 		from sessions s join users u on u.id = s.user_id
 		where s.id_hash = $1 and s.expires_at > $2`, h, now).
-		Scan(&u.ID, &u.Name, &u.Role, &u.MustChangePin, &active, &deleted, &expires)
+		Scan(&found.ID, &found.Name, &found.Role, &found.MustChangePin, &active, &deleted, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if !active || deleted.Valid {
-		return nil, nil
+		return nil, false, nil
 	}
 	// Sliding refresh past the halfway mark, so an all-day organiser is
 	// never signed out mid-match.
 	if expires.Sub(now) < sessionTTL/2 {
 		_, _ = d.DB.ExecContext(ctx, `update sessions set expires_at = $1, last_seen_at = $2 where id_hash = $3`,
 			now.Add(sessionTTL), now, h)
+		refreshed = true
 	}
-	return &u, nil
+	return &found, refreshed, nil
 }
 
 // ── the RPCs ──────────────────────────────────────────────────────────────
@@ -128,12 +139,23 @@ func login(ctx context.Context, d *core.Deps, in loginIn) (loginOut, error) {
 	now := d.Now()
 
 	// There is no username to lock, so the count is per address: five wrong
-	// PINs in fifteen minutes and that address waits. Per address and not
-	// global, because a global count is a switch anyone on the internet could
-	// flip to lock the organiser out mid-tournament.
+	// PINs in fifteen minutes and that address waits.
 	gate, err := core.CheckAllowed(ctx, d.DB, now, kindPIN, ipKey)
 	if err != nil {
 		return loginOut{}, err
+	}
+	// And a venue-wide brake behind it: a guesser rotating addresses would
+	// otherwise get five tries per address for ever. It is a switch anyone
+	// on the internet can flip against the organiser, which is why it sits
+	// at fifty — nobody mistypes that often — and lifts by itself.
+	if gate.Allowed {
+		total, err := core.GlobalFailures(ctx, d.DB, now, kindPIN)
+		if err != nil {
+			return loginOut{}, err
+		}
+		if total >= globalMaxFailures {
+			gate = core.Allowance{Allowed: false, RetryInMinutes: 15}
+		}
 	}
 	if !gate.Allowed {
 		unit := "minutes"
@@ -144,7 +166,8 @@ func login(ctx context.Context, d *core.Deps, in loginIn) (loginOut, error) {
 	}
 
 	// A PIN that is not six digits is wrong before it is checked — and it
-	// still counts, or the shape of the input becomes a free oracle.
+	// still counts, and still costs a hash, or the shape of the input
+	// becomes a free oracle.
 	p := pin.Normalize(in.Pin)
 	var user *rpc.User
 	if p != "" {
@@ -152,6 +175,8 @@ func login(ctx context.Context, d *core.Deps, in loginIn) (loginOut, error) {
 		if err != nil {
 			return loginOut{}, err
 		}
+	} else {
+		pin.Verify(decoyHash, in.Pin)
 	}
 	if err := core.RecordAttempt(ctx, d.DB, kindPIN, ipKey, user != nil); err != nil {
 		return loginOut{}, err

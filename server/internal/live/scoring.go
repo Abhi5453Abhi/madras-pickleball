@@ -22,6 +22,14 @@ import (
 	"mpb/internal/store"
 )
 
+// A game to 21 win-by-2 never reaches three digits, and a match is at most
+// best of five; anything beyond is a typo or a wire value deciding a public
+// table (points scored is the venue's headline tiebreak).
+const (
+	maxScore = 99
+	maxGames = 5
+)
+
 // rulesForMatch is the rules a match was actually played under.
 //
 // After "Shorten what's left" the tournament says one game to 11, but a result
@@ -139,10 +147,16 @@ func normalizeResult(rules engine.ScoringRules, match *store.Match, in saveResul
 		return normalized{}, "This match is still waiting on an earlier result."
 	}
 	sides := map[string]bool{*match.TeamAID: true, *match.TeamBID: true}
+	if len(in.Games) > maxGames {
+		return normalized{}, "That's more games than a match has."
+	}
 	games := make([]engine.Game, 0, len(in.Games))
 	for _, g := range in.Games {
 		if g.ScoreA < 0 || g.ScoreB < 0 {
 			return normalized{}, "Scores can’t be negative."
+		}
+		if g.ScoreA > maxScore || g.ScoreB > maxScore {
+			return normalized{}, "That isn't a score."
 		}
 		// excludeFromDiff is never accepted from the wire: it decides the
 		// venue's headline tiebreak.
@@ -314,11 +328,19 @@ func saveResult(ctx context.Context, d *core.Deps, in saveResultIn) (saveResultO
 				out = saveResultOut{Error: refusal}
 				return nil
 			}
+			if len(in.Games) > maxGames {
+				out = saveResultOut{Error: "That's more games than a match has."}
+				return nil
+			}
 			games := make([]engine.Game, 0, len(in.Games))
 			seen := map[int]bool{}
 			for _, g := range in.Games {
 				if g.ScoreA < 0 || g.ScoreB < 0 {
 					out = saveResultOut{Error: "Scores can’t be negative."}
+					return nil
+				}
+				if g.ScoreA > maxScore || g.ScoreB > maxScore {
+					out = saveResultOut{Error: "That isn't a score."}
 					return nil
 				}
 				if seen[g.GameNo] {

@@ -677,7 +677,7 @@ func slugify(name string) string {
 }
 
 func createEvent(ctx context.Context, d *core.Deps, in createEventIn) (redirectOut, error) {
-	name := strings.TrimSpace(in.Name)
+	name := cleanText(in.Name, 60)
 	if name == "" {
 		return refuseGo("Give it a name — you can change it later."), nil
 	}
@@ -972,6 +972,12 @@ func startEvent(ctx context.Context, d *core.Deps, in tournamentIDIn) (redirectO
 		if err != nil {
 			return err
 		}
+		// A finished tournament must not come back onto the live board with
+		// its winners already recorded; a running one is already running.
+		if t.Status != "setup" {
+			out = refuseGo("That tournament has already started.")
+			return nil
+		}
 		counts, err := countMatches(ctx, tx, t.ID)
 		if err != nil {
 			return err
@@ -1019,6 +1025,10 @@ func finishEvent(ctx context.Context, d *core.Deps, in tournamentIDIn) (redirect
 		t, err := lockTournament(ctx, tx, d, in.TournamentID)
 		if err != nil {
 			return err
+		}
+		if t.Status != "live" {
+			out = refuseGo("Only a running tournament can be finished.")
+			return nil
 		}
 		counts, err := countMatches(ctx, tx, t.ID)
 		if err != nil {

@@ -28,6 +28,9 @@ func Open(url string) (*sql.DB, error) {
 	d.SetMaxOpenConns(5)
 	d.SetMaxIdleConns(2)
 	d.SetConnMaxIdleTime(5 * time.Minute)
+	// Neon's pooler and its autosuspend both like connections that are not
+	// kept for ever.
+	d.SetConnMaxLifetime(30 * time.Minute)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := d.PingContext(ctx); err != nil {
@@ -50,8 +53,10 @@ func cleanURL(raw string) string {
 	q := u.Query()
 	q.Del("channel_binding")
 	host := u.Hostname()
-	if q.Get("sslmode") == "" && host != "localhost" && host != "127.0.0.1" && host != "" {
-		q.Set("sslmode", "require")
+	// `require` encrypts but takes any certificate; a hosted database has a
+	// public CA behind it, so ask for the name on it to be checked too.
+	if mode := q.Get("sslmode"); (mode == "" || mode == "require") && host != "localhost" && host != "127.0.0.1" && host != "" {
+		q.Set("sslmode", "verify-full")
 	}
 	u.RawQuery = q.Encode()
 	return u.String()
