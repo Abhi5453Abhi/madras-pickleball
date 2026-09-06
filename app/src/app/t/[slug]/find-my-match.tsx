@@ -15,6 +15,8 @@ import { useEffect, useMemo, useState } from 'react'
 type Player = { id: string; name: string; teamIds: string[] }
 type M = {
   id: string
+  teamAId: string | null
+  teamBId: string | null
   nameA: string | null
   nameB: string | null
   playersA: string[]
@@ -31,7 +33,15 @@ type M = {
 
 const KEY = 'mpb.me'
 
-export function FindMyMatch({ players, matches }: { players: Player[]; matches: M[] }) {
+export function FindMyMatch({
+  players,
+  matches,
+  courtsInPlay,
+}: {
+  players: Player[]
+  matches: M[]
+  courtsInPlay: number
+}) {
   const [query, setQuery] = useState('')
   const [meId, setMeId] = useState<string | null>(null)
 
@@ -52,16 +62,29 @@ export function FindMyMatch({ players, matches }: { players: Player[]; matches: 
     return players.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 6)
   }, [query, players])
 
+  // By team id, never by name: a club has two Karthiks and one of them would
+  // otherwise be told to go to a court he isn't playing on.
   const mine = useMemo(() => {
     if (!me) return []
+    const mineTeams = new Set(me.teamIds)
     return matches.filter(
-      (m) => m.playersA.includes(me.name) || m.playersB.includes(me.name),
+      (m) =>
+        (m.teamAId && mineTeams.has(m.teamAId)) || (m.teamBId && mineTeams.has(m.teamBId)),
     )
   }, [me, matches])
 
   const next = mine.find((m) => m.state === 'none')
   const played = mine.filter((m) => m.state !== 'none')
-  const ahead = next ? matches.filter((m) => m.state === 'none' && m.queuePosition < next.queuePosition).length : 0
+
+  // Matches ahead of yours are spread over every court that's running, so the
+  // count of them is not the number of matches you wait through. Dividing by
+  // the courts in play is still an estimate, and it is labelled as one.
+  const aheadTotal = next
+    ? matches.filter(
+        (m) => m.state === 'none' && m.status !== 'live' && m.queuePosition < next.queuePosition,
+      ).length
+    : 0
+  const ahead = Math.ceil(aheadTotal / Math.max(1, courtsInPlay))
 
   function pick(p: Player) {
     setMeId(p.id)
@@ -101,7 +124,7 @@ export function FindMyMatch({ players, matches }: { players: Player[]; matches: 
                 ? `You're on ${next.courtName ?? 'court'} now`
                 : ahead === 0
                   ? 'You’re next on'
-                  : `You’re ${ahead} match${ahead === 1 ? '' : 'es'} away`}
+                  : `About ${ahead} match${ahead === 1 ? '' : 'es'} away`}
             </p>
             <p className="mt-1 text-row text-text-2">
               {next.nameA} <span className="text-text-3">v</span> {next.nameB}

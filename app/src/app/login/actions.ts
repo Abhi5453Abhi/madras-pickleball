@@ -48,7 +48,15 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
   })
 
   // redirect() throws, so it must be the last thing and outside any try block.
-  redirect(row.mustChangePassword ? '/admin/account?first=1' : '/admin')
+  // An umpire has no admin area to land in; sending them there and bouncing
+  // them straight back reads as a broken login.
+  redirect(
+    row.mustChangePassword
+      ? '/admin/account?first=1'
+      : row.role === 'umpire'
+        ? '/umpire'
+        : '/admin',
+  )
 }
 
 export async function logout() {

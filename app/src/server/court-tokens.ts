@@ -3,9 +3,10 @@ import { and, desc, eq, gt, inArray, isNotNull, or, sql } from 'drizzle-orm'
 import { cookies, headers } from 'next/headers'
 import { db } from '@/db'
 import { courtSessions, courtTokens, courts, matches } from '@/db/schema'
-import { newCourtToken, sha256Hex, newSessionToken, hashIp } from '@/lib/crypto'
+import { newCourtToken, normalizeCrockford, sha256Hex, newSessionToken, hashIp } from '@/lib/crypto'
 import { newId } from '@/lib/ids'
 import { checkTokenLookupAllowed, recordTokenAttempt } from '@/lib/rate-limit'
+import { projectedState } from './scoring'
 
 /**
  * Court access — SPEC A1.
@@ -83,7 +84,7 @@ export async function exchangeToken(raw: string): Promise<ExchangeResult> {
   const gate = await checkTokenLookupAllowed(ipHash)
   if (!gate.allowed) return { ok: false, reason: 'rate_limited' }
 
-  const normalized = raw.trim().toUpperCase().replace(/\s/g, '')
+  const normalized = normalizeCrockford(raw)
   const hash = sha256Hex(normalized)
 
   const [token] = await db
@@ -198,5 +199,9 @@ export async function scoreableMatches(ctx: CourtSessionContext) {
     )
     .orderBy(desc(matches.startedAt))
 
-  return rows
+  // A result that crossed the ten-minute mark is FINAL, even though nothing
+  // wrote `final` to the row. Filtering on the stored state let a pair rescan
+  // the card 45 minutes later and pull a settled, already-advanced result back
+  // into "under review" — deleting their own loss from the public table.
+  return rows.filter((m) => projectedState(m) !== 'final')
 }

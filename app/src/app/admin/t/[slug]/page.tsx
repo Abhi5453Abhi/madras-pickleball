@@ -17,7 +17,7 @@ import {
 } from '@/server/tournaments'
 
 export default async function TournamentPage(props: PageProps<'/admin/t/[slug]'>) {
-  await requireUser('umpire')
+  await requireUser('admin')
   const { slug } = await props.params
 
   const tournament = await getTournamentBySlug(slug)
@@ -61,6 +61,12 @@ export default async function TournamentPage(props: PageProps<'/admin/t/[slug]'>
             className="tap inline-flex items-center rounded-control border border-line-strong bg-paper px-4 text-[17px] font-semibold text-text"
           >
             Court cards
+          </Link>
+          <Link
+            href={`/admin/t/${tournament.slug}/registrations`}
+            className="tap inline-flex items-center rounded-control border border-line-strong bg-paper px-4 text-[17px] font-semibold text-text"
+          >
+            Sign-ups
           </Link>
           <Link
             href={`/t/${tournament.slug}`}

@@ -9,7 +9,7 @@ import { ensureReady } from '@/server/bootstrap'
 
 export default async function AdminHome() {
   await ensureReady()
-  await requireUser('umpire')
+  await requireUser('admin')
   const list = await db
     .select()
     .from(tournaments)

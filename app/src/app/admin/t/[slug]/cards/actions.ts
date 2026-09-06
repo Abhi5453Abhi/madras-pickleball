@@ -1,6 +1,7 @@
 'use server'
 
 import { requireUser } from '@/lib/auth'
+import { endOfVenueDay } from '@/lib/time'
 import { recordAudit } from '@/lib/audit'
 import { issueCourtTokens, revokeAllCourtTokens } from '@/server/court-tokens'
 import { getTournamentBySlug } from '@/server/tournaments'
@@ -21,9 +22,11 @@ export async function makeCards(_prev: CardsState, formData: FormData): Promise<
   const tournament = await getTournamentBySlug(slug)
   if (!tournament) return { cards: [], error: 'That tournament no longer exists.' }
 
-  const expires = new Date(tournament.endDate)
-  expires.setDate(expires.getDate() + 1)
-  expires.setHours(23, 59, 59, 0)
+  // The card dies at the end of the day AFTER the tournament, in Chennai.
+  // setHours() here was the server's midnight, which on a UTC host is 05:29 the
+  // next morning at the venue — a printed card that outlives the day it names.
+  const dayAfter = new Date(new Date(tournament.endDate).getTime() + 24 * 60 * 60 * 1000)
+  const expires = endOfVenueDay(dayAfter)
 
   const issued = await issueCourtTokens(tournament.id, expires)
   const colours = new Map(

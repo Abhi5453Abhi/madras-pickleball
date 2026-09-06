@@ -1,8 +1,18 @@
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm'
 import { db } from '@/db'
-import { categories, courts, games, matches, players, teamPlayers, teams, tournaments } from '@/db/schema'
+import {
+  categories,
+  courtClosures,
+  courts,
+  games,
+  matches,
+  players,
+  teamPlayers,
+  teams,
+  tournaments,
+} from '@/db/schema'
 import { standings } from '@/lib/standings'
-import { projectedState } from './scoring'
+import { isProvisional, projectedState } from './scoring'
 
 /**
  * Public reads — SPEC A8/A9.
@@ -14,6 +24,13 @@ import { projectedState } from './scoring'
 
 export type PublicMatch = {
   id: string
+  /**
+   * Identity for "Find my match". Matching a player to their match by NAME
+   * puts both Karthiks in the same fixture; a team id is the only thing that
+   * actually identifies a side.
+   */
+  teamAId: string | null
+  teamBId: string | null
   categoryName: string
   roundName: string | null
   nameA: string | null
@@ -30,6 +47,44 @@ export type PublicMatch = {
   winnerSide: 'A' | 'B' | null
   scoreLine: string | null
   startedAt: Date | null
+}
+
+/**
+ * The number the page renders with and the number the poll endpoint returns
+ * MUST be computed identically, or every spectator's phone hard-refreshes on
+ * every tick — five seconds apart, all day, for forty people.
+ *
+ * The second term is not a clock. It counts results that have already crossed
+ * the auto-confirm boundary: that transition writes nothing to the database, so
+ * without it the day's last result stays labelled "provisional" on every phone
+ * forever. It moves once per result, not once per minute.
+ */
+export function composeVersion(
+  streamVersion: number | string,
+  rows: Array<{ resultState: string; reportedAt: Date | null }>,
+): number {
+  let settled = 0
+  for (const r of rows) {
+    if (r.resultState === 'reported' && !isProvisional(r)) settled++
+  }
+  return Number(streamVersion) + settled
+}
+
+/** What the poll endpoint answers. Unpublished tournaments are not public. */
+export async function publicVersion(slug: string): Promise<number | null> {
+  const [row] = await db
+    .select({ id: tournaments.id, v: tournaments.streamVersion, publishedAt: tournaments.publishedAt })
+    .from(tournaments)
+    .where(and(eq(tournaments.slug, slug), isNull(tournaments.deletedAt)))
+    .limit(1)
+  if (!row || !row.publishedAt) return null
+
+  const rows = await db
+    .select({ resultState: matches.resultState, reportedAt: matches.reportedAt })
+    .from(matches)
+    .where(and(eq(matches.tournamentId, row.id), eq(matches.resultState, 'reported')))
+
+  return composeVersion(row.v, rows)
 }
 
 export async function publicTournament(slug: string) {
@@ -102,6 +157,8 @@ export async function publicTournament(slug: string) {
     const showScore = state === 'final' || state === 'reported'
     return {
       id: r.m.id,
+      teamAId: r.m.teamAId,
+      teamBId: r.m.teamBId,
       categoryName: r.categoryName,
       roundName: r.m.roundName,
       nameA: r.m.teamAId ? (teamName.get(r.m.teamAId) ?? null) : null,
@@ -145,6 +202,7 @@ export async function publicTournament(slug: string) {
           scoreA: g.scoreA,
           scoreB: g.scoreB,
           excludeFromDiff: g.excludeFromDiff,
+          timeCapped: g.timeCapped,
         })),
       }))
     return {
@@ -164,8 +222,27 @@ export async function publicTournament(slug: string) {
     upNext: allMatches.filter((m) => m.status === 'ready' && m.state === 'none').slice(0, 6),
     results: allMatches.filter((m) => m.state === 'final' || m.state === 'reported'),
     tables,
-    streamVersion: Number(tournament.streamVersion),
+    courtsInPlay: await openCourtCount(tournament.id),
+    streamVersion: composeVersion(
+      tournament.streamVersion,
+      matchRows.map((r) => ({ resultState: r.m.resultState, reportedAt: r.m.reportedAt })),
+    ),
   }
+}
+
+/**
+ * How many courts are actually running. "You're 5 matches away" counted every
+ * unplayed match in the venue, including the ones that will run beside yours on
+ * the other three courts.
+ */
+async function openCourtCount(tournamentId: string): Promise<number> {
+  const all = await db.select({ id: courts.id }).from(courts).where(eq(courts.active, true))
+  const closed = await db
+    .select({ courtId: courtClosures.courtId })
+    .from(courtClosures)
+    .where(and(eq(courtClosures.tournamentId, tournamentId), isNull(courtClosures.until)))
+  const closedIds = new Set(closed.map((c) => c.courtId))
+  return Math.max(1, all.filter((c) => !closedIds.has(c.id)).length)
 }
 
 /** Everyone in this tournament, for "Find my match". */

@@ -17,6 +17,9 @@ export function CourtEntry(props: Omit<ScoreEntryProps, 'onSubmit' | 'authoritat
           resultType: payload.resultType,
           winnerTeamId: payload.winnerTeamId,
           retiredTeamId: payload.retiredTeamId,
+          // Dropping this was silently inflating the points-scored column with
+          // games nobody played — the exact number the venue's tiebreak turns on.
+          excludeFromDiff: payload.excludeFromDiff,
           submittingTeamId: payload.submittingTeamId,
         })
         if (res.ok) router.refresh()

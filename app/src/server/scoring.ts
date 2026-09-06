@@ -1,6 +1,6 @@
 import 'server-only'
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
-import { db } from '@/db'
+import { db, transact, type Tx } from '@/db'
 import {
   categories,
   games,
@@ -19,7 +19,9 @@ import { recordAudit } from '@/lib/audit'
 import {
   DEFAULT_RULES,
   matchOutcome,
+  retirementGames,
   validateGames,
+  walkoverGames,
   type GameScore,
   type ScoringRules,
 } from '@/lib/rules'
@@ -130,6 +132,7 @@ export function projectedState(match: { resultState: string; reportedAt: Date | 
 }
 
 async function writeLedger(
+  tx: Tx,
   matchId: string,
   gameScores: GameScore[],
   opts: {
@@ -140,12 +143,12 @@ async function writeLedger(
     retiredTeamId?: string | null
   },
 ) {
-  await db.delete(games).where(eq(games.matchId, matchId))
+  await tx.delete(games).where(eq(games.matchId, matchId))
   const exclude = new Set(opts.excludeFromDiff ?? [])
   const walkover = opts.resultType === 'walkover'
 
   if (gameScores.length) {
-    await db.insert(games).values(
+    await tx.insert(games).values(
       gameScores.map((g) => ({
         id: newId('gm'),
         matchId,
@@ -169,7 +172,7 @@ async function writeLedger(
     else if (g.scoreB > g.scoreA) gamesWonB++
   }
 
-  await db
+  await tx
     .update(matches)
     .set({
       gamesWonA,
@@ -187,6 +190,102 @@ async function writeLedger(
       updatedAt: new Date(),
     })
     .where(eq(matches.id, matchId))
+}
+
+export type NormalizedResult = {
+  games: GameScore[]
+  winnerTeamId: string | null
+  retiredTeamId: string | null
+  excludeFromDiff: number[]
+}
+
+/**
+ * Turn what a screen sent into what actually gets stored — SPEC A5/A6.
+ *
+ * Nothing structural is taken on trust. The winner is DERIVED from the games,
+ * a walkover's scoreline is GENERATED rather than accepted, and which games sit
+ * out of point difference is worked out here rather than sent by the client:
+ * that field decides the venue's headline tiebreak, so a phone must not be able
+ * to set it. Two screens sending the same no-show used to store two different
+ * ledgers; now there is one answer.
+ */
+export function normalizeResult(
+  rules: ScoringRules,
+  match: { teamAId: string | null; teamBId: string | null },
+  input: {
+    games: GameScore[]
+    resultType: ResultType
+    winnerTeamId: string | null
+    retiredTeamId?: string | null
+  },
+): { ok: true; value: NormalizedResult } | { ok: false; error: string } {
+  const sides = [match.teamAId, match.teamBId].filter(Boolean) as string[]
+  if (sides.length !== 2) {
+    return { ok: false, error: 'This match is still waiting on an earlier result.' }
+  }
+  if (input.games.some((g) => g.scoreA < 0 || g.scoreB < 0)) {
+    return { ok: false, error: 'Scores can\u2019t be negative.' }
+  }
+
+  if (input.resultType === 'walkover') {
+    const winnerTeamId = input.winnerTeamId
+    if (!winnerTeamId || !sides.includes(winnerTeamId)) {
+      return { ok: false, error: 'Say which side went through.' }
+    }
+    const base = walkoverGames(rules)
+    const winnerIsA = winnerTeamId === match.teamAId
+    const gs = base.map((g) =>
+      winnerIsA ? g : { ...g, scoreA: g.scoreB, scoreB: g.scoreA },
+    )
+    return {
+      ok: true,
+      value: {
+        games: gs,
+        winnerTeamId,
+        retiredTeamId: null,
+        // A no-show is on the record and in no difference column at all.
+        excludeFromDiff: gs.map((g) => g.gameNo),
+      },
+    }
+  }
+
+  if (input.resultType === 'retired') {
+    const retiredTeamId = input.retiredTeamId
+    if (!retiredTeamId || !sides.includes(retiredTeamId)) {
+      return { ok: false, error: 'Say which side couldn\u2019t carry on.' }
+    }
+    const retiringSide: 'A' | 'B' = retiredTeamId === match.teamAId ? 'A' : 'B'
+    const played = [...input.games].sort((a, b) => a.gameNo - b.gameNo)
+    const { games: gs, excludeFromDiff } = retirementGames(rules, played, retiringSide)
+    return {
+      ok: true,
+      value: {
+        games: gs,
+        winnerTeamId: retiringSide === 'A' ? match.teamBId : match.teamAId,
+        retiredTeamId,
+        excludeFromDiff,
+      },
+    }
+  }
+
+  const v = validateGames(rules, input.games)
+  if (!v.ok) return { ok: false, error: v.reason }
+  const outcome = matchOutcome(rules, input.games)
+  const winnerTeamId =
+    outcome.winner === 'A' ? match.teamAId : outcome.winner === 'B' ? match.teamBId : null
+  if (!winnerTeamId) return { ok: false, error: 'Those games don\u2019t decide the match.' }
+
+  return {
+    ok: true,
+    value: {
+      games: input.games,
+      winnerTeamId,
+      retiredTeamId: null,
+      // A game stopped by the horn keeps its points and sits out of point
+      // difference; writeLedger flags it from `timeCapped`.
+      excludeFromDiff: [],
+    },
+  }
 }
 
 export type SubmitInput = {
@@ -213,127 +312,226 @@ export type SubmitResult =
 export async function submitResult(input: SubmitInput): Promise<SubmitResult> {
   const loaded = await getMatchForScoring(input.matchId)
   if (!loaded) return { ok: false, error: 'That match no longer exists.' }
-  const { match, rules } = loaded
+  const { rules } = loaded
 
-  if (match.resultState === 'final' && !input.authoritative) {
-    // Never silently discarded — the admin should be able to see that someone
-    // tried to submit at 15:04 (SPEC A7).
-    await db.insert(syncConflicts).values({
-      id: newId('sc'),
-      matchId: match.id,
-      deviceId: input.deviceId ?? null,
-      payload: { games: input.games, resultType: input.resultType },
-      reason: 'submitted after the result was final',
-    })
-    return { ok: false, error: 'That result is already final. Tell the organiser.' }
+  // Everything structural is derived server-side: the winner from the games, a
+  // walkover's scoreline generated rather than accepted, and which games sit
+  // out of point difference worked out here. A phone must not be able to set
+  // the field that decides the venue's headline tiebreak.
+  const norm = normalizeResult(rules, loaded.match, input)
+  if (!norm.ok) {
+    // An organiser standing on the court can record a score the rules engine
+    // doesn't recognise — a game the pair played to an informal cap, a horn
+    // that went early. They are the authority; the engine is the default.
+    if (!input.authoritative || input.resultType !== 'normal') {
+      return { ok: false, error: norm.error }
+    }
   }
 
-  if (input.resultType === 'normal') {
-    const v = validateGames(rules, input.games)
-    if (!v.ok && !input.authoritative) return { ok: false, error: v.reason }
+  const value: NormalizedResult = norm.ok
+    ? norm.value
+    : {
+        games: input.games,
+        winnerTeamId: input.winnerTeamId,
+        retiredTeamId: null,
+        excludeFromDiff: [],
+      }
+
+  if (!norm.ok) {
+    const sides = [loaded.match.teamAId, loaded.match.teamBId]
+    if (!value.winnerTeamId || !sides.includes(value.winnerTeamId)) {
+      return { ok: false, error: norm.error }
+    }
+    // A duplicate game number would break the ledger halfway through, whoever
+    // sends it.
+    const nos = new Set<number>()
+    for (const g of value.games) {
+      if (nos.has(g.gameNo)) return { ok: false, error: `Game ${g.gameNo} is in there twice.` }
+      nos.add(g.gameNo)
+    }
   }
 
   const digest = normalizedDigest({
     resultType: input.resultType,
-    winnerTeamId: input.winnerTeamId,
-    games: input.games,
+    winnerTeamId: value.winnerTeamId,
+    games: value.games,
   })
 
-  // One live submission per source, enforced by a unique index rather than by
-  // app logic. A second submission from the same source supersedes; it never
-  // disputes with itself.
-  await db
-    .update(resultSubmissions)
-    .set({ status: 'superseded' })
-    .where(
-      and(
-        eq(resultSubmissions.matchId, match.id),
-        eq(resultSubmissions.attributorKey, input.attributorKey),
-        eq(resultSubmissions.status, 'active'),
-      ),
-    )
+  try {
+    return await transact(async (tx) => {
+      // Lock the match row for the length of the write. Two phones submitting
+      // conflicting scores half a second apart used to interleave: the second
+      // one wrote `disputed`, the first one's later write put it back to
+      // `reported`, and the disagreement was silently thrown away.
+      const [match] = await tx
+        .select()
+        .from(matches)
+        .where(eq(matches.id, input.matchId))
+        .limit(1)
+        .for('update')
+      if (!match) return { ok: false as const, error: 'That match no longer exists.' }
 
-  const submissionId = newId('sub')
-  await db.insert(resultSubmissions).values({
-    id: submissionId,
-    matchId: match.id,
-    attributorKey: input.attributorKey,
-    actorType: input.actorType,
-    userId: input.userId ?? null,
-    deviceId: input.deviceId ?? null,
-    submittingTeamId: input.submittingTeamId,
-    games: input.games,
-    resultType: input.resultType,
-    retiredTeamId: input.retiredTeamId ?? null,
-    winnerTeamId: input.winnerTeamId,
-    normalizedDigest: digest,
-    clientEventId: input.clientEventId,
-  })
+      // Projected, not stored: a result that auto-confirmed at the ten-minute
+      // mark is closed even though nothing has physically written `final` yet.
+      if (projectedState(match) === 'final' && !input.authoritative) {
+        // Never silently discarded — the admin should be able to see that
+        // someone tried to submit at 15:04 (SPEC A7).
+        await tx.insert(syncConflicts).values({
+          id: newId('sc'),
+          matchId: match.id,
+          deviceId: input.deviceId ?? null,
+          payload: { games: input.games, resultType: input.resultType },
+          reason: 'submitted after the result was final',
+        })
+        return { ok: false as const, error: 'That result is already final. Tell the organiser.' }
+      }
 
-  const others = await db
-    .select()
+      // One live submission per source, enforced by a unique index rather than
+      // by app logic. A second submission from the same source supersedes; it
+      // never disputes with itself.
+      await tx
+        .update(resultSubmissions)
+        .set({ status: 'superseded' })
+        .where(
+          and(
+            eq(resultSubmissions.matchId, match.id),
+            eq(resultSubmissions.attributorKey, input.attributorKey),
+            eq(resultSubmissions.status, 'active'),
+          ),
+        )
+
+      const submissionId = newId('sub')
+      await tx.insert(resultSubmissions).values({
+        id: submissionId,
+        matchId: match.id,
+        attributorKey: input.attributorKey,
+        actorType: input.actorType,
+        userId: input.userId ?? null,
+        deviceId: input.deviceId ?? null,
+        submittingTeamId: input.submittingTeamId,
+        games: value.games,
+        resultType: input.resultType,
+        retiredTeamId: value.retiredTeamId,
+        winnerTeamId: value.winnerTeamId,
+        normalizedDigest: digest,
+        clientEventId: input.clientEventId,
+      })
+
+      const others = await tx
+        .select()
+        .from(resultSubmissions)
+        .where(
+          and(
+            eq(resultSubmissions.matchId, match.id),
+            eq(resultSubmissions.status, 'active'),
+            sql`${resultSubmissions.attributorKey} <> ${input.attributorKey}`,
+          ),
+        )
+
+      const agreeing = others.find(
+        (o) =>
+          o.normalizedDigest === digest &&
+          // Independence needs a different source AND a declared opposite side
+          // — two members of one team on two phones are not two sides, and a
+          // submission that declares no side is a duplicate rather than
+          // agreement.
+          !!o.submittingTeamId &&
+          !!input.submittingTeamId &&
+          o.submittingTeamId !== input.submittingTeamId,
+      )
+      const disagreeing = others.find((o) => o.normalizedDigest !== digest)
+
+      let state: 'reported' | 'final' | 'disputed' = 'reported'
+      if (input.authoritative) state = 'final'
+      // A disputed match stays disputed until an organiser rules on it: a third
+      // submission that happens to agree with one side must not quietly clear it.
+      else if (match.resultState === 'disputed') state = 'disputed'
+      else if (agreeing) state = 'final'
+      else if (disagreeing) state = 'disputed'
+
+      // A DISPUTED result does not get to overwrite the ledger. Whoever
+      // submitted last used to own `winner_team_id` and the game rows while the
+      // match sat "under review" — so the stored answer was the version the
+      // argument was about. Both versions live in `result_submissions`, which
+      // is what the organiser's Use-this-one screen reads.
+      if (state !== 'disputed') {
+        await writeLedger(tx, match.id, value.games, {
+          resultType: input.resultType,
+          winnerTeamId: value.winnerTeamId,
+          retiredTeamId: value.retiredTeamId,
+          excludeFromDiff: value.excludeFromDiff,
+          provisional: state !== 'final',
+        })
+      }
+
+      // The ten-minute clock runs from THIS score, not from whatever was
+      // reported first. Otherwise a device could report something plausible at
+      // 14:00, replace it at 14:09:50, and give the other pair ten seconds of
+      // the window the public page promises them.
+      const scoreChanged = match.resultState === 'none' || digest !== (await lastDigest(tx, match.id, submissionId))
+      const reportedAt = state === 'reported' && scoreChanged ? new Date() : (match.reportedAt ?? new Date())
+
+      await tx
+        .update(matches)
+        .set({
+          resultState: state,
+          reportedAt,
+          confirmedAt: state === 'final' ? new Date() : null,
+          confirmedVia: state === 'final' ? (input.authoritative ? 'admin' : 'agreement') : null,
+          disputeOpenedAt: state === 'disputed' ? new Date() : match.disputeOpenedAt,
+          updatedAt: new Date(),
+        })
+        .where(eq(matches.id, match.id))
+
+      if (agreeing) {
+        await tx.insert(matchConfirmations).values({
+          id: newId('cf'),
+          matchId: match.id,
+          submissionId: agreeing.id,
+          attributorKey: input.attributorKey,
+          agreedForTeamId: input.submittingTeamId,
+          digest,
+          // Two phones at the net post are two phones, not two witnesses: the
+          // same person can open the QR twice. Calling this `high` overstated
+          // what the record actually knows. An umpire who typed a PIN is a
+          // different matter.
+          confidence: input.actorType === 'umpire_pin' ? 'high' : 'normal',
+          deviceId: input.deviceId ?? null,
+        })
+      }
+
+      return { ok: true as const, state, categoryId: match.categoryId, tournamentId: match.tournamentId }
+    }).then(async (res) => {
+      if (!res.ok) return res
+      // A disputed match blocks advancement; anything else propagates. Both of
+      // these are outside the transaction on purpose: they touch other matches
+      // and must not hold the row lock while they do it.
+      if (res.state !== 'disputed') await resolveSlotsFor(res.categoryId)
+      await bumpStreamVersion(res.tournamentId)
+      return { ok: true as const, state: res.state }
+    })
+  } catch (e) {
+    // The unique index on (match, game_no) and the winner CHECK constraint are
+    // the last line of defence. They must read as a sentence, not a 500.
+    console.error('submitResult', e)
+    return { ok: false, error: 'That score didn’t save. Check it and try again.' }
+  }
+}
+
+/** The digest of the submission this one replaced, if any. */
+async function lastDigest(tx: Tx, matchId: string, exceptId: string) {
+  const [row] = await tx
+    .select({ digest: resultSubmissions.normalizedDigest })
     .from(resultSubmissions)
     .where(
       and(
-        eq(resultSubmissions.matchId, match.id),
-        eq(resultSubmissions.status, 'active'),
-        sql`${resultSubmissions.attributorKey} <> ${input.attributorKey}`,
+        eq(resultSubmissions.matchId, matchId),
+        sql`${resultSubmissions.id} <> ${exceptId}`,
       ),
     )
-
-  const agreeing = others.find(
-    (o) =>
-      o.normalizedDigest === digest &&
-      // Independence needs a different source AND a different declared side —
-      // two members of one team on two phones are not two sides.
-      (!o.submittingTeamId ||
-        !input.submittingTeamId ||
-        o.submittingTeamId !== input.submittingTeamId),
-  )
-  const disagreeing = others.find((o) => o.normalizedDigest !== digest)
-
-  let state: 'reported' | 'final' | 'disputed' = 'reported'
-  if (input.authoritative || agreeing) state = 'final'
-  else if (disagreeing) state = 'disputed'
-
-  await writeLedger(match.id, input.games, {
-    resultType: input.resultType,
-    winnerTeamId: input.winnerTeamId,
-    retiredTeamId: input.retiredTeamId ?? null,
-    excludeFromDiff: input.excludeFromDiff,
-    provisional: state !== 'final',
-  })
-
-  await db
-    .update(matches)
-    .set({
-      resultState: state,
-      reportedAt: match.reportedAt ?? new Date(),
-      confirmedAt: state === 'final' ? new Date() : null,
-      confirmedVia: state === 'final' ? (input.authoritative ? 'admin' : 'agreement') : null,
-      disputeOpenedAt: state === 'disputed' ? new Date() : null,
-      updatedAt: new Date(),
-    })
-    .where(eq(matches.id, match.id))
-
-  if (agreeing) {
-    await db.insert(matchConfirmations).values({
-      id: newId('cf'),
-      matchId: match.id,
-      submissionId: agreeing.id,
-      attributorKey: input.attributorKey,
-      agreedForTeamId: input.submittingTeamId,
-      digest,
-      confidence: 'normal',
-      deviceId: input.deviceId ?? null,
-    })
-  }
-
-  // A disputed match blocks advancement; anything else propagates.
-  if (state !== 'disputed') await resolveSlotsFor(match.categoryId)
-  await bumpStreamVersion(match.tournamentId)
-
-  return { ok: true, state }
+    .orderBy(sql`${resultSubmissions.createdAt} desc`)
+    .limit(1)
+  return row?.digest ?? null
 }
 
 /**
@@ -349,7 +547,14 @@ export async function confirmOnSameDevice(input: {
 }) {
   const loaded = await getMatchForScoring(input.matchId)
   if (!loaded) return { ok: false as const, error: 'That match no longer exists.' }
-  const sub = loaded.submissions[0]
+  // Projected, not stored: ten minutes after the report this is already final
+  // everywhere the public can see it.
+  if (projectedState(loaded.match) !== 'reported') {
+    return { ok: false as const, error: 'There is nothing waiting to be agreed here.' }
+  }
+  const sub = [...loaded.submissions].sort(
+    (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+  )[0]
   if (!sub) return { ok: false as const, error: 'There is no score to agree with yet.' }
 
   await db.insert(matchConfirmations).values({
@@ -383,7 +588,21 @@ export async function confirmOnSameDevice(input: {
 /** "Not right" from the losing side. Blocks advancement until an organiser rules. */
 export async function raiseDispute(matchId: string, note?: string) {
   const loaded = await getMatchForScoring(matchId)
-  if (!loaded) return
+  if (!loaded) return { ok: false as const, error: 'That match no longer exists.' }
+  if (projectedState(loaded.match) !== 'reported') {
+    // Never silently dropped: the organiser should be able to see that someone
+    // tried to dispute a settled result at 14:45 (SPEC A1/A7).
+    await db.insert(syncConflicts).values({
+      id: newId('sc'),
+      matchId,
+      payload: { note: note ?? null },
+      reason: 'disputed after the result was already settled',
+    })
+    return {
+      ok: false as const,
+      error: 'That result is already settled. Tell the organiser if it’s wrong.',
+    }
+  }
   await db
     .update(matches)
     .set({ resultState: 'disputed', disputeOpenedAt: new Date(), updatedAt: new Date() })
@@ -395,6 +614,7 @@ export async function raiseDispute(matchId: string, note?: string) {
     reason: 'disputed at the net',
   })
   await bumpStreamVersion(loaded.match.tournamentId)
+  return { ok: true as const }
 }
 
 /** Confirms everything sitting in `reported` — the admin's batch action. */
@@ -476,6 +696,7 @@ export async function resolveSlotsFor(categoryId: string) {
             scoreA: g.scoreA,
             scoreB: g.scoreB,
             excludeFromDiff: g.excludeFromDiff,
+            timeCapped: g.timeCapped,
           })),
       }))
     rankedByGroup.set(
@@ -485,7 +706,6 @@ export async function resolveSlotsFor(categoryId: string) {
   }
 
   for (const slot of slots) {
-    if (slot.resolvedTeamId) continue
     let teamId: string | null = null
 
     if (slot.sourceType === 'winner_of' && slot.sourceMatchId) {
@@ -495,14 +715,21 @@ export async function resolveSlotsFor(categoryId: string) {
       }
     } else if (slot.sourceType === 'loser_of' && slot.sourceMatchId) {
       const src = byId.get(slot.sourceMatchId)
-      if (src && src.winnerTeamId) {
+      if (src && src.winnerTeamId && (src.resultState === 'final' || src.resultState === 'reported')) {
         teamId = src.winnerTeamId === src.teamAId ? src.teamBId : src.teamAId
       }
     } else if (slot.sourceType === 'group_rank' && slot.sourceGroupId && slot.sourceRank) {
       teamId = rankedByGroup.get(slot.sourceGroupId)?.[slot.sourceRank - 1] ?? null
     }
 
-    if (!teamId) continue
+    if (!teamId || teamId === slot.resolvedTeamId) continue
+
+    // A correction upstream re-fills the slot — but never under a match that
+    // has already started. Naming the blocker is A7's job, not this loop's.
+    if (slot.resolvedTeamId) {
+      const dependent = byId.get(slot.matchId)
+      if (dependent && (dependent.status === 'live' || dependent.status === 'completed')) continue
+    }
 
     await db
       .update(matchSlots)
@@ -534,16 +761,66 @@ export async function resolveSlotsFor(categoryId: string) {
  * is named rather than the change simply failing.
  */
 export async function correctionBlockers(matchId: string) {
-  const dependents = await db
+  const [self] = await db
+    .select({
+      categoryId: matches.categoryId,
+      groupId: matches.groupId,
+      stage: matches.stage,
+    })
+    .from(matches)
+    .where(eq(matches.id, matchId))
+    .limit(1)
+  if (!self) return []
+
+  const dependentIds = new Set<string>()
+
+  // A knockout match fed directly by this one.
+  for (const d of await db
     .select({ matchId: matchSlots.matchId })
     .from(matchSlots)
-    .where(eq(matchSlots.sourceMatchId, matchId))
-  if (dependents.length === 0) return []
+    .where(eq(matchSlots.sourceMatchId, matchId))) {
+    dependentIds.add(d.matchId)
+  }
+
+  // And — the case this missed entirely — every match fed by the TABLE this
+  // one sits in. A league builds its semis and final from `group_rank` slots,
+  // which carry a group and a rank and a null source_match_id. So for the
+  // default format the guard never fired: an organiser could rewrite the group
+  // score a live semi-final had been built from, the table would silently
+  // reorder underneath it, and one team could end up in both semi-finals while
+  // another vanished from the draw.
+  if (self.stage === 'group') {
+    const groupIds = self.groupId
+      ? [self.groupId]
+      : (
+          await db
+            .select({ id: groups.id })
+            .from(groups)
+            .where(eq(groups.categoryId, self.categoryId))
+        ).map((g) => g.id)
+
+    if (groupIds.length) {
+      for (const d of await db
+        .select({ matchId: matchSlots.matchId })
+        .from(matchSlots)
+        .where(
+          and(
+            eq(matchSlots.sourceType, 'group_rank'),
+            inArray(matchSlots.sourceGroupId, groupIds),
+          ),
+        )) {
+        dependentIds.add(d.matchId)
+      }
+    }
+  }
+
+  dependentIds.delete(matchId)
+  if (dependentIds.size === 0) return []
 
   const rows = await db
     .select({ id: matches.id, roundName: matches.roundName, status: matches.status })
     .from(matches)
-    .where(inArray(matches.id, dependents.map((d) => d.matchId)))
+    .where(inArray(matches.id, [...dependentIds]))
 
   return rows.filter((r) => r.status === 'live' || r.status === 'completed')
 }
@@ -554,6 +831,7 @@ export async function adminSetResult(input: {
   resultType: ResultType
   winnerTeamId: string | null
   retiredTeamId?: string | null
+  excludeFromDiff?: number[]
   reason: string
   userId: string
   actorLabel: string
@@ -561,8 +839,11 @@ export async function adminSetResult(input: {
   const loaded = await getMatchForScoring(input.matchId)
   if (!loaded) return { ok: false as const, error: 'That match no longer exists.' }
 
-  const wasFinal = loaded.match.resultState === 'final'
-  if (wasFinal) {
+  // Any result already in — reported, disputed or final — can have sent a team
+  // out onto a court. Checking only `final` let a correction quietly rewrite
+  // the match a live semi-final was built from.
+  const hadResult = loaded.match.resultState !== 'none'
+  if (hadResult) {
     const blockers = await correctionBlockers(input.matchId)
     if (blockers.length) {
       const names = blockers.map((b) => b.roundName ?? 'a later match').join(', ')
@@ -573,44 +854,106 @@ export async function adminSetResult(input: {
     }
   }
 
+  // The same normalisation as every other path: a walkover's scoreline is
+  // generated, a retirement's phantom games are worked out here, and the winner
+  // comes from the games. An organiser fixing a score should not be able to
+  // hand the match to the side that lost it by editing one field — and their
+  // ledger has to be identical to the one a court device would have written.
+  const norm = normalizeResult(loaded.rules, loaded.match, input)
+  const sides = [loaded.match.teamAId, loaded.match.teamBId]
+  let value: NormalizedResult
+  if (norm.ok) {
+    value = norm.value
+  } else if (
+    input.resultType === 'normal' &&
+    input.winnerTeamId &&
+    sides.includes(input.winnerTeamId)
+  ) {
+    // The organiser is the authority and the rules engine is the default. A
+    // game the pair played out to an informal cap is a real result; refusing to
+    // record it just sends the day back to a paper list.
+    value = {
+      games: input.games,
+      winnerTeamId: input.winnerTeamId,
+      retiredTeamId: null,
+      excludeFromDiff: input.excludeFromDiff ?? [],
+    }
+    const nos = new Set<number>()
+    for (const g of value.games) {
+      if (g.scoreA < 0 || g.scoreB < 0) {
+        return { ok: false as const, error: 'Scores can\u2019t be negative.' }
+      }
+      if (nos.has(g.gameNo)) {
+        return { ok: false as const, error: `Game ${g.gameNo} is in there twice.` }
+      }
+      nos.add(g.gameNo)
+    }
+  } else {
+    return { ok: false as const, error: norm.error }
+  }
+
   const before = {
     games: loaded.games.map((g) => [g.scoreA, g.scoreB]),
     winnerTeamId: loaded.match.winnerTeamId,
     resultType: loaded.match.resultType,
   }
 
-  await writeLedger(input.matchId, input.games, {
-    resultType: input.resultType,
-    winnerTeamId: input.winnerTeamId,
-    retiredTeamId: input.retiredTeamId ?? null,
-    provisional: false,
-  })
-  await db
-    .update(matches)
-    .set({
-      resultState: 'final',
-      confirmedAt: new Date(),
-      confirmedVia: 'admin',
-      correctedAt: wasFinal ? new Date() : null,
-      correctionCount: wasFinal
-        ? sql`${matches.correctionCount} + 1`
-        : matches.correctionCount,
-      disputeResolvedAt: loaded.match.resultState === 'disputed' ? new Date() : null,
-      updatedAt: new Date(),
+  try {
+    await transact(async (tx) => {
+      await writeLedger(tx, input.matchId, value.games, {
+        resultType: input.resultType,
+        winnerTeamId: value.winnerTeamId,
+        retiredTeamId: value.retiredTeamId,
+        excludeFromDiff: value.excludeFromDiff,
+        provisional: false,
+      })
+
+      // Every earlier submission is settled by this: leaving them `active`
+      // meant the next court-side submission could "agree" with a score nobody
+      // stands behind any more.
+      await tx
+        .update(resultSubmissions)
+        .set({ status: 'superseded' })
+        .where(
+          and(
+            eq(resultSubmissions.matchId, input.matchId),
+            eq(resultSubmissions.status, 'active'),
+          ),
+        )
+
+      await tx
+        .update(matches)
+        .set({
+          resultState: 'final',
+          confirmedAt: new Date(),
+          confirmedVia: 'admin',
+          provisional: false,
+          status: 'completed',
+          correctedAt: hadResult ? new Date() : null,
+          correctionCount: hadResult
+            ? sql`${matches.correctionCount} + 1`
+            : matches.correctionCount,
+          disputeResolvedAt: loaded.match.resultState === 'disputed' ? new Date() : null,
+          updatedAt: new Date(),
+        })
+        .where(eq(matches.id, input.matchId))
     })
-    .where(eq(matches.id, input.matchId))
+  } catch (e) {
+    console.error('adminSetResult', e)
+    return { ok: false as const, error: 'That didn\u2019t save. Check the score and try again.' }
+  }
 
   await recordAudit({
     userId: input.userId,
     actorLabel: input.actorLabel,
-    action: wasFinal ? 'match.correct' : 'match.set_result',
+    action: hadResult ? 'match.correct' : 'match.set_result',
     entity: 'match',
     entityId: input.matchId,
     reason: input.reason,
     before,
     after: {
-      games: input.games.map((g) => [g.scoreA, g.scoreB]),
-      winnerTeamId: input.winnerTeamId,
+      games: value.games.map((g) => [g.scoreA, g.scoreB]),
+      winnerTeamId: value.winnerTeamId,
       resultType: input.resultType,
     },
   })

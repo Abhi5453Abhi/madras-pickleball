@@ -4,7 +4,7 @@ import { categories, teams } from '@/db/schema'
 import { CourtSwatch, NetRule } from '@/components/ui'
 import { ensureReady } from '@/server/bootstrap'
 import { currentCourtSession, scoreableMatches } from '@/server/court-tokens'
-import { rulesFor } from '@/server/scoring'
+import { getMatchForScoring, rulesFor } from '@/server/scoring'
 import { CourtEntry } from './entry'
 import { courtAgree, courtDispute } from './actions'
 
@@ -15,6 +15,10 @@ import { courtAgree, courtDispute } from './actions'
  * is coming, rather than showing an error to somebody holding a paddle.
  */
 export const dynamic = 'force-dynamic'
+export const metadata = {
+  title: 'Score · Madras Pickleball',
+  robots: { index: false, follow: false },
+}
 
 export default async function CourtPage(props: PageProps<'/court'>) {
   await ensureReady()
@@ -77,6 +81,9 @@ export default async function CourtPage(props: PageProps<'/court'>) {
   const nameA = sides.find((s) => s.id === target.teamAId)?.name ?? '—'
   const nameB = sides.find((s) => s.id === target.teamBId)?.name ?? '—'
 
+  const submitted = awaitingConfirm ? await getMatchForScoring(awaitingConfirm.id) : null
+  const submittedBy = submitted?.submissions[0]?.submittingTeamId ?? null
+
   // The hand-the-phone step: one device, five seconds, and it is the actual
   // social protocol of self-refereed pickleball.
   if (awaitingConfirm && awaitingConfirm.id === target.id) {
@@ -96,6 +103,16 @@ export default async function CourtPage(props: PageProps<'/court'>) {
         <div className="flex flex-col gap-3">
           <form action={courtAgree}>
             <input type="hidden" name="matchId" value={awaitingConfirm.id} />
+            <input
+              type="hidden"
+              name="teamId"
+              value={
+                // The side that did NOT submit is the one agreeing.
+                submittedBy && submittedBy === awaitingConfirm.teamAId
+                  ? (awaitingConfirm.teamBId ?? '')
+                  : (awaitingConfirm.teamAId ?? '')
+              }
+            />
             <button className="tap-xl w-full rounded-control bg-ink text-[20px] font-bold text-white">
               That’s right
             </button>

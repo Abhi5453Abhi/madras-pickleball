@@ -15,6 +15,7 @@ import {
   generateDrawForCategory,
   importPlayers,
   listTournamentPlayers,
+  pairingSeedFor,
   pairRandomly,
   setCategoryPlayers,
 } from '@/server/tournaments'
@@ -71,7 +72,9 @@ export async function quickStart(_prev: QuickState, formData: FormData): Promise
   const playerIds = roster.map((p) => p.id)
   await setCategoryPlayers(categoryId, playerIds)
 
-  const seed = newId('seed')
+  // The category's own stored seed, so re-pairing later reproduces this draw
+  // rather than inventing a different one.
+  const seed = await pairingSeedFor(categoryId)
   const pairs = pairRandomly(playerIds, seed, shape.size)
   await createTeams(categoryId, pairs, new Map(roster.map((p) => [p.id, p.name])))
 

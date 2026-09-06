@@ -31,17 +31,47 @@ const ok = (l, c, extra = '') =>
   c ? console.log(`  ok    ${l}`) : (fails.push(l), console.log(`  FAIL  ${l} ${extra}`))
 const body = () => page.innerText('body')
 
-async function signIn() {
+const PASSWORD = 'e2e-real-password-1'
+
+async function signIn(username = 'saurabh', password = PASSWORD) {
+  await page.context().clearCookies()
   await page.goto(`${BASE}/login`)
-  await page.fill('#username', 'saurabh')
-  await page.fill('#password', 'change-me-now')
+  await page.fill('#username', username)
+  await page.fill('#password', password)
   await page.click('button[type=submit]')
-  await page.waitForURL('**/admin**', { timeout: 20000 })
+  await page.waitForURL(/\/(admin|umpire)/, { timeout: 20000 })
 }
 
 console.log('\n1. sign in')
+await page.goto(`${BASE}/login`)
+await page.fill('#username', 'saurabh')
+await page.fill('#password', 'change-me-now')
+await page.click('button[type=submit]')
+await page.waitForURL(/\/(admin|umpire)/, { timeout: 20000 })
+ok('signed in', /\/admin|\/umpire/.test(page.url()))
+
+// A temporary password opens exactly one door.
+ok('a temporary password lands on the change-password screen', page.url().includes('/admin/account'))
+await page.goto(`${BASE}/admin/quick`)
+ok(
+  'and it cannot be walked around',
+  page.url().includes('/admin/account'),
+  page.url(),
+)
+
+console.log('\n1b. replace the temporary password')
+await page.goto(`${BASE}/admin/account`)
+{
+  const pw = await page.$$('input[type=password]')
+  ok('the change form is there', pw.length >= 2, `saw ${pw.length}`)
+  await pw[0].fill('change-me-now')
+  await pw[1].fill(PASSWORD)
+  if (pw[2]) await pw[2].fill(PASSWORD)
+  await page.click('button[type=submit]')
+  await page.waitForTimeout(2500)
+}
 await signIn()
-ok('signed in', page.url().includes('/admin'))
+ok('the new password works and the block is gone', !page.url().includes('/admin/account'))
 
 console.log('\n2. quick play')
 await page.goto(`${BASE}/admin/quick`)

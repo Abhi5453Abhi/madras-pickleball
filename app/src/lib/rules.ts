@@ -47,10 +47,14 @@ export function gameWinner(rules: ScoringRules, g: GameScore): 'A' | 'B' | null 
     return g.scoreA === g.scoreB ? null : leader
   }
   if (g.scoreA === g.scoreB) return null
-  // At the cap, win by one.
-  if (hardCap !== null && hi >= hardCap) return leader
-  if (hi >= pointsToWin && hi - lo >= winBy) return leader
-  return null
+
+  // At the cap, win by one — otherwise the game could never end.
+  if (hardCap !== null && hi >= hardCap) return hi === hardCap ? leader : null
+  if (hi < pointsToWin || hi - lo < winBy) return null
+  // Past the target you can only ever be exactly winBy ahead: a 12-3 is not a
+  // pickleball score in any configuration.
+  if (hi > pointsToWin && hi - lo !== winBy) return null
+  return leader
 }
 
 export type Validation = { ok: true } | { ok: false; reason: string }
@@ -64,6 +68,18 @@ export function validateGames(rules: ScoringRules, games: GameScore[]): Validati
   if (games.length === 0) return { ok: false, reason: 'No games recorded.' }
   if (games.length > rules.bestOf) {
     return { ok: false, reason: `A best-of-${rules.bestOf} match can't have ${games.length} games.` }
+  }
+
+  // A repeated game number violates the unique index on (match, game_no)
+  // halfway through rewriting the ledger — which left the match with no games
+  // at all and a winner nobody could account for.
+  const seen = new Set<number>()
+  for (const g of games) {
+    if (!Number.isInteger(g.gameNo) || g.gameNo < 1) {
+      return { ok: false, reason: 'That isn’t a game number.' }
+    }
+    if (seen.has(g.gameNo)) return { ok: false, reason: `Game ${g.gameNo} is in there twice.` }
+    seen.add(g.gameNo)
   }
 
   for (const g of games) {
@@ -145,18 +161,24 @@ export function retirementGames(
   playedGames: GameScore[],
   retiringSide: 'A' | 'B',
 ): { games: GameScore[]; excludeFromDiff: number[] } {
-  const games = [...playedGames]
+  // Deep copy: the caller's array is React state on the score screen, and the
+  // in-progress game below is rewritten in place.
+  const games = playedGames.map((g) => ({ ...g }))
   const excludeFromDiff: number[] = []
   const need = gamesNeededToWin(rules)
   const outcome = matchOutcome(rules, games)
   const winnerSide = retiringSide === 'A' ? 'B' : 'A'
   let won = winnerSide === 'A' ? outcome.gamesWonA : outcome.gamesWonB
 
-  // Finish the in-progress game at the target score.
+  // Finish the in-progress game at the target score — or, if the side that
+  // retired was somehow ahead of it, at winBy above them, because 11-11 is not
+  // a finished game and the whole match would come back `winner: null`.
   const last = games[games.length - 1]
   if (last && gameWinner(rules, last) === null) {
-    if (winnerSide === 'A') last.scoreA = rules.pointsToWin
-    else last.scoreB = rules.pointsToWin
+    const theirScore = winnerSide === 'A' ? last.scoreB : last.scoreA
+    const finish = Math.max(rules.pointsToWin, theirScore + rules.winBy)
+    if (winnerSide === 'A') last.scoreA = finish
+    else last.scoreB = finish
     won++
   }
 
@@ -172,4 +194,40 @@ export function retirementGames(
   }
 
   return { games, excludeFromDiff }
+}
+
+/**
+ * The horn ends the MATCH, not just the game — SPEC A5.
+ *
+ * Recording a time-capped game used to leave the screen asking who won a game
+ * that would never be played, with no way to submit. Games decide it; level on
+ * games, the points actually scored decide it; level on both, nobody can, and
+ * the organiser has to.
+ */
+export function hornOutcome(rules: ScoringRules, games: GameScore[]): MatchOutcome {
+  const base = matchOutcome(rules, games)
+  if (base.winner) return { ...base, complete: true }
+
+  if (base.gamesWonA !== base.gamesWonB) {
+    return {
+      complete: true,
+      winner: base.gamesWonA > base.gamesWonB ? 'A' : 'B',
+      gamesWonA: base.gamesWonA,
+      gamesWonB: base.gamesWonB,
+    }
+  }
+
+  let pointsA = 0
+  let pointsB = 0
+  for (const g of games) {
+    pointsA += g.scoreA
+    pointsB += g.scoreB
+  }
+  if (pointsA === pointsB) return { ...base, complete: false }
+  return {
+    complete: true,
+    winner: pointsA > pointsB ? 'A' : 'B',
+    gamesWonA: base.gamesWonA,
+    gamesWonB: base.gamesWonB,
+  }
 }

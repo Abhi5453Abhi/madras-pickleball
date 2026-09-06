@@ -121,7 +121,7 @@ export const submissionStatusEnum = pgEnum('submission_status', [
   'withdrawn',
 ])
 
-export const confidenceEnum = pgEnum('confirmation_confidence', ['normal', 'low'])
+export const confidenceEnum = pgEnum('confirmation_confidence', ['high', 'normal', 'low'])
 
 export const teamStatusEnum = pgEnum('team_status', ['active', 'withdrawn', 'disqualified'])
 

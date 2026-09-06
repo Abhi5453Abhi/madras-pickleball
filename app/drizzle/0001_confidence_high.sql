@@ -1,0 +1,1 @@
+ALTER TYPE "public"."confirmation_confidence" ADD VALUE 'high' BEFORE 'normal';

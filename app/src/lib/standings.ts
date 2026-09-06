@@ -21,7 +21,14 @@ export type StandingsMatch = {
   /** 'final' and 'reported' both count; 'disputed' counts as played but not won. */
   state: 'final' | 'reported' | 'disputed' | 'voided'
   resultType: 'normal' | 'bye' | 'walkover' | 'retired' | 'cancelled'
-  games: Array<{ scoreA: number; scoreB: number; excludeFromDiff?: boolean }>
+  games: Array<{
+    scoreA: number
+    scoreB: number
+    /** Kept out of point difference: a blowout or a game nobody played. */
+    excludeFromDiff?: boolean
+    /** Stopped by the horn. It WAS played, so its points still count. */
+    timeCapped?: boolean
+  }>
 }
 
 export type TeamRow = {
@@ -96,7 +103,20 @@ export function tallyRows(teamIds: string[], matches: StandingsMatch[]): Map<str
       a.lost++
     }
 
+    // A walkover records a scoreline for the record and contributes nothing to
+    // ANY accumulator except the win itself — capping only point difference
+    // would let a match nobody played decide the pool through game difference.
+    if (!contributesDiff(m)) continue
+
     for (const g of m.games) {
+      // A phantom game — the 11-0s a retirement fills in for games nobody
+      // played — contributes to nothing at all. A TIME-CAPPED game is the
+      // opposite case: it was played, the points were really scored, and this
+      // venue decides its pools on points scored. Collapsing the two deleted
+      // real points from the one column that settles qualification.
+      const phantom = !!g.excludeFromDiff && !g.timeCapped
+      if (phantom) continue
+
       if (g.scoreA > g.scoreB) {
         a.gamesWon++
         b.gamesLost++
@@ -104,11 +124,15 @@ export function tallyRows(teamIds: string[], matches: StandingsMatch[]): Map<str
         b.gamesWon++
         a.gamesLost++
       }
-      if (!contributesDiff(m) || g.excludeFromDiff) continue
+
       a.pointsFor += g.scoreA
       a.pointsAgainst += g.scoreB
       b.pointsFor += g.scoreB
       b.pointsAgainst += g.scoreA
+
+      // Point difference is the column a horn-stopped game is excluded from,
+      // because it stopped early through nobody's doing.
+      if (g.excludeFromDiff) continue
       a.pointDiff += cappedDiff(g.scoreA, g.scoreB)
       b.pointDiff += cappedDiff(g.scoreB, g.scoreA)
     }
@@ -165,9 +189,7 @@ function orderGroup(
   const among = allMatches.filter((m) => ids.has(m.teamAId) && ids.has(m.teamBId))
 
   const steps: Step[] =
-    rule === 'points_scored_first'
-      ? [byWinRatio, byPointsScored]
-      : [byWinRatio]
+    rule === 'points_scored_first' ? [byWinRatio, byPointsScored] : [byWinRatio]
 
   for (const step of steps) {
     const sorted = [...tied].sort(step.compare)
@@ -186,7 +208,11 @@ function orderGroup(
     const h = headToHead(tied[0].teamId, tied[1].teamId, among)
     if (h !== 0) {
       const ordered = h < 0 ? [tied[0], tied[1]] : [tied[1], tied[0]]
-      return tag(ordered, 'head-to-head')
+      // The rule doesn't stop the argument; the reason does.
+      return [
+        { ...ordered[0], reason: ordered[0].reason ?? `ahead on head-to-head` },
+        { ...ordered[1], reason: ordered[1].reason ?? `behind on head-to-head` },
+      ]
     }
   } else {
     // Three or more → a mini-table over only the matches among them.
@@ -206,7 +232,14 @@ function orderGroup(
     }
   }
 
-  for (const step of [byGameDiff, byPointDiff, byPointsScored]) {
+  // The order here has to match the sentence printed under the table. Under
+  // `head_to_head_first` the footer promises points scored BEFORE the
+  // difference columns, and it used to come last.
+  const fallback: Step[] =
+    rule === 'head_to_head_first'
+      ? [byPointsScored, byGameDiff, byPointDiff]
+      : [byGameDiff, byPointDiff, byPointsScored]
+  for (const step of fallback) {
     const sorted = [...tied].sort(step.compare)
     const buckets = bucket(sorted, step.compare)
     if (buckets.length > 1) {
@@ -245,6 +278,6 @@ export function standings(
 /** The sentence printed under every table, so the rule isn't folklore. */
 export function tiebreakNote(rule: TiebreakRule): string {
   return rule === 'points_scored_first'
-    ? 'Level on record: most total points scored goes through, then head-to-head, then game and point difference. Point difference is capped at 8 per game; walkovers count as a win but add nothing to it.'
-    : 'Level on record: head-to-head first, then total points scored, then game and point difference. Point difference is capped at 8 per game; walkovers count as a win but add nothing to it.'
+    ? 'Level on record: most total points scored goes through, then head-to-head, then game and point difference. Point difference is capped at 8 per game; a no-show counts as a win but adds nothing to points or difference.'
+    : 'Level on record: head-to-head first, then total points scored, then game and point difference. Point difference is capped at 8 per game; a no-show counts as a win but adds nothing to points or difference.'
 }

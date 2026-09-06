@@ -21,6 +21,7 @@ import { normalizeName, normalizePhone, type ParsedRow } from '@/lib/parse-playe
 import { bumpStreamVersion } from '@/lib/stream'
 import { buildDraw, seededShuffle, type DrawPlan, type SlotSource } from '@/lib/draw'
 import { standings, type StandingsMatch } from '@/lib/standings'
+import { projectedState } from './scoring'
 
 export const VENUE_SLUG = 'madras-pickleball'
 
@@ -258,6 +259,24 @@ export async function createTeams(
   return created
 }
 
+/**
+ * The seed a category was created with. Random pairing has to be reproducible:
+ * "why am I with him" is a question that gets asked, and re-running the draw
+ * from a fresh seed the second time gives a different answer to the same
+ * question (SPEC A2).
+ */
+export async function pairingSeedFor(categoryId: string): Promise<string> {
+  const [row] = await db
+    .select({ rngSeed: categories.rngSeed })
+    .from(categories)
+    .where(eq(categories.id, categoryId))
+    .limit(1)
+  if (row?.rngSeed) return row.rngSeed
+  const seed = newId('seed')
+  await db.update(categories).set({ rngSeed: seed }).where(eq(categories.id, categoryId))
+  return seed
+}
+
 /** Hand-pair the couples who always play together, let the app do the rest. */
 export function pairRandomly(playerIds: string[], seed: string, teamSize: number): string[][] {
   const shuffled = seededShuffle(playerIds, seed)
@@ -322,6 +341,16 @@ async function resolveSource(
 export async function persistDraw(categoryId: string, tournamentId: string, plan: DrawPlan) {
   await db.delete(matches).where(eq(matches.categoryId, categoryId))
   await db.delete(groups).where(eq(groups.categoryId, categoryId))
+
+  // The qualification line on both tables is drawn at `advance_per_group`, and
+  // nothing ever wrote it — so it sat at its default of 2 while a
+  // semis-and-final draw calls four teams through. The public table told 3rd
+  // and 4th they were out, and then the board called them to a semi-final.
+  const advance = Math.max(...plan.groups.map((g) => g.advanceCount), 0)
+  await db
+    .update(categories)
+    .set({ advancePerGroup: advance })
+    .where(eq(categories.id, categoryId))
 
   const groupIdByName = new Map<string, string>()
   for (const [i, g] of plan.groups.entries()) {
@@ -452,6 +481,7 @@ export async function standingsFor(categoryId: string) {
       teamBId: matches.teamBId,
       winnerTeamId: matches.winnerTeamId,
       resultState: matches.resultState,
+      reportedAt: matches.reportedAt,
       resultType: matches.resultType,
     })
     .from(matches)
@@ -469,17 +499,24 @@ export async function standingsFor(categoryId: string) {
   }
 
   const input: StandingsMatch[] = matchRows
-    .filter((m) => m.teamAId && m.teamBId && m.resultState !== 'none')
+    .filter((m) => m.teamAId && m.teamBId && projectedState(m) !== 'none')
     .map((m) => ({
       matchId: m.id,
       teamAId: m.teamAId!,
       teamBId: m.teamBId!,
       winnerTeamId: m.winnerTeamId,
-      state: m.resultState as StandingsMatch['state'],
+      // Projected, not stored: a result that auto-confirmed at the ten-minute
+      // mark would otherwise read "Provisional" forever.
+      state: projectedState(m) as StandingsMatch['state'],
       resultType: m.resultType as StandingsMatch['resultType'],
       games: (gamesByMatch.get(m.id) ?? [])
         .sort((x, y) => x.gameNo - y.gameNo)
-        .map((g) => ({ scoreA: g.scoreA, scoreB: g.scoreB, excludeFromDiff: g.excludeFromDiff })),
+        .map((g) => ({
+          scoreA: g.scoreA,
+          scoreB: g.scoreB,
+          excludeFromDiff: g.excludeFromDiff,
+          timeCapped: g.timeCapped,
+        })),
     }))
 
   const rows = standings(

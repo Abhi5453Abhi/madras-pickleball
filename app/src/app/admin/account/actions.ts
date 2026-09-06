@@ -12,7 +12,7 @@ import { recordAudit } from '@/lib/audit'
 export type PwState = { error?: string; ok?: boolean }
 
 export async function changePassword(_prev: PwState, formData: FormData): Promise<PwState> {
-  const user = await requireUser('umpire')
+  const user = await requireUser('umpire', { allowPasswordChange: true })
   const current = String(formData.get('current') ?? '')
   const next = String(formData.get('next') ?? '')
   const confirm = String(formData.get('confirm') ?? '')
@@ -47,5 +47,5 @@ export async function changePassword(_prev: PwState, formData: FormData): Promis
   await revokeAllSessionsFor(user.id)
   await createSession({ ...user, mustChangePassword: false })
 
-  redirect('/admin')
+  redirect(user.role === 'umpire' ? '/umpire' : '/admin')
 }

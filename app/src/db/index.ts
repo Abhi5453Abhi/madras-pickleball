@@ -88,3 +88,19 @@ if (process.env.NODE_ENV !== 'production') globalForDb.db = db
 export const isEmbeddedDb = dbTarget().kind === 'embedded'
 export { schema }
 export type Db = typeof db
+
+/**
+ * A database transaction.
+ *
+ * Recording a result is a delete, N inserts and two updates. Without this, two
+ * phones submitting at once could interleave into a state neither of them
+ * asked for, and a mid-sequence failure left a match with a winner and no
+ * games. Both drivers implement the same query surface, so the cast is only
+ * there to reconcile the two driver types.
+ */
+type PgHandle = ReturnType<typeof drizzlePg<typeof schema>>
+export type Tx = Parameters<Parameters<PgHandle['transaction']>[0]>[0]
+
+export function transact<T>(fn: (t: Tx) => Promise<T>): Promise<T> {
+  return (db as PgHandle).transaction(fn)
+}

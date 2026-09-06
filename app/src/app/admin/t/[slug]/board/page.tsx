@@ -2,7 +2,7 @@ import { clsx } from 'clsx'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
-import { CourtSwatch, NetRule, StatusPill } from '@/components/ui'
+import { CourtSwatch, NetRule, Notice, StatusPill } from '@/components/ui'
 import { elapsedLabel, formatDuration, venueTime } from '@/lib/time'
 import { boardData, type BoardCourt, type BoardMatch } from '@/server/board'
 import { getTournamentBySlug } from '@/server/tournaments'
@@ -39,40 +39,29 @@ function CourtCard({
     )
   }
 
-  // The common failure is not a wrong score, it is NO score — the pair walked
-  // off for water and the court stays occupied in the data (SPEC A4).
-  if (court.awaitingScore) {
-    return (
-      <article data-court className="overflow-hidden rounded-card border border-line-strong bg-paper shadow-card">
-        <div aria-hidden className="h-1 bg-waiting" />
-        <div className="flex items-center gap-2 px-4 pt-3">
-          <CourtSwatch colorKey={court.colorKey} />
-          <span className="font-score text-eyebrow text-text-2 uppercase">{court.name}</span>
-          <StatusPill state="waiting">No score</StatusPill>
-        </div>
-        <div className="mt-2 px-4">
-          <Sides a={court.awaitingScore.nameA} b={court.awaitingScore.nameB} />
-        </div>
-        <div className="p-3 pt-3">
-          <Link
-            href={`/admin/m/${court.awaitingScore.id}`}
-            className="tap-lg flex w-full items-center justify-center rounded-control bg-ink text-[18px] font-bold text-white"
-          >
-            Enter it for them
-          </Link>
-        </div>
-      </article>
-    )
-  }
-
   if (court.live) {
+    // The common failure is not a wrong score, it is NO score — the pair walked
+    // off for water and the court stays occupied in the data (SPEC A4). There
+    // is no `completed with no result` state to look for; the signal is a match
+    // that has been on far longer than its format takes.
+    const stale = court.live.overrunMinutes !== null
     return (
-      <article data-court className="overflow-hidden rounded-card border border-line-strong bg-paper shadow-card ring-2 ring-live/30">
-        <div aria-hidden className="h-1 bg-live" />
+      <article
+        data-court
+        className={clsx(
+          'overflow-hidden rounded-card border border-line-strong bg-paper shadow-card',
+          stale ? 'ring-2 ring-waiting/40' : 'ring-2 ring-live/30',
+        )}
+      >
+        <div aria-hidden className={clsx('h-1', stale ? 'bg-waiting' : 'bg-live')} />
         <div className="flex items-center gap-2 px-4 pt-3">
           <CourtSwatch colorKey={court.colorKey} />
           <span className="font-score text-eyebrow text-text-2 uppercase">{court.name}</span>
-          <StatusPill state="live">Live</StatusPill>
+          {stale ? (
+            <StatusPill state="waiting">Finished?</StatusPill>
+          ) : (
+            <StatusPill state="live">Live</StatusPill>
+          )}
           {court.live.startedAt ? (
             <span className="num ml-auto text-meta text-text-3">
               {elapsedLabel(court.live.startedAt)}
@@ -85,13 +74,21 @@ function CourtCard({
             {court.live.categoryName}
             {court.live.roundName ? ` · ${court.live.roundName}` : ''}
           </p>
+          {stale ? (
+            <p className="mt-1.5 text-meta font-semibold text-waiting">
+              On for {court.live.overrunMinutes} min — nobody has given a score.
+            </p>
+          ) : null}
         </div>
         <div className="flex gap-2 p-3 pt-3">
           <Link
             href={`/admin/m/${court.live.id}`}
-            className="tap-lg flex flex-1 items-center justify-center rounded-control bg-ink text-[18px] font-bold text-white"
+            className={clsx(
+              'tap-lg flex flex-1 items-center justify-center rounded-control text-[18px] font-bold text-white',
+              stale ? 'bg-accent shadow-key' : 'bg-ink',
+            )}
           >
-            Enter the score
+            {stale ? 'Enter it for them' : 'Enter the score'}
           </Link>
           <form action={takeOffCourt}>
             <input type="hidden" name="matchId" value={court.live.id} />
@@ -114,6 +111,11 @@ function CourtCard({
         <CourtSwatch colorKey={court.colorKey} />
         <span className="font-score text-eyebrow text-text-2 uppercase">{court.name}</span>
         <StatusPill state="done">Free</StatusPill>
+        {court.freeSinceMinutes !== null && court.freeSinceMinutes > 0 ? (
+          <span className="num ml-auto text-meta font-semibold text-accent">
+            empty {court.freeSinceMinutes} min
+          </span>
+        ) : null}
       </div>
 
       {firstPlaceable ? (
@@ -146,22 +148,35 @@ function CourtCard({
 }
 
 export default async function BoardPage(props: PageProps<'/admin/t/[slug]/board'>) {
-  await requireUser('umpire')
+  await requireUser('admin')
   const { slug } = await props.params
   const tournament = await getTournamentBySlug(slug)
   if (!tournament) notFound()
 
+  const { err } = await props.searchParams
   const data = await boardData(tournament.id)
   const placeable = data.queue.filter((m) => m.ready && !m.blockedBy)
   const blocked = data.queue.filter((m) => m.ready && m.blockedBy)
-  const freeCourts = data.courts.filter((c) => !c.closed && !c.live && !c.awaitingScore)
+  const freeCourts = data.courts.filter((c) => !c.closed && !c.live)
 
-  // Each free court is offered a DIFFERENT match, or two courts race for the
-  // same pair and one of the sends always fails.
+  // Each free court is offered a DIFFERENT match — and never one that shares a
+  // player with a match already offered somewhere else. Handing court 1 and
+  // court 2 two matches that both contain Ravi meant the organiser tapped both
+  // and the second was refused, which is the exact collision the board exists
+  // to prevent.
   const suggestion = new Map<string, (typeof placeable)[number]>()
-  freeCourts.forEach((c, i) => {
-    if (placeable[i]) suggestion.set(c.id, placeable[i])
-  })
+  const chosen = new Set<string>()
+  const spokenFor = new Set<string>()
+  for (const c of freeCourts) {
+    const pick = placeable.find(
+      (m) => !chosen.has(m.id) && !m.playerIds.some((p) => spokenFor.has(p)),
+    )
+    if (!pick) continue
+    suggestion.set(c.id, pick)
+    chosen.add(pick.id)
+    for (const p of pick.playerIds) spokenFor.add(p)
+  }
+  const suggestedIds = chosen
 
   return (
     <div className="flex flex-col gap-6 pb-24">
@@ -169,6 +184,8 @@ export default async function BoardPage(props: PageProps<'/admin/t/[slug]/board'
         <p className="font-score text-eyebrow text-accent uppercase">Court board</p>
         <h1 className="mt-1 text-title text-text">{tournament.name}</h1>
       </header>
+
+      {err ? <Notice>{String(err)}</Notice> : null}
 
       <div className="grid gap-3 sm:grid-cols-2">
         {data.courts.map((court) => (
@@ -184,11 +201,11 @@ export default async function BoardPage(props: PageProps<'/admin/t/[slug]/board'
       <section>
         <div className="flex items-baseline justify-between">
           <h2 className="font-score text-eyebrow text-text-2 uppercase">Up next</h2>
-          <span className="num text-meta text-text-3">{data.queue.length} to play</span>
+          <span className="num text-meta text-text-3">{data.remaining} to play</span>
         </div>
         <NetRule className="mt-2" />
         <ul className="mt-3 flex flex-col gap-2">
-          {placeable.slice(0, 6).map((m) => (
+          {placeable.filter((m) => !suggestedIds.has(m.id)).slice(0, 6).map((m) => (
             <li
               key={m.id}
               className="flex flex-wrap items-center gap-3 rounded-card border border-line-strong bg-paper px-4 py-3 shadow-card"
@@ -221,7 +238,22 @@ export default async function BoardPage(props: PageProps<'/admin/t/[slug]/board'
             </li>
           ))}
 
-          {placeable.length === 0 && blocked.length === 0 ? (
+          {/* Never hidden: a match the board knows about but doesn't list is a
+              header that says 7 to play above a list of 4. */}
+          {data.waiting.map((m) => (
+            <li
+              key={m.id}
+              className="flex flex-wrap items-center gap-3 rounded-card border border-dashed border-line-strong bg-sunken px-4 py-3"
+            >
+              <Sides a={m.nameA} b={m.nameB} dim />
+              <span className="ml-auto shrink-0 text-right text-meta text-text-3">
+                {m.roundName ? `${m.roundName} · ` : ''}
+                {m.waitingOn}
+              </span>
+            </li>
+          ))}
+
+          {placeable.length === 0 && blocked.length === 0 && data.waiting.length === 0 ? (
             <li className="rounded-card border border-line-strong bg-paper px-4 py-6 text-center text-body text-text-2">
               Every match has been played.
             </li>
@@ -232,7 +264,7 @@ export default async function BoardPage(props: PageProps<'/admin/t/[slug]/board'
       <div className="fixed inset-x-0 bottom-0 z-10 border-t border-line-strong bg-paper px-4 py-3 shadow-dock">
         <div className="mx-auto flex max-w-3xl items-center gap-2">
           <p className="num text-meta text-text-2">
-            {data.courts.length} courts · {data.liveCount} live · {data.remaining} to play
+            {data.openCourts} courts · {data.liveCount} live · {data.remaining} to play
           </p>
           <p
             className={clsx(

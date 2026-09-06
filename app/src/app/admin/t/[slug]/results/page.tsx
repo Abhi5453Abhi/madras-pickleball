@@ -12,7 +12,7 @@ import { confirmAll, markNoShow } from './actions'
 export const dynamic = 'force-dynamic'
 
 export default async function ResultsPage(props: PageProps<'/admin/t/[slug]/results'>) {
-  await requireUser('umpire')
+  await requireUser('admin')
   const { slug } = await props.params
   const tournament = await getTournamentBySlug(slug)
   if (!tournament) notFound()
@@ -103,21 +103,27 @@ export default async function ResultsPage(props: PageProps<'/admin/t/[slug]/resu
                   <p className="text-row text-text">{names.get(m.teamBId ?? '') ?? '—'}</p>
                   <p className="text-meta text-text-3">{m.roundName}</p>
                 </div>
-                <div className="ml-auto flex gap-2">
+                <div className="ml-auto flex flex-wrap gap-2">
                   <Link href={`/admin/m/${m.id}`}>
                     <Button className="tap px-4 text-[16px]">Enter</Button>
                   </Link>
-                  <form action={markNoShow}>
-                    <input type="hidden" name="matchId" value={m.id} />
-                    <input type="hidden" name="absent" value="B" />
-                    <input type="hidden" name="slug" value={slug} />
-                    <button
-                      className="tap rounded-control border border-line-strong bg-paper px-3 text-[15px] font-semibold text-text-2"
-                      title={`${names.get(m.teamBId ?? '') ?? ''} didn't turn up`}
-                    >
-                      No-show
-                    </button>
-                  </form>
+                  {/* Which side failed to turn up is the whole content of a
+                      walkover. Hardcoding one of them handed half the pool
+                      matches to the wrong team. */}
+                  {(['A', 'B'] as const).map((side) => {
+                    const absentName =
+                      names.get((side === 'A' ? m.teamAId : m.teamBId) ?? '') ?? '—'
+                    return (
+                      <form action={markNoShow} key={side}>
+                        <input type="hidden" name="matchId" value={m.id} />
+                        <input type="hidden" name="absent" value={side} />
+                        <input type="hidden" name="slug" value={slug} />
+                        <button className="tap max-w-[10rem] truncate rounded-control border border-line-strong bg-paper px-3 text-[15px] font-semibold text-text-2">
+                          {absentName} didn’t come
+                        </button>
+                      </form>
+                    )
+                  })}
                 </div>
               </li>
             ))}

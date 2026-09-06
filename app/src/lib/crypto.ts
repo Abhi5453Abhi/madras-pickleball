@@ -6,6 +6,22 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
  */
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 
+/**
+ * Crockford's decoding rules, which is the half people forget to implement:
+ * O reads as 0, I and L read as 1, and case and separators don't count. Without
+ * this, excluding the ambiguous letters from the alphabet achieves nothing —
+ * someone squinting at a card in the sun still types O for 0 and gets
+ * "that link isn't working".
+ */
+export function normalizeCrockford(input: string): string {
+  return input
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]/g, '')
+    .replace(/O/g, '0')
+    .replace(/[IL]/g, '1')
+}
+
 export function sha256Hex(input: string): string {
   return createHash('sha256').update(input, 'utf8').digest('hex')
 }
@@ -24,7 +40,9 @@ export function newCourtToken(): { raw: string; hash: string; prefix: string } {
   let out = ''
   for (let i = 0; i < 10; i++) out += CROCKFORD[bytes[i] % 32]
   const raw = `${out.slice(0, 5)}-${out.slice(5)}`
-  return { raw, hash: sha256Hex(raw), prefix: out.slice(0, 5) }
+  // The hash is over the NORMALIZED form, so a card typed as O/0 or l/1
+  // resolves to the same token the QR does.
+  return { raw, hash: sha256Hex(normalizeCrockford(raw)), prefix: out.slice(0, 5) }
 }
 
 /** 32 random bytes; only the SHA-256 is ever stored (SPEC A9). */
@@ -38,7 +56,7 @@ export function newResetCode(): { raw: string; hash: string } {
   const bytes = randomBytes(8)
   let out = ''
   for (let i = 0; i < 8; i++) out += CROCKFORD[bytes[i] % 32]
-  return { raw: out, hash: sha256Hex(out) }
+  return { raw: out, hash: sha256Hex(normalizeCrockford(out)) }
 }
 
 /** IPs are only ever stored hashed. */

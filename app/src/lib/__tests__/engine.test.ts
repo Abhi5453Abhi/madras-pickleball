@@ -38,6 +38,14 @@ describe('game winner', () => {
     expect(gameWinner(DEFAULT_RULES, { gameNo: 1, scoreA: 13, scoreB: 11 })).toBe('A')
   })
 
+  it('refuses a score that no rally sequence could produce', () => {
+    // Past the target you can only ever be exactly two clear.
+    expect(gameWinner(DEFAULT_RULES, { gameNo: 1, scoreA: 12, scoreB: 3 })).toBeNull()
+    expect(gameWinner(DEFAULT_RULES, { gameNo: 1, scoreA: 21, scoreB: 3 })).toBeNull()
+    const capped: ScoringRules = { ...DEFAULT_RULES, hardCap: 15 }
+    expect(gameWinner(capped, { gameNo: 1, scoreA: 16, scoreB: 3 })).toBeNull()
+  })
+
   it('wins by one at the hard cap, or the game could never end', () => {
     const capped: ScoringRules = { ...DEFAULT_RULES, hardCap: 15 }
     expect(gameWinner(capped, { gameNo: 1, scoreA: 15, scoreB: 14 })).toBe('A')
@@ -336,8 +344,38 @@ describe('standings', () => {
     expect(rows.get('a')!.won).toBe(1)
     expect(rows.get('a')!.pointDiff).toBe(0)
     expect(rows.get('a')!.pointsFor).toBe(0)
-    // Games still count, so games won and lost stay coherent.
-    expect(rows.get('a')!.gamesWon).toBe(2)
+    // And nothing towards game difference either — capping only point
+    // difference would let a match nobody played decide the pool.
+    expect(rows.get('a')!.gamesWon).toBe(0)
+    expect(rows.get('a')!.gameDiff).toBe(0)
+    expect(rows.get('b')!.gameDiff).toBe(0)
+  })
+
+  it('is not swung by a walkover when everything else is level', () => {
+    // a and b both beat c; a additionally got a walkover over d.
+    const rows = standings(
+      ['a', 'b', 'c', 'd'],
+      [
+        won('1', 'a', 'c', [[11, 5], [11, 5]]),
+        won('2', 'b', 'c', [[11, 5], [11, 5]]),
+        {
+          matchId: '3',
+          teamAId: 'a',
+          teamBId: 'd',
+          winnerTeamId: 'a',
+          state: 'final',
+          resultType: 'walkover',
+          games: [
+            { scoreA: 11, scoreB: 0 },
+            { scoreA: 11, scoreB: 0 },
+          ],
+        },
+      ],
+    )
+    const a = rows.find((r) => r.teamId === 'a')!
+    const b = rows.find((r) => r.teamId === 'b')!
+    expect(a.gameDiff).toBe(b.gameDiff)
+    expect(a.pointsFor).toBe(b.pointsFor)
   })
 
   it('ignores voided matches entirely, including matches played', () => {

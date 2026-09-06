@@ -4,7 +4,9 @@ import { useRouter } from 'next/navigation'
 import { ScoreEntry, type ScoreEntryProps } from '@/components/score-entry'
 import { saveResult } from './actions'
 
-export function AdminEntry(props: Omit<ScoreEntryProps, 'onSubmit' | 'authoritative'> & { back: string }) {
+export function AdminEntry(
+  props: Omit<ScoreEntryProps, 'onSubmit' | 'authoritative'> & { back: string },
+) {
   const router = useRouter()
   return (
     <ScoreEntry
@@ -17,6 +19,8 @@ export function AdminEntry(props: Omit<ScoreEntryProps, 'onSubmit' | 'authoritat
           resultType: payload.resultType,
           winnerTeamId: payload.winnerTeamId,
           retiredTeamId: payload.retiredTeamId,
+          excludeFromDiff: payload.excludeFromDiff,
+          reason: payload.reason,
         })
         if (res.ok) router.push(props.back as never)
         return res

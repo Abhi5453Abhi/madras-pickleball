@@ -3,7 +3,7 @@ import { Card, Notice } from '@/components/ui'
 import { PasswordForm } from './password-form'
 
 export default async function AccountPage(props: PageProps<'/admin/account'>) {
-  const user = await requireUser('umpire')
+  const user = await requireUser('umpire', { allowPasswordChange: true })
   const { first } = await props.searchParams
 
   return (

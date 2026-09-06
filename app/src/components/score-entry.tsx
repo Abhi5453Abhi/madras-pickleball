@@ -3,8 +3,15 @@
 import { clsx } from 'clsx'
 import { useMemo, useRef, useState } from 'react'
 import { winnerChips, loserChips, anyLoserScores, explainSingleChip } from '@/lib/chips'
-import { matchOutcome, gamesNeededToWin, type GameScore, type ScoringRules } from '@/lib/rules'
-import { NetRule } from './ui'
+import {
+  matchOutcome,
+  gamesNeededToWin,
+  hornOutcome,
+  retirementGames,
+  type GameScore,
+  type ScoringRules,
+} from '@/lib/rules'
+import { Input, NetRule } from './ui'
 
 export type ScoreEntryProps = {
   matchId: string
@@ -19,11 +26,17 @@ export type ScoreEntryProps = {
   rules: ScoringRules
   /** An admin or umpire submission is authoritative — no confirmation dance. */
   authoritative: boolean
+  /**
+   * Set when a result is already in. The screen then reads as a CORRECTION:
+   * it shows what it is replacing and will not send without a reason.
+   */
+  existing?: { scoreLine: string | null; winnerName: string | null; label: string } | null
   onSubmit: (payload: {
     games: GameScore[]
     resultType: 'normal' | 'walkover' | 'retired'
     winnerTeamId: string | null
     retiredTeamId: string | null
+    excludeFromDiff?: number[]
     submittingTeamId: string | null
     reason?: string
   }) => Promise<{ ok: boolean; error?: string }>
@@ -172,8 +185,18 @@ export function ScoreEntry(props: ScoreEntryProps) {
     kind: 'walkover' | 'retired'
     side: 'A' | 'B' | null
   }>(null)
+  const [capped, setCapped] = useState<null | { a: string; b: string }>(null)
+  // The score the game in progress was standing at. A retirement without it
+  // publishes a game that was never played and deletes the points the retiring
+  // pair had actually scored.
+  const [stoppedAt, setStoppedAt] = useState<{ a: string; b: string }>({ a: '', b: '' })
+  const [reason, setReason] = useState('')
+  const correcting = !!props.existing
 
-  const outcome = matchOutcome(rules, finished)
+  // The horn ends the match. Once a time-capped game is in, there is no next
+  // game to ask about.
+  const hornEnded = finished.some((g) => g.timeCapped)
+  const outcome = hornEnded ? hornOutcome(rules, finished) : matchOutcome(rules, finished)
   const complete = outcome.complete
   const gameNo = finished.length + 1
 
@@ -201,26 +224,58 @@ export function ScoreEntry(props: ScoreEntryProps) {
     setShowAllLoser(false)
   }
 
+  function buildPayload(side: 'A' | 'B' | null) {
+    const submittingTeamId = side === 'A' ? props.teamAId : side === 'B' ? props.teamBId : null
+
+    if (special?.kind === 'walkover' && special.side) {
+      return {
+        games: [] as GameScore[],
+        resultType: 'walkover' as const,
+        winnerTeamId: special.side === 'A' ? props.teamBId : props.teamAId,
+        retiredTeamId: null,
+        submittingTeamId,
+      }
+    }
+    if (special?.kind === 'retired' && special.side) {
+      const partA = Number(stoppedAt.a)
+      const partB = Number(stoppedAt.b)
+      const hasPartial =
+        stoppedAt.a !== '' &&
+        stoppedAt.b !== '' &&
+        Number.isFinite(partA) &&
+        Number.isFinite(partB) &&
+        partA >= 0 &&
+        partB >= 0
+      const played = hasPartial
+        ? [...finished, { gameNo: finished.length + 1, scoreA: partA, scoreB: partB }]
+        : finished
+      const { games, excludeFromDiff } = retirementGames(rules, played, special.side)
+      return {
+        games,
+        resultType: 'retired' as const,
+        winnerTeamId: special.side === 'A' ? props.teamBId : props.teamAId,
+        retiredTeamId: special.side === 'A' ? props.teamAId : props.teamBId,
+        excludeFromDiff,
+        submittingTeamId,
+      }
+    }
+    return {
+      games: finished,
+      resultType: 'normal' as const,
+      winnerTeamId: outcome.winner === 'A' ? props.teamAId : props.teamBId,
+      retiredTeamId: null,
+      submittingTeamId,
+    }
+  }
+
   async function send(side: 'A' | 'B' | null) {
+    if (correcting && reason.trim().length < 3) {
+      setError('Say what changed — it goes in the log next to your name.')
+      return
+    }
     setBusy(true)
     setError(null)
-    const payload =
-      special?.kind === 'walkover'
-        ? {
-            games: [] as GameScore[],
-            resultType: 'walkover' as const,
-            winnerTeamId: special.side === 'A' ? props.teamBId : props.teamAId,
-            retiredTeamId: null,
-            submittingTeamId: side === 'A' ? props.teamAId : side === 'B' ? props.teamBId : null,
-          }
-        : {
-            games: finished,
-            resultType: 'normal' as const,
-            winnerTeamId: outcome.winner === 'A' ? props.teamAId : props.teamBId,
-            retiredTeamId: null,
-            submittingTeamId: side === 'A' ? props.teamAId : side === 'B' ? props.teamBId : null,
-          }
-    const res = await props.onSubmit(payload)
+    const res = await props.onSubmit({ ...buildPayload(side), reason: reason.trim() || undefined })
     setBusy(false)
     if (!res.ok) setError(res.error ?? 'That didn’t save. Try again.')
   }
@@ -253,6 +308,25 @@ export function ScoreEntry(props: ScoreEntryProps) {
         </p>
       ) : null}
 
+      {props.existing ? (
+        <div className="rounded-card border border-alert/30 bg-alert-soft p-4">
+          <p className="font-score text-eyebrow text-alert uppercase">
+            Changing a result that’s already in
+          </p>
+          <p className="mt-1.5 text-row text-text">
+            {props.existing.winnerName
+              ? `${props.existing.winnerName} won`
+              : props.existing.label}
+            {props.existing.scoreLine ? (
+              <span className="num text-text-2"> · {props.existing.scoreLine}</span>
+            ) : null}
+          </p>
+          <p className="mt-1 text-meta text-text-2">
+            Enter the whole result again from the start. Everyone watching sees the change.
+          </p>
+        </div>
+      ) : null}
+
       {/* Finished games stay on screen, one tap from being changed. */}
       {finished.map((g, i) => (
         <button
@@ -271,7 +345,114 @@ export function ScoreEntry(props: ScoreEntryProps) {
         </button>
       ))}
 
-      {special?.kind === 'walkover' && special.side ? (
+      {capped ? (
+        <div className="rounded-card border border-line-strong bg-paper p-4">
+          <p className="text-section text-text">Game {gameNo} — the horn went</p>
+          <p className="mt-1 text-meta text-text-2">
+            Record it at the score it stopped on. It counts as a game won, and it stays out of
+            point difference.
+          </p>
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="block truncate text-meta text-text-3">{nameA}</span>
+              <Input
+                type="number"
+                min={0}
+                inputMode="numeric"
+                className="num h-14 text-[24px] font-bold"
+                value={capped.a}
+                onChange={(e) => setCapped({ ...capped, a: e.target.value })}
+              />
+            </label>
+            <label className="block">
+              <span className="block truncate text-meta text-text-3">{nameB}</span>
+              <Input
+                type="number"
+                min={0}
+                inputMode="numeric"
+                className="num h-14 text-[24px] font-bold"
+                value={capped.b}
+                onChange={(e) => setCapped({ ...capped, b: e.target.value })}
+              />
+            </label>
+          </div>
+          <div className="mt-3 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                const a = Number(capped.a)
+                const b = Number(capped.b)
+                if (!Number.isFinite(a) || !Number.isFinite(b) || a < 0 || b < 0) {
+                  setError('Enter both scores.')
+                  return
+                }
+                if (a === b) {
+                  setError('A capped game still needs a winner — play the next rally out.')
+                  return
+                }
+                setError(null)
+                setFinished([...finished, { gameNo, scoreA: a, scoreB: b, timeCapped: true }])
+                setCapped(null)
+              }}
+              className="tap-lg rounded-control bg-ink px-5 text-[18px] font-bold text-white"
+            >
+              Record game {gameNo}
+            </button>
+            <button
+              type="button"
+              onClick={() => setCapped(null)}
+              className="tap text-body font-medium text-link"
+            >
+              Never mind
+            </button>
+          </div>
+        </div>
+      ) : special?.kind === 'retired' && special.side ? (
+        <div className="rounded-card border border-line-strong bg-paper p-4">
+          <p className="text-section text-text">
+            {special.side === 'A' ? nameA : nameB} couldn’t carry on.
+          </p>
+          <p className="mt-1 text-body text-text-2">
+            {special.side === 'A' ? nameB : nameA} go through. Put in the score the game had
+            reached, so the points they did win still count.
+          </p>
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="block truncate text-meta text-text-3">{nameA}</span>
+              <Input
+                type="number"
+                min={0}
+                inputMode="numeric"
+                className="num h-14 text-[24px] font-bold"
+                value={stoppedAt.a}
+                onChange={(e) => setStoppedAt({ ...stoppedAt, a: e.target.value })}
+              />
+            </label>
+            <label className="block">
+              <span className="block truncate text-meta text-text-3">{nameB}</span>
+              <Input
+                type="number"
+                min={0}
+                inputMode="numeric"
+                className="num h-14 text-[24px] font-bold"
+                value={stoppedAt.b}
+                onChange={(e) => setStoppedAt({ ...stoppedAt, b: e.target.value })}
+              />
+            </label>
+          </div>
+          <p className="mt-2 text-meta text-text-3">
+            Leave both blank if they stopped between games. Games nobody played stay out of point
+            difference.
+          </p>
+          <button
+            type="button"
+            onClick={() => setSpecial(null)}
+            className="tap mt-2 text-body font-medium text-link"
+          >
+            Never mind
+          </button>
+        </div>
+      ) : special?.kind === 'walkover' && special.side ? (
         <div className="rounded-card border border-line-strong bg-paper p-4">
           <p className="text-section text-text">
             {special.side === 'A' ? nameA : nameB} didn’t turn up.
@@ -281,7 +462,7 @@ export function ScoreEntry(props: ScoreEntryProps) {
             count towards points scored.
           </p>
         </div>
-      ) : !complete ? (
+      ) : !complete && !hornEnded ? (
         <div className="flex flex-col gap-4">
           <p className="font-score text-eyebrow text-text-3 uppercase">Game {gameNo}</p>
 
@@ -377,10 +558,30 @@ export function ScoreEntry(props: ScoreEntryProps) {
             {winnerName} win {outcome.gamesWonA}–{outcome.gamesWonB}
           </p>
           <p className="num mt-1 text-body text-text-2">{scoreLine}</p>
+          {hornEnded ? (
+            <p className="mt-1 text-meta text-text-3">
+              Stopped on time. The capped game keeps its points and sits out of point difference.
+            </p>
+          ) : null}
         </div>
       )}
 
-      {(complete || (special?.kind === 'walkover' && special.side)) ? (
+      {correcting && (complete || (special?.side && special.kind)) ? (
+        <label className="block">
+          <span className="text-section text-text">What changed?</span>
+          <Input
+            className="mt-2 h-14"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Wrong game 2 score — was 11–9, not 9–11"
+          />
+          <span className="mt-1 block text-meta text-text-3">
+            Saved with your name and the time. Players can see that a result was changed.
+          </span>
+        </label>
+      ) : null}
+
+      {(complete || (special?.side && special.kind)) ? (
         props.authoritative ? (
           <HoldButton disabled={busy} onComplete={() => send(null)}>
             {busy ? 'Saving…' : 'Hold to save the result'}
@@ -434,6 +635,26 @@ export function ScoreEntry(props: ScoreEntryProps) {
               </button>
               <button
                 type="button"
+                onClick={() => {
+                  setSpecial({ kind: 'retired', side: null })
+                  setSheet(false)
+                }}
+                className="tap-xl rounded-control border border-line-strong bg-paper px-4 text-left text-row text-text"
+              >
+                Someone couldn’t carry on
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCapped({ a: '', b: '' })
+                  setSheet(false)
+                }}
+                className="tap-xl rounded-control border border-line-strong bg-paper px-4 text-left text-row text-text"
+              >
+                The horn went — stopped on time
+              </button>
+              <button
+                type="button"
                 onClick={() => setSheet(false)}
                 className="tap rounded-control px-4 text-left text-body font-medium text-link"
               >
@@ -444,27 +665,34 @@ export function ScoreEntry(props: ScoreEntryProps) {
         </div>
       ) : null}
 
-      {special?.kind === 'walkover' && !special.side ? (
+      {special && !special.side ? (
         <div className="rounded-card border border-line-strong bg-paper p-4">
-          <p className="text-section text-text">Who didn’t turn up?</p>
+          <p className="text-section text-text">
+            {special.kind === 'walkover' ? 'Who didn’t turn up?' : 'Who stopped?'}
+          </p>
           <div className="mt-3 grid grid-cols-2 gap-3">
             <SideButton
               label={nameA}
               side="A"
               selected={false}
-              onClick={() => setSpecial({ kind: 'walkover', side: 'A' })}
+              onClick={() => setSpecial({ kind: special.kind, side: 'A' })}
             />
             <SideButton
               label={nameB}
               side="B"
               selected={false}
-              onClick={() => setSpecial({ kind: 'walkover', side: 'B' })}
+              onClick={() => setSpecial({ kind: special.kind, side: 'B' })}
             />
           </div>
         </div>
       ) : null}
 
-      {finished.length > 0 && !complete ? (
+      {hornEnded && !complete ? (
+        <p className="rounded-control bg-waiting-soft px-3.5 py-3 text-body font-medium text-waiting">
+          Level on games and level on points. Nothing here can call this one — the organiser
+          decides, and records it as a correction.
+        </p>
+      ) : finished.length > 0 && !complete ? (
         <p className="text-meta text-text-3">
           Best of {rules.bestOf} to {rules.pointsToWin} — first to {need} games.
         </p>

@@ -88,10 +88,11 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
 
         <FindMyMatch
           players={roster.map((p) => ({ id: p.id, name: p.name, teamIds: p.teamIds }))}
+          courtsInPlay={data.courtsInPlay}
           matches={data.matches.map((m, i) => ({
             id: m.id,
-            teamAId: null,
-            teamBId: null,
+            teamAId: m.teamAId,
+            teamBId: m.teamBId,
             nameA: m.nameA,
             nameB: m.nameB,
             playersA: m.playersA,
@@ -161,6 +162,20 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
                       {row.provisional ? (
                         <span className="block text-meta text-waiting">
                           Provisional — a result is still to be confirmed
+                        </span>
+                      ) : null}
+                      {/* The rule doesn't stop the argument; the reason does.
+                          This was computed and then thrown away, so a player
+                          who missed the final on a tiebreak was shown a
+                          position with no explanation at all (SPEC A6). */}
+                      {row.reason && row.played > 0 ? (
+                        <span
+                          className={clsx(
+                            'block truncate text-meta',
+                            row.reason.startsWith('drawn') ? 'text-alert' : 'text-text-3',
+                          )}
+                        >
+                          {row.reason}
                         </span>
                       ) : null}
                     </span>

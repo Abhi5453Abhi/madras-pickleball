@@ -59,3 +59,19 @@ export function elapsedLabel(since: Date | string, now: Date = new Date()): stri
   if (m < 1) return 'just started'
   return `${m} min`
 }
+
+/**
+ * The instant that ends today AT THE VENUE, as UTC. `d.setHours(23,59,...)` is
+ * the server's midnight: on a UTC host that is 05:29 the next morning in
+ * Chennai, so a court card printed at 9am would keep working overnight.
+ */
+export function endOfVenueDay(from: Date = new Date()): Date {
+  const key = venueDayKey(from) // YYYY-MM-DD at the venue
+  // +05:30 is fixed: India has no daylight saving and one offset nationwide.
+  return new Date(`${key}T23:59:59+05:30`)
+}
+
+/** The instant a venue day starts, as UTC. */
+export function startOfVenueDay(from: Date = new Date()): Date {
+  return new Date(`${venueDayKey(from)}T00:00:00+05:30`)
+}
