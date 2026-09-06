@@ -28,7 +28,7 @@ remember rather than one you have checked.
 ## Rules that are not negotiable
 
 1. **No network at runtime.** No font CDN, no script CDN, no external image
-   host. Fonts are self-hosted and subset in `public/fonts`. Anything that
+   host. Fonts are self-hosted, subset and inlined in `globals.css`. Anything that
    needs the network at page load is a layout shift on tournament morning.
 2. **No new dependencies** without a concrete reason that cannot be met by
    twenty lines of local code. The install has to work behind a restricted

@@ -1,26 +1,23 @@
 import 'server-only'
 import { sql } from 'drizzle-orm'
-import { db, isEmbeddedDb } from '@/db'
+import { db, isDemoDeployment, isEmbeddedDb } from '@/db'
 import { bootstrapSql } from '@/db/bootstrap-sql'
 import { courts, players, users, venues } from '@/db/schema'
 import { newId } from '@/lib/ids'
 import { hashPin } from '@/lib/password'
 import { ensureOrganiserPins, TEMP_PINS } from './organisers'
-import { assignCourts } from './events'
+import { createEvent, startEvent, syncCategoryPlayers } from './events'
 import { parsePlayerList } from '@/lib/parse-players'
 import {
-  createCategory,
   createTeams,
-  createTournament,
   generateDrawForCategory,
   importPlayers,
+  listMatches,
   listTournamentPlayers,
   pairRandomly,
-  setCategoryPlayers,
 } from './tournaments'
 import { submitResult } from './scoring'
-import { sendToCourt } from './board'
-import { eq } from 'drizzle-orm'
+import { flowTournament } from './board'
 import { tournaments } from '@/db/schema'
 
 /**
@@ -115,40 +112,36 @@ const DEMO_PLAYERS = `1. Ravi Kumar
 8. Kiran Balaji`
 
 /**
- * A demo deployment should look like a real Saturday on arrival: a league part
- * played, a table that means something, and a match on court.
+ * A demo deployment should look like a real Saturday on arrival: a Men's
+ * Doubles on Courts 1 and 2, two results in, two matches on court.
  */
 async function seedDemo() {
   const existing = await db.select().from(tournaments).limit(1)
   if (existing.length > 0) return
 
-  const tournament = await createTournament({
-    name: 'Sunday Social',
-    startDate: new Date(),
-    description: 'Demo data — this deployment resets when it goes idle.',
+  const courtRows = await db.select({ id: courts.id }).from(courts).orderBy(courts.sortOrder).limit(2)
+  const { tournament, categoryId } = await createEvent({
+    name: "Men's Doubles — demo",
+    date: new Date(),
+    gender: 'mens',
+    discipline: 'doubles',
+    finalsStage: 'final_only',
+    courtIds: courtRows.map((c) => c.id),
   })
 
   const parsed = parsePlayerList(DEMO_PLAYERS).filter((r) => r.name)
   await importPlayers(tournament.id, parsed.map((r) => ({ name: r.name, phone: r.phone })))
+  await syncCategoryPlayers(tournament.id)
 
   const roster = await listTournamentPlayers(tournament.id)
-  const categoryId = await createCategory({
-    tournamentId: tournament.id,
-    name: 'Doubles',
-    discipline: 'doubles',
-    gender: 'any',
-    finalsStage: 'final_only',
-  })
-  await setCategoryPlayers(categoryId, roster.map((p) => p.id))
-
   const pairs = pairRandomly(roster.map((p) => p.id), 'demo-seed', 2)
   await createTeams(categoryId, pairs, new Map(roster.map((p) => [p.id, p.name])))
   await generateDrawForCategory(categoryId)
 
-  // Play the first round out, and put one match on court.
-  const { listMatches } = await import('./tournaments')
-  const all = await listMatches(tournament.id)
-  const group = all.filter((m) => m.stage === 'group')
+  // Start: the first matches flow onto the two courts by themselves. Then
+  // score them, and the next two flow on.
+  const started = await startEvent(tournament.id)
+  if (!started.ok) return
 
   const scripted: Array<[number, number][]> = [
     [
@@ -161,14 +154,10 @@ async function seedDemo() {
       [11, 6],
     ],
   ]
-
-  for (const [i, m] of group.slice(0, 2).entries()) {
+  const live = (await listMatches(tournament.id)).filter((m) => m.status === 'live')
+  for (const [i, m] of live.slice(0, 2).entries()) {
     if (!m.teamAId || !m.teamBId) continue
-    const gs = scripted[i].map(([scoreA, scoreB], idx) => ({
-      gameNo: idx + 1,
-      scoreA,
-      scoreB,
-    }))
+    const gs = scripted[i].map(([scoreA, scoreB], idx) => ({ gameNo: idx + 1, scoreA, scoreB }))
     let a = 0
     for (const g of gs) if (g.scoreA > g.scoreB) a++
     await submitResult({
@@ -182,26 +171,17 @@ async function seedDemo() {
       clientEventId: newId('ce'),
       authoritative: true,
     })
+    await flowTournament(tournament.id)
   }
-
-  const [court] = await db.select().from(courts).limit(1)
-  if (court) await assignCourts(tournament.id, [court.id])
-  const next = (await listMatches(tournament.id)).find(
-    (m) => m.status === 'ready' && m.teamAId && m.teamBId,
-  )
-  if (next && court) await sendToCourt(next.id, court.id)
-
-  await db
-    .update(tournaments)
-    .set({ status: 'live', publishedAt: new Date() })
-    .where(eq(tournaments.id, tournament.id))
 }
 
 async function run() {
   if (!isEmbeddedDb) return
   if (!(await tablesExist())) await applySchema()
   await seedCore()
-  if (process.env.MPB_DEMO === '1') {
+  // A deployment with no database of its own arrives looking like a real
+  // Saturday, so there is something to look at; a laptop asks for it.
+  if (process.env.MPB_DEMO === '1' || isDemoDeployment) {
     const anyPlayer = await db.select().from(players).limit(1)
     if (anyPlayer.length === 0) await seedDemo()
   }

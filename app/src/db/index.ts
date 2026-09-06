@@ -48,19 +48,16 @@ export function describeTarget(): string {
   }
 }
 
+/**
+ * Deployed with no DATABASE_URL: the embedded database in /tmp, per instance,
+ * wiped whenever the host recycles it. Good enough to look at the app on a
+ * phone; wrong for a real Sunday, which is why the sign-in page says so.
+ */
+export const isDemoDeployment =
+  dbTarget().kind === 'embedded' && process.env.NODE_ENV === 'production'
+
 function build(): DbHandle {
   const target = dbTarget()
-  if (
-    target.kind === 'embedded' &&
-    process.env.NODE_ENV === 'production' &&
-    process.env.MPB_DEMO !== '1'
-  ) {
-    throw new Error(
-      'No DATABASE_URL is set. A production deployment needs a real Postgres — ' +
-        'the embedded database is per-instance and resets. Set DATABASE_URL, or ' +
-        'set MPB_DEMO=1 to run a throwaway demo.',
-    )
-  }
   const url = target.kind === 'postgres' ? target.url : undefined
 
   if (url) {
