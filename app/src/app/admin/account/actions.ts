@@ -8,7 +8,7 @@ import { verifyPin } from '@/lib/password'
 import { requireUser } from '@/lib/auth'
 import { revokeAllSessionsFor, createSession } from '@/lib/session'
 import { recordAudit } from '@/lib/audit'
-import { normalizePin, setPin } from '@/server/organisers'
+import { addOrganiser, normalizePin, removeOrganiser, setPin } from '@/server/organisers'
 
 export type PinState = { error?: string; ok?: boolean }
 
@@ -52,4 +52,43 @@ export async function changePin(_prev: PinState, formData: FormData): Promise<Pi
   await createSession({ ...user, mustChangePassword: false })
 
   redirect('/admin')
+}
+
+function back(note?: string, err?: string): never {
+  const q = new URLSearchParams()
+  if (note) q.set('note', note)
+  if (err) q.set('err', err)
+  const qs = q.toString()
+  redirect(`/admin/account${qs ? `?${qs}` : ''}` as never)
+}
+
+export async function addOrganiserAction(formData: FormData) {
+  const user = await requireUser('super_admin')
+  const res = await addOrganiser(formData.get('name'))
+  if (!res.ok) return back(undefined, res.error)
+  await recordAudit({
+    userId: user.id,
+    actorLabel: user.username,
+    action: 'organiser.add',
+    entity: 'user',
+    entityId: res.id,
+    after: { name: res.name },
+  })
+  // The PIN is said once, here, and nowhere else.
+  back(`${res.name} is in. Their PIN is ${res.pin} — tell them, and they choose their own the first time they sign in.`)
+}
+
+export async function removeOrganiserAction(formData: FormData) {
+  const user = await requireUser('super_admin')
+  const userId = String(formData.get('userId') ?? '')
+  const res = await removeOrganiser(userId, user.id)
+  if (!res.ok) return back(undefined, res.error)
+  await recordAudit({
+    userId: user.id,
+    actorLabel: user.username,
+    action: 'organiser.remove',
+    entity: 'user',
+    entityId: userId,
+  })
+  back('Removed. Their PIN no longer works.')
 }

@@ -1,7 +1,7 @@
 'use client'
 
 import { useActionState, useRef, useState } from 'react'
-import { Card, Input } from '@/components/ui'
+import { Card } from '@/components/ui'
 import { ROW_BUTTON } from '../../../_ui'
 import { addByHand, type AddState } from './actions'
 
@@ -69,16 +69,32 @@ export function AddPlayerForm({ slug }: { slug: string }) {
     <form key={state.done} action={action} className="flex flex-col gap-2">
       <input type="hidden" name="slug" value={slug} />
       <div className="flex gap-2">
-        <Input
+        {/* A textarea, not an input: the list from the group chat is one
+            name per line, and an input would flatten it into one long name.
+            It grows only when a paste brings more than one line. */}
+        <textarea
           name="text"
           required
           autoComplete="off"
           enterKeyHint="done"
-          aria-label="Add a player"
-          placeholder="Add a player — name, phone optional"
-          className="h-14 min-w-0 flex-1 placeholder:text-[14px]"
+          aria-label="Add a player, or paste a list"
+          placeholder="Add a player — or paste the list from the group chat"
+          rows={1}
+          onInput={(e) => {
+            const el = e.currentTarget
+            const lines = el.value.split('\n').length
+            el.rows = Math.min(8, Math.max(1, lines))
+          }}
+          onKeyDown={(e) => {
+            // Enter adds one name; a pasted list keeps its newlines.
+            if (e.key === 'Enter' && !e.shiftKey && !e.currentTarget.value.includes('\n')) {
+              e.preventDefault()
+              e.currentTarget.form?.requestSubmit()
+            }
+          }}
+          className="tap min-w-0 flex-1 resize-none rounded-control border border-line-key bg-paper px-3.5 py-[15px] text-body leading-[26px] text-text placeholder:text-[14px] placeholder:text-text-3 focus:border-link focus:ring-2 focus:ring-link/25 focus:outline-none"
         />
-        <button className={`${ROW_BUTTON} shrink-0`} disabled={pending}>
+        <button className={`${ROW_BUTTON} shrink-0 self-start`} disabled={pending}>
           {pending ? 'Adding…' : 'Add'}
         </button>
       </div>

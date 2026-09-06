@@ -10,6 +10,7 @@ import { settleTeams } from '@/server/teams'
 import { gamesByMatch, getTournamentBySlug, listMatches, standingsFor, teamNameMap } from '@/server/tournaments'
 import { PRIMARY_LINK, SECONDARY_LINK } from '../../_ui'
 import { finishEventAction, startEventAction } from './hub-actions'
+import { ShareButton } from './share'
 
 /**
  * One tournament's own page — SPEC v4.
@@ -69,12 +70,7 @@ export default async function TournamentHub(props: PageProps<'/admin/t/[slug]'>)
             <h1 className="text-title text-text">{t.name}</h1>
             <p className="num mt-1 text-meta text-text-3">{sub}</p>
           </div>
-          <Link
-            href={`/t/${slug}`}
-            className="tap -mr-1 inline-flex shrink-0 items-center gap-1 px-2 text-[16px] font-bold text-link"
-          >
-            Share <span aria-hidden>↗</span>
-          </Link>
+          <ShareButton path={`/t/${slug}`} title={t.name} />
         </div>
       </header>
 
@@ -117,9 +113,14 @@ export default async function TournamentHub(props: PageProps<'/admin/t/[slug]'>)
         />
       )}
 
-      <Link href={`${base}/more` as never} className="tap flex items-center justify-center px-3 text-[16px] font-semibold text-link">
-        More · players, courts, fixes, delete
-      </Link>
+      <div className="flex flex-col gap-1">
+        <Link href={`/t/${slug}`} className="tap flex items-center justify-center px-3 text-[16px] font-semibold text-link">
+          Public page — what players see
+        </Link>
+        <Link href={`${base}/more` as never} className="tap flex items-center justify-center px-3 text-[16px] font-semibold text-link">
+          More · players, courts, fixes, delete
+        </Link>
+      </div>
     </div>
   )
 }

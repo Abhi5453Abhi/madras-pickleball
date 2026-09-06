@@ -116,6 +116,12 @@ export default async function SchedulePage(props: PageProps<'/admin/t/[slug]/sch
           </p>
           <button className={SECONDARY_LINK}>Save courts</button>
         </form>
+        <Link
+          href="/admin/courts"
+          className="tap flex items-center justify-center px-3 text-[16px] font-semibold text-link"
+        >
+          Add or rename the venue&rsquo;s courts
+        </Link>
       </section>
 
       {/* Start sits above the list: with sixteen matches the list is a long

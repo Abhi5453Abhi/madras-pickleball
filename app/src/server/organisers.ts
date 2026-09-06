@@ -1,7 +1,8 @@
 // No `server-only` here: the setup script seeds PINs through this module.
 import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
 import { db } from '@/db'
-import { users } from '@/db/schema'
+import { sessions, users } from '@/db/schema'
+import { newId } from '@/lib/ids'
 import { hashPin, verifyPin } from '@/lib/password'
 
 /**
@@ -123,4 +124,60 @@ export async function ensureOrganiserPins(): Promise<Array<{ username: string; p
     issued.push({ username: u.username, pin })
   }
   return issued
+}
+
+// ───────────────────────── more than one organiser ─────────────────────────
+
+export async function listOrganisers() {
+  return db
+    .select({ id: users.id, name: users.name, role: users.role, lastLoginAt: users.lastLoginAt })
+    .from(users)
+    .where(
+      and(inArray(users.role, [...ORGANISER_ROLES]), eq(users.active, true), isNull(users.deletedAt)),
+    )
+    .orderBy(users.createdAt)
+}
+
+function randomPin() {
+  const n = Math.floor(100000 + Math.random() * 900000)
+  return String(n)
+}
+
+/**
+ * A second pair of hands. They get a temporary PIN, shown once to whoever
+ * added them, and choose their own the first time they sign in.
+ */
+export async function addOrganiser(rawName: unknown) {
+  const name = String(rawName ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60)
+  if (name.length < 2) return { ok: false as const, error: 'Give them a name.' }
+
+  let pin = randomPin()
+  for (let i = 0; i < 20 && (await organiserForPin(pin)); i++) pin = randomPin()
+  const digest = await hashPin(pin)
+  const username = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'organiser'}-${Math.random().toString(36).slice(2, 6)}`
+  const id = newId('usr')
+  await db.insert(users).values({
+    id,
+    name,
+    username,
+    role: 'admin',
+    passwordHash: digest,
+    pinHash: digest,
+    mustChangePassword: true,
+  })
+  return { ok: true as const, id, pin, name }
+}
+
+/** Off, not deleted: their name stays on everything they did. */
+export async function removeOrganiser(userId: string, byUserId: string) {
+  if (userId === byUserId) return { ok: false as const, error: 'You can’t remove yourself.' }
+  const [row] = await db.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1)
+  if (!row) return { ok: false as const, error: 'That organiser is not here.' }
+  if (row.role === 'super_admin') return { ok: false as const, error: 'The venue owner cannot be removed.' }
+  await db.update(users).set({ active: false, updatedAt: new Date() }).where(eq(users.id, userId))
+  await db.delete(sessions).where(eq(sessions.userId, userId))
+  return { ok: true as const }
 }

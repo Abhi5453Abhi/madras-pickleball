@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
 import { recordAudit } from '@/lib/audit'
 import { closeRegistration, reopenRegistration } from '@/server/events'
-import { addPlayerByHand, keepBoth, mergePlayers, removePlayer } from '@/server/registration'
+import { addPlayerByHand, addPlayersByHand, keepBoth, mergePlayers, removePlayer } from '@/server/registration'
 import { getTournamentBySlug } from '@/server/tournaments'
 
 /**
@@ -69,6 +69,25 @@ export async function addByHand(prev: AddState, formData: FormData): Promise<Add
   const text = String(formData.get('text') ?? '')
   const t = await getTournamentBySlug(slug)
   if (!t) return { error: 'That tournament no longer exists.', done: prev.done }
+
+  // One name, or the whole list pasted from the group chat.
+  const many = /\n/.test(text.trim())
+  if (many) {
+    const res = await addPlayersByHand(t.id, text)
+    if (!res.ok) return { error: res.error, done: prev.done }
+    await recordAudit({
+      userId: user.id,
+      actorLabel: user.username,
+      action: 'registration.pasted_list',
+      entity: 'tournament',
+      entityId: t.id,
+      after: { added: res.added, skipped: res.skipped, flagged: res.flagged },
+    })
+    revalidatePath(`/admin/t/${slug}/registration`)
+    revalidatePath(`/admin/t/${slug}`)
+    if (res.added === 0) return { error: 'Everyone in that list is already on it.', done: prev.done }
+    return { done: prev.done + 1 }
+  }
 
   const res = await addPlayerByHand(t.id, text)
   if (!res.ok) return { error: res.error, done: prev.done }

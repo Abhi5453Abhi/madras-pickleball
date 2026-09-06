@@ -413,6 +413,32 @@ export async function addPlayerByHand(tournamentId: string, text: string): Promi
   return addPlayer(tournamentId, { name: row.name, phone: row.phone, source: 'hand' })
 }
 
+/**
+ * The list pasted out of the group chat — one name per line, numbering,
+ * ticks and phone numbers all fine. Names already on the list are skipped
+ * and counted, not refused: the paste is the same list the organiser posted
+ * last week plus three new people.
+ */
+export async function addPlayersByHand(tournamentId: string, text: string) {
+  const rows = parsePlayerList(text.slice(0, 4000)).filter((r) => r.name)
+  if (!rows.length) return { ok: false as const, error: 'Put a name in — the phone number is optional.' }
+  let added = 0
+  let skipped = 0
+  const flagged: string[] = []
+  for (const row of rows) {
+    const roster = await rosterRows(tournamentId)
+    if (roster.some((r) => r.nameKey === normalizeName(row.name))) {
+      skipped++
+      continue
+    }
+    const res = await addPlayer(tournamentId, { name: row.name, phone: row.phone, source: 'hand' })
+    if (!res.ok) return { ok: false as const, error: res.error }
+    added++
+    if (res.flagged) flagged.push(row.name)
+  }
+  return { ok: true as const, added, skipped, flagged }
+}
+
 export type SubmitRegistration = {
   tournamentId: string
   name: string
