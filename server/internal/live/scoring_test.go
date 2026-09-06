@@ -253,3 +253,30 @@ func TestGetMatchForScoring(t *testing.T) {
 		t.Errorf("the correction view has %s and %d games", got.Match.ResultState, len(got.Games))
 	}
 }
+
+// A cancelled final counts for nobody, so it cannot be the thing that blocks a
+// correction — otherwise the organiser has a score they can never fix and a
+// match they can never un-void.
+func TestACancelledMatchDoesNotBlockACorrection(t *testing.T) {
+	d := deps(t)
+	ctx := context.Background()
+	f := makeFixture(t, d, fixtureOpts{Name: "Men's Doubles", Slug: "mens", FinalsStage: "final_only", Teams: 4})
+	playTheLeague(t, f)
+
+	final := f.knockout()[0]
+	if out, err := voidMatch(ctx, d, voidIn{MatchID: final.ID, Reason: "no time left for a final"}); err != nil || !out.OK {
+		t.Fatalf("void: %v %v", out, err)
+	}
+
+	first := f.Matches[0]
+	out, err := saveResult(ctx, d, saveResultIn{
+		MatchID: first.ID, ResultType: "normal", Reason: "the second game was 11-9",
+		Games: []wireGame{{GameNo: 1, ScoreA: 11, ScoreB: 6}, {GameNo: 2, ScoreA: 11, ScoreB: 9}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.OK {
+		t.Fatalf("the correction was refused by a cancelled match: %s", out.Error)
+	}
+}

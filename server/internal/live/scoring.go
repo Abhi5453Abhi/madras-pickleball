@@ -459,6 +459,14 @@ func correctionBlockers(ctx context.Context, q core.Querier, match *store.Match)
 		if !fed {
 			continue
 		}
+		// A cancelled match counts for nobody, so nothing upstream can harm it.
+		// The reference blocks on any dependent that is live or completed, and
+		// a voided match is stored as completed — which left the organiser with
+		// a correction that could never be applied and a match that could never
+		// be un-voided.
+		if m.ResultState == "voided" {
+			continue
+		}
 		if m.Status == "live" || m.Status == "completed" {
 			out = append(out, blocker{ID: m.ID, RoundName: m.RoundName})
 		}
