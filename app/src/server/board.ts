@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, asc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm'
 import { db, transact } from '@/db'
 import {
   categories,
@@ -1041,7 +1041,7 @@ function nextByCourt(t: VenueTournament) {
         const others = liveCourts.filter((o) => o.id !== c.id).map((o) => o.name)
         nextNote = others.length ? `waiting on ${possessive(others)}` : null
       } else if (board.waiting.length) nextNote = waitingNote(c.id)
-      else nextNote = 'Nothing left for this court'
+      else nextNote = 'This is the last one here'
     }
     out.set(c.id, {
       closedReason: c.closedReason,
@@ -1128,12 +1128,29 @@ export async function livePlayerConflict(tournamentId: string, matchId: string) 
  * this to a completed one resurrected a finished match and erased which court
  * it was played on.
  */
-export async function clearCourt(matchId: string) {
+export async function clearCourt(matchId: string, opts?: { later?: boolean }) {
   const [match] = await db.select().from(matches).where(eq(matches.id, matchId)).limit(1)
   if (!match) return { ok: false as const, error: 'That match no longer exists.' }
   if (match.status !== 'live') {
     return { ok: false as const, error: 'That match isn’t on a court.' }
   }
+
+  // "Play it later" has to mean something the next flow can see, or the
+  // court it just left offers the same match straight back. The order of
+  // play is (round, seq): the match goes to the back of its stage.
+  let order: { roundIndex: number; seq: number; roundName: string | null } | null = null
+  if (opts?.later) {
+    const [last] = await db
+      .select({ roundIndex: matches.roundIndex, seq: matches.seq, roundName: matches.roundName })
+      .from(matches)
+      .where(and(eq(matches.categoryId, match.categoryId), eq(matches.stage, match.stage)))
+      .orderBy(desc(matches.roundIndex), desc(matches.seq))
+      .limit(1)
+    if (last && (last.roundIndex !== match.roundIndex || last.seq !== match.seq)) {
+      order = { roundIndex: last.roundIndex, seq: last.seq + 1, roundName: last.roundName }
+    }
+  }
+
   await transact(async (tx) => {
     await tx
       .update(matches)
@@ -1141,6 +1158,7 @@ export async function clearCourt(matchId: string) {
         status: 'ready',
         courtId: null,
         startedAt: null,
+        ...(order ?? {}),
         version: sql`${matches.version} + 1`,
         updatedAt: new Date(),
       })

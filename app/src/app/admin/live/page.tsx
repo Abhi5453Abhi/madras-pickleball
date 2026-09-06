@@ -13,6 +13,8 @@ import {
 } from '@/server/board'
 import { addCourtFromBoard, putOnCourt, resumeFromBoard } from './actions'
 import { BoardRefresh } from './refresh'
+import { finishEventAction } from '../t/[slug]/hub-actions'
+import { PRIMARY_LINK } from '../_ui'
 
 /**
  * The one screen you look at while it's all happening — every court in the
@@ -86,6 +88,21 @@ export default async function LiveBoardPage(props: PageProps<'/admin/live'>) {
       ) : null}
 
       {running.length ? <Strip tournaments={running} /> : null}
+
+      {/* Everything played: finishing is the one thing left to do, so it is
+          the first thing on the board, not a text link inside a court card. */}
+      {running
+        .filter((t) => t.total > 0 && t.played === t.total)
+        .map((t) => (
+          <form key={t.id} action={finishEventAction}>
+            <input type="hidden" name="slug" value={t.slug} />
+            <button className={PRIMARY_LINK}>Finish {t.name}</button>
+            <p className="mt-2 text-center text-meta text-text-2">
+              All {t.total} played. Finishing puts the winners on top of the public page and frees its
+              courts.
+            </p>
+          </form>
+        ))}
 
       {running.length === 0 ? (
         <Notice tone="info" title="Nothing on court yet">
@@ -207,9 +224,7 @@ function CourtCard({ court, board }: { court: VenueCourt; board: VenueBoard }) {
               {t.board && t.board.remaining === 0 ? (
                 <>
                   .{' '}
-                  <Link href={`/admin/t/${t.slug}`} className="font-semibold text-link">
-                    Finish it on its page
-                  </Link>
+                  <span>Finish it with the button at the top</span>
                 </>
               ) : null}
             </p>
@@ -246,7 +261,7 @@ function NextLine({ court }: { court: VenueCourt }) {
     )
   }
   if (!court.nextNote) return null
-  if (court.nextNote === 'Nothing left for this court') {
+  if (court.nextNote === 'Nothing left for this court' || court.nextNote === 'This is the last one here') {
     return <p className="border-t border-line px-4 py-2.5 text-meta text-text-3">{court.nextNote}</p>
   }
   const [head, ...rest] = court.nextNote.split(' · ')

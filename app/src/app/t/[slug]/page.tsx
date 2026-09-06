@@ -239,6 +239,8 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
                           {r.name}
                           {r.withdrawn ? (
                             <span className="block text-meta font-normal text-text-3">pulled out</span>
+                          ) : r.note ? (
+                            <span className="block text-meta font-normal text-text-3">{r.note}</span>
                           ) : null}
                         </td>
                         <td className="num py-2.5 pl-3 text-right text-row text-text">{r.won}</td>

@@ -167,13 +167,16 @@ type Step = {
   describe?: (row: TeamRow) => string
 }
 
-const byWinRatio: Step = {
-  label: 'record',
-  compare: (x, y) => y.winRatio - x.winRatio,
-  // Mid-tournament two teams can both have three wins from different numbers
-  // of matches, and "3 wins above 3 wins" with no explanation is exactly the
-  // thing someone comes to the desk about. Say which record.
-  describe: (r) => `3 played, ${r.won} won`.replace('3 played', `${r.played} played`),
+/**
+ * Wins, counted — not the win ratio. The table's caption says "Level on wins?
+ * Most points scored goes through", and mid-league a pair with 1 win from 1
+ * match sorting above a pair with 2 wins from 3 contradicted the column it
+ * sat next to. Everyone plays everyone, so by the end the two agree anyway.
+ */
+const byWins: Step = {
+  label: 'wins',
+  compare: (x, y) => y.won - x.won,
+  describe: (r) => `${r.won} won from ${r.played} played`,
 }
 const byPointsScored: Step = {
   label: 'total points scored',
@@ -201,7 +204,7 @@ function orderGroup(
   const among = allMatches.filter((m) => ids.has(m.teamAId) && ids.has(m.teamBId))
 
   const steps: Step[] =
-    rule === 'points_scored_first' ? [byWinRatio, byPointsScored] : [byWinRatio]
+    rule === 'points_scored_first' ? [byWins, byPointsScored] : [byWins]
 
   for (const step of steps) {
     const sorted = [...tied].sort(step.compare)
@@ -230,7 +233,7 @@ function orderGroup(
     // Three or more → a mini-table over only the matches among them.
     const mini = tallyRows([...ids], among)
     const miniRows = tied.map((t) => mini.get(t.teamId)!)
-    for (const step of [byWinRatio, byGameDiff, byPointDiff]) {
+    for (const step of [byWins, byGameDiff, byPointDiff]) {
       const sorted = [...miniRows].sort(step.compare)
       const buckets = bucket(sorted, step.compare)
       if (buckets.length > 1) {
@@ -295,4 +298,15 @@ export function tiebreakNote(rule: TiebreakRule): string {
   return rule === 'points_scored_first'
     ? 'Level on record: most total points scored goes through, then head-to-head, then game and point difference. Point difference is capped at 8 per game; a no-show counts as a win but adds nothing to points or difference.'
     : 'Level on record: head-to-head first, then total points scored, then game and point difference. Point difference is capped at 8 per game; a no-show counts as a win but adds nothing to points or difference.'
+}
+
+/**
+ * The reason worth printing under a row: only when wins and points scored
+ * did not settle it. "2 won from 3 played" is the two columns beside it,
+ * said again; "ahead on head-to-head" is the thing someone will ask about.
+ */
+export function tieNote(reason?: string): string | null {
+  if (!reason) return null
+  if (reason.startsWith('wins') || reason.startsWith('total points scored')) return null
+  return reason
 }

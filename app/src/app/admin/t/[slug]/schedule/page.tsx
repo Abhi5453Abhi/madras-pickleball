@@ -2,7 +2,9 @@ import { clsx } from 'clsx'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
-import { Chevron, CourtSwatch, Notice, Panel, TeamName } from '@/components/ui'
+import { Chevron, CourtSwatch, Notice, Panel, splitTeam } from '@/components/ui'
+import { estimateDay, minutesPerMatch } from '@/lib/estimate'
+import { formatDuration, venueTime } from '@/lib/time'
 import { courtOptions, formatWords, hub } from '@/server/events'
 import { settleTeams } from '@/server/teams'
 import { getTournamentBySlug, listMatches, teamNameMap } from '@/server/tournaments'
@@ -39,6 +41,30 @@ export default async function SchedulePage(props: PageProps<'/admin/t/[slug]/sch
   const upcoming = all.filter((m) => m.resultState === 'none' && m.status !== 'cancelled')
   const locked = h.matchesPlayed > 0
   const canStart = h.phase === 'setup' && all.length > 0 && mine.length > 0
+  const semis = category.finalsStage === 'semis_and_final'
+
+  // "16 matches on 2 courts · about 4 hours · done by 17:40 if you start now"
+  // — the one number that decides whether the day fits.
+  const estimate = (() => {
+    if (!upcoming.length || !mine.length) return null
+    const day = estimateDay({
+      categories: [
+        {
+          name: category.name,
+          matchCount: upcoming.length,
+          minutesPerMatch: minutesPerMatch({ bestOf: category.bestOf, pointsToWin: category.pointsToWin }),
+          minMatchesPerEntry: 0,
+        },
+      ],
+      courts: mine.length,
+      startAt: new Date(),
+    })
+    return `${upcoming.length} ${upcoming.length === 1 ? 'match' : 'matches'} on ${mine.length} ${
+      mine.length === 1 ? 'court' : 'courts'
+    } · about ${formatDuration(day.minutes)}${
+      day.finishAt ? ` · done by ${venueTime(day.finishAt)} if you start now` : ''
+    }`
+  })()
 
   return (
     <div className="flex flex-col gap-6">
@@ -92,10 +118,24 @@ export default async function SchedulePage(props: PageProps<'/admin/t/[slug]/sch
         </form>
       </section>
 
+      {/* Start sits above the list: with sixteen matches the list is a long
+          scroll, and the button is the thing the organiser came for. */}
+      {canStart ? (
+        <form action={startEventAction}>
+          <input type="hidden" name="slug" value={slug} />
+          <button className={PRIMARY_LINK}>Start the tournament</button>
+          <p className="mt-2 text-center text-meta text-text-2">
+            Closes sign-ups and opens the live board. The first matches go straight onto the free courts.
+          </p>
+        </form>
+      ) : null}
+
       <section className="flex flex-col gap-3">
         <h2 className="font-score text-eyebrow text-text-2 uppercase">
           Order of play
-          {all.length ? <small className="num ml-1 font-normal normal-case text-text-3">{all.length}</small> : null}
+          {all.length ? (
+            <small className="num ml-1 font-normal normal-case text-text-3">{formatWords(category.finalsStage)}</small>
+          ) : null}
         </h2>
         {all.length === 0 ? (
           <form action={makeScheduleAction} className="flex flex-col gap-2">
@@ -113,21 +153,34 @@ export default async function SchedulePage(props: PageProps<'/admin/t/[slug]/sch
           </form>
         ) : (
           <>
+            {estimate ? <p className="num text-meta text-text-2">{estimate}</p> : null}
             <Panel>
               <ol className="divide-y divide-line">
                 {upcoming.map((m, i) => (
-                  <li key={m.id} className="flex items-center gap-3 px-4 py-3">
-                    <span className="num w-6 text-meta text-text-3">{i + 1}</span>
-                    <span className="min-w-0 flex-1">
-                      <TeamName name={m.teamAId ? (names.get(m.teamAId) ?? null) : null} />
-                      <span aria-hidden className="my-1 block h-px w-8 bg-line-strong" />
-                      <TeamName name={m.teamBId ? (names.get(m.teamBId) ?? null) : null} />
-                      {m.roundName ? <span className="mt-1 block text-meta text-text-3">{m.roundName}</span> : null}
+                  <li key={m.id} className="flex min-h-[52px] items-center gap-3 px-4 py-2">
+                    <span className="num w-6 shrink-0 text-meta text-text-3">{i + 1}</span>
+                    <span className="min-w-0 flex-1 text-row text-text">
+                      <span className={m.teamAId ? 'font-semibold' : 'font-normal text-text-3'}>
+                        {m.teamAId ? shortTeam(names.get(m.teamAId)) : slotWords(m, 'A', semis)}
+                      </span>
+                      <span className="mx-1.5 text-meta font-normal text-text-3">v</span>
+                      <span className={m.teamBId ? 'font-semibold' : 'font-normal text-text-3'}>
+                        {m.teamBId ? shortTeam(names.get(m.teamBId)) : slotWords(m, 'B', semis)}
+                      </span>
                     </span>
+                    {m.roundName ? (
+                      <span className="shrink-0 rounded-full border border-line-strong bg-sunken px-2 py-0.5 text-meta font-semibold text-text-2">
+                        {m.roundName}
+                      </span>
+                    ) : null}
                   </li>
                 ))}
               </ol>
             </Panel>
+            <p className="text-meta text-text-3">
+              Matches go on in this order onto whichever of the courts above is free. Nobody plays twice
+              in a row where it can be helped.
+            </p>
             {!locked ? (
               <form action={makeScheduleAction}>
                 <input type="hidden" name="slug" value={slug} />
@@ -138,19 +191,32 @@ export default async function SchedulePage(props: PageProps<'/admin/t/[slug]/sch
         )}
       </section>
 
-      {canStart ? (
-        <form action={startEventAction}>
-          <input type="hidden" name="slug" value={slug} />
-          <button className={PRIMARY_LINK}>Start the tournament</button>
-          <p className="mt-2 text-center text-meta text-text-2">
-            Closes sign-ups and opens the live board. The first matches go straight onto the free courts.
-          </p>
-        </form>
-      ) : null}
-
       <Link href={`/admin/t/${slug}`} className={SECONDARY_LINK}>
         Back to {t.name}
       </Link>
     </div>
   )
+}
+
+/** "Karthik / Sathish" — first names only, the way the order is read out. */
+function shortTeam(name: string | null | undefined) {
+  return splitTeam(name)
+    .map((p) => p.split(/\s+/)[0])
+    .join(' / ')
+}
+
+/**
+ * Who plays a knockout match before the table has decided it. Mirrors the
+ * shape in `src/lib/draw.ts`: a lone final is 1st v 2nd; semis are 1st v 4th
+ * and 2nd v 3rd, and their final is the two winners.
+ */
+function slotWords(m: { roundName: string | null; seq: number }, side: 'A' | 'B', semis: boolean) {
+  if (m.roundName === 'Semi-final') {
+    return m.seq === 0 ? (side === 'A' ? '1st in table' : '4th in table') : side === 'A' ? '2nd in table' : '3rd in table'
+  }
+  if (m.roundName === 'Final') {
+    if (semis) return side === 'A' ? 'Winner of semi 1' : 'Winner of semi 2'
+    return side === 'A' ? '1st in table' : '2nd in table'
+  }
+  return 'To be decided'
 }

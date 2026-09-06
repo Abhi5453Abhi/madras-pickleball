@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
 import { Card, Chevron, Notice, Panel, TeamName } from '@/components/ui'
 import { venueDate, venueTime } from '@/lib/time'
+import { tieNote } from '@/lib/standings'
 import { formatWords, hub, type Step } from '@/server/events'
 import { settleTeams } from '@/server/teams'
 import { gamesByMatch, getTournamentBySlug, listMatches, standingsFor, teamNameMap } from '@/server/tournaments'
@@ -318,9 +319,14 @@ async function Running({
               </thead>
               <tbody>
                 {table.rows.map((r, i) => (
-                  <RowWithCut key={r.teamId} index={i} cut={cut} finished={phase === 'finished'}>
+                  <RowWithCut key={r.teamId} index={i} cut={finalMatch ? 0 : cut} finished={phase === 'finished'}>
                     <td className="num py-2.5 pl-4 text-meta text-text-3">{i + 1}</td>
-                    <td className="py-2.5 text-row text-text">{names.get(r.teamId) ?? '—'}</td>
+                    <td className="py-2.5 text-row text-text">
+                      {names.get(r.teamId) ?? '—'}
+                      {tieNote(r.reason) ? (
+                        <span className="block text-meta font-normal text-text-3">{tieNote(r.reason)}</span>
+                      ) : null}
+                    </td>
                     <td className="num py-2.5 pl-3 text-right text-row text-text">{r.won}</td>
                     <td className="num py-2.5 pr-4 pl-3 text-right text-row text-text">{r.pointsFor}</td>
                   </RowWithCut>

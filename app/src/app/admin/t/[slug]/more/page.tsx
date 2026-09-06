@@ -114,10 +114,10 @@ export default async function MorePage(props: PageProps<'/admin/t/[slug]/more'>)
           {String(q.err)}
         </Notice>
       ) : null}
-      {q.done ? <Notice tone="info">{String(q.done)}</Notice> : null}
+      {q.done ? <Notice tone="done">{String(q.done)}</Notice> : null}
 
       {view === null ? (
-        <MoreList base={base} more={more} paused={!!t.pauseNote} unit={unit} />
+        <MoreList base={base} more={more} paused={!!t.pauseNote} unit={unit} phase={t.status} />
       ) : view === 'fix' ? (
         <FixScore played={await playedMatches(t.id)} />
       ) : view === 'withdraw' ? (
@@ -150,22 +150,28 @@ function MoreList({
   more,
   paused,
   unit,
+  phase,
 }: {
   base: string
   more: string
   paused: boolean
   unit: 'pair' | 'player'
+  phase: string
 }) {
-  const rows: Array<{ label: string; href: string }> = [
-    { label: 'Fix a score that’s already in', href: `${more}?do=fix` },
-    { label: `A ${unit} has pulled out`, href: `${more}?do=withdraw` },
-    { label: 'Swap a player', href: `${more}?do=swap` },
-    { label: 'Change the courts', href: `${base}/schedule` },
-    { label: 'Change the order of play', href: `${base}/schedule` },
-    { label: 'Shorten what’s left', href: `${more}?do=shorten` },
-    { label: paused ? 'Start again' : 'Pause the tournament', href: `${more}?do=pause` },
-    { label: 'Add or remove players', href: `${base}/registration` },
-  ]
+  const finished = phase === 'completed' || phase === 'archived'
+  const running = phase === 'live'
+  // A finished tournament has nothing left to pause, shorten or reorder;
+  // one that has not started has no scores to fix.
+  const rows: Array<{ label: string; href: string; when?: boolean }> = [
+    { label: 'Fix a score that’s already in', href: `${more}?do=fix`, when: running || finished },
+    { label: `A ${unit} has pulled out`, href: `${more}?do=withdraw`, when: !finished },
+    { label: 'Swap a player', href: `${more}?do=swap`, when: !finished },
+    { label: 'Change the courts', href: `${base}/schedule`, when: !finished },
+    { label: 'Change the order of play', href: `${base}/schedule`, when: !finished },
+    { label: 'Shorten what’s left', href: `${more}?do=shorten`, when: running },
+    { label: paused ? 'Start again' : 'Pause the tournament', href: `${more}?do=pause`, when: running },
+    { label: 'Add or remove players', href: `${base}/registration`, when: !finished },
+  ].filter((r) => r.when !== false)
   return (
     <>
       <Card>

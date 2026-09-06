@@ -124,7 +124,7 @@ export default async function AdminHome(props: PageProps<'/admin'>) {
 
       {nothing ? (
         <p className="text-meta text-text-3">
-          Your courts are set up under More on any tournament.
+          Players sign up from a link you send them. You enter every score.
         </p>
       ) : (
         <Link href="/admin/new" className={SECONDARY_LINK}>

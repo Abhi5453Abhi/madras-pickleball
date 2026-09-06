@@ -191,17 +191,21 @@ function UnpairedRow({
   locked: boolean
   alone: boolean
 }) {
+  // The wish and why it did not happen sit under the name; the right-hand
+  // side is the same "Pair with…" on every row, so nobody looks unpairable.
   const names = (
     <span className="min-w-0 flex-1">
       <span className="block text-row text-text">{p.name}</span>
-      <span className="block text-meta text-text-3">{wishLine(p)}</span>
+      <span className="block text-meta text-text-3">
+        {wishLine(p)}
+        {p.note ? ` · ${p.note}` : ''}
+      </span>
     </span>
   )
-  const right = p.note ? (
-    <span className="shrink-0 text-right text-meta text-text-2">{p.note}</span>
-  ) : locked || alone ? null : (
-    <span className="shrink-0 text-[16px] font-semibold text-link">Pair with…</span>
-  )
+  const right =
+    locked || alone ? null : (
+      <span className="shrink-0 text-[16px] font-semibold text-link">Pair with…</span>
+    )
   if (locked || alone) {
     return (
       <li className="flex min-h-[56px] items-center gap-3 px-4 py-2.5">

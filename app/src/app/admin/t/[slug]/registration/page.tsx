@@ -43,6 +43,10 @@ export default async function RegistrationPage(props: PageProps<'/admin/t/[slug]
     headers(),
   ])
   const doubles = category.discipline !== 'singles'
+  // A possible duplicate is the one row that needs a decision, so it goes to
+  // the top of the list rather than wherever it arrived.
+  const flagged = roster.filter((r) => r.duplicateOf).length
+  const ordered = [...roster.filter((r) => r.duplicateOf), ...roster.filter((r) => !r.duplicateOf)]
 
   // The address as the organiser will paste it. The host is whatever they are
   // looking at this page on, which is the only origin the app can vouch for.
@@ -64,6 +68,7 @@ export default async function RegistrationPage(props: PageProps<'/admin/t/[slug]
         <h1 className="mt-1 text-title text-text">Registration</h1>
         <p className="num mt-1 text-meta text-text-3">
           {roster.length} in · sign-ups {closed ? 'closed' : 'open'}
+          {flagged ? ` · ${flagged} possible ${flagged === 1 ? 'duplicate' : 'duplicates'}` : ''}
         </p>
       </header>
 
@@ -72,7 +77,7 @@ export default async function RegistrationPage(props: PageProps<'/admin/t/[slug]
           {String(err)}
         </Notice>
       ) : null}
-      {note ? <Notice tone="info">{String(note)}</Notice> : null}
+      {note ? <Notice tone="done">{String(note)}</Notice> : null}
 
       {closed ? (
         <Card className="border-line-key p-4">
@@ -106,7 +111,7 @@ export default async function RegistrationPage(props: PageProps<'/admin/t/[slug]
         </>
       )}
 
-      <AddPlayerForm slug={slug} closed={closed} />
+      <AddPlayerForm slug={slug} />
 
       <section className="flex flex-col gap-3">
         <h2 className="font-score text-eyebrow text-text-2 uppercase">
@@ -126,7 +131,7 @@ export default async function RegistrationPage(props: PageProps<'/admin/t/[slug]
         ) : (
           <Panel>
             <ul className="divide-y divide-line">
-              {roster.map((r) => {
+              {ordered.map((r) => {
                 // "wants Sathish Kumar · via link". A flagged row skips "no
                 // partner named": the tag under it is the thing to read.
                 const meta = [
@@ -149,7 +154,7 @@ export default async function RegistrationPage(props: PageProps<'/admin/t/[slug]
                         ) : null}
                       </div>
                       <Confirm
-                        className="ml-auto shrink-0 [&[open]]:w-full"
+                        className="ml-auto shrink-0 [&>summary]:border-0 [&>summary]:px-2 [&>summary]:text-link [&[open]]:w-full"
                         label="Remove"
                         question={`${r.name} comes off the list. If they are in a pair that has not played, the pair is split.`}
                       >

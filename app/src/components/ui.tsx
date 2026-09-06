@@ -107,18 +107,22 @@ export function Button({ className, variant = 'primary', ...rest }: ButtonProps)
   )
 }
 
-type NoticeTone = 'alert' | 'info' | 'waiting'
+type NoticeTone = 'alert' | 'info' | 'waiting' | 'done'
 
 const NOTICE_FLAT: Record<NoticeTone, string> = {
   alert: 'bg-alert-soft text-alert',
   info: 'bg-accent-soft text-accent-hi',
   waiting: 'bg-waiting-soft text-waiting',
+  // "Done. Ravi S and Ravi Shankar are one person now." — a receipt, not a
+  // warning, so it gets no colour of its own.
+  done: 'bg-sunken text-text',
 }
 
 const NOTICE_BLOCK: Record<NoticeTone, { edge: string; word: string }> = {
   alert: { edge: 'border-alert/40 bg-alert-soft', word: 'text-alert' },
   info: { edge: 'border-accent/35 bg-accent-soft', word: 'text-accent-hi' },
   waiting: { edge: 'border-waiting/45 bg-waiting-soft', word: 'text-waiting' },
+  done: { edge: 'border-line-strong bg-sunken', word: 'text-text-2' },
 }
 
 /**

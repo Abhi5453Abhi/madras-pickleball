@@ -13,7 +13,7 @@ import {
   tournamentPlayers,
   tournaments,
 } from '@/db/schema'
-import { standings } from '@/lib/standings'
+import { tieNote, standings } from '@/lib/standings'
 import { venueDayKey } from '@/lib/time'
 import { AUTO_CONFIRM_MINUTES, isProvisional, projectedState } from './scoring'
 
@@ -59,6 +59,8 @@ export type PublicTableRow = {
   won: number
   pointsFor: number
   withdrawn: boolean
+  /** Why this row sits where it does, when wins and points did not decide it. */
+  note: string | null
 }
 
 export type PublicCourt = { id: string; name: string; colorKey: string }
@@ -351,8 +353,12 @@ export const publicTournament = cache(async function publicTournament(slug: stri
         won: row.won,
         pointsFor: row.pointsFor,
         withdrawn: withdrawnTeams.has(row.teamId),
+        note: tieNote(row.reason),
       }))
     : []
+
+  // Once the final has been played the cut line has done its job.
+  const finalDecided = allMatches.some((m) => m.stage === 'knockout' && m.winnerSide)
 
   const finalsStage = category?.finalsStage ?? 'none'
   return {
@@ -360,7 +366,7 @@ export const publicTournament = cache(async function publicTournament(slug: stri
     discipline: category?.discipline ?? 'doubles',
     finalsStage,
     /** How many go through from the table; 0 when everyone just plays everyone. */
-    cut: finalsStage === 'none' ? 0 : (category?.advancePerGroup ?? 0),
+    cut: finalsStage === 'none' || finalDecided ? 0 : (category?.advancePerGroup ?? 0),
     courts: courtRows as PublicCourt[],
     players: rosterRows.map((r) => r.name),
     matches: allMatches,

@@ -45,9 +45,9 @@ export async function moveMatchAction(formData: FormData) {
 }
 
 /**
- * Off court, no score, back in its place in the order. The court it left
- * fills with the next match — not this one, which the organiser has just
- * said to play later.
+ * Off court, no score, and to the back of the order. The court it left fills
+ * with the next match — not this one, which the organiser has just said to
+ * play later.
  */
 export async function backToQueueAction(formData: FormData) {
   const user = await requireUser('admin')
@@ -55,7 +55,7 @@ export async function backToQueueAction(formData: FormData) {
   const tournamentId = await tournamentOf(matchId)
   if (!tournamentId) redirect('/admin/live')
 
-  const res = await clearCourt(matchId)
+  const res = await clearCourt(matchId, { later: true })
   if (!res.ok) {
     redirect(`/admin/live/move/${matchId}?err=${encodeURIComponent(res.error)}` as never)
   }

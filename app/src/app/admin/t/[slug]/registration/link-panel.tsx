@@ -63,7 +63,7 @@ export function LinkCard({ shown, full }: { shown: string; full: string }) {
  * One line, one button. The form is keyed on how many have gone in, so a
  * successful add gives back an empty box without any effect or reset call.
  */
-export function AddPlayerForm({ slug, closed }: { slug: string; closed: boolean }) {
+export function AddPlayerForm({ slug }: { slug: string }) {
   const [state, action, pending] = useActionState<AddState, FormData>(addByHand, { done: 0 })
   return (
     <form key={state.done} action={action} className="flex flex-col gap-2">
@@ -75,7 +75,7 @@ export function AddPlayerForm({ slug, closed }: { slug: string; closed: boolean 
           autoComplete="off"
           enterKeyHint="done"
           aria-label="Add a player"
-          placeholder={closed ? 'Add a player by hand — name, phone optional' : 'Add a player — name, phone optional'}
+          placeholder="Add a player — name, phone optional"
           className="h-14 min-w-0 flex-1 placeholder:text-[14px]"
         />
         <button className={`${ROW_BUTTON} shrink-0`} disabled={pending}>

@@ -308,8 +308,8 @@ describe('standings', () => {
     expect(rows.every((r) => r.won === 1 && r.lost === 1)).toBe(true)
   })
 
-  it('ranks on win ratio, so an unequal number of matches is fair', () => {
-    // a: 2 from 2. b: 2 from 3.
+  it('ranks on wins counted, as the caption under the table says', () => {
+    // a: 2 from 2. b: 2 from 3 with more points. Level on wins → points.
     const rows = standings(
       ['a', 'b', 'c', 'd'],
       [
@@ -317,11 +317,14 @@ describe('standings', () => {
         won('2', 'a', 'd', [[11, 5], [11, 5]]),
         won('3', 'b', 'c', [[11, 5], [11, 5]]),
         won('4', 'b', 'd', [[11, 5], [11, 5]]),
-        won('5', 'c', 'b', [[11, 5], [11, 5]]),
+        won('5', 'c', 'b', [[11, 9], [11, 9]]),
       ],
     )
-    expect(rows[0].teamId).toBe('a')
-    expect(rows[0].winRatio).toBe(1)
+    expect(rows[0].teamId).toBe('b')
+    expect(rows[0].reason).toMatch(/points/)
+    expect(rows[1].teamId).toBe('a')
+    // Fewer wins from fewer matches ranks below more wins, whatever the ratio.
+    expect(rows.map((r) => r.teamId)).toEqual(['b', 'a', 'c', 'd'])
   })
 
   it('gives a walkover the win but nothing towards difference', () => {

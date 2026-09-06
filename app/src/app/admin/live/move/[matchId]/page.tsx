@@ -100,7 +100,7 @@ export default async function MovePage(props: PageProps<'/admin/live/move/[match
               <button className="tap-lg flex w-full items-center gap-3 px-4 text-left">
                 <span className="min-w-0 flex-1">
                   <span className="block text-row text-text">Back to the queue</span>
-                  <span className="block text-meta text-text-3">take it off court, play it later</span>
+                  <span className="block text-meta text-text-3">take it off court — it goes to the back of the order</span>
                 </span>
                 <Tag tone="accent">Pick</Tag>
               </button>
