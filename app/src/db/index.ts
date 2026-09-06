@@ -32,7 +32,9 @@ type DbHandle = ReturnType<typeof drizzlePg<typeof schema>> | ReturnType<typeof 
 /** Which database this process is talking to, and why. */
 export function dbTarget(): { kind: 'postgres'; url: string } | { kind: 'embedded' } {
   if (process.env.MPB_DB === 'embedded') return { kind: 'embedded' }
-  const url = process.env.DATABASE_URL
+  // POSTGRES_URL is what a database connected through Vercel's storage
+  // screen may be called instead, depending on the prefix chosen there.
+  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL
   return url ? { kind: 'postgres', url } : { kind: 'embedded' }
 }
 
