@@ -14,7 +14,7 @@ build:             ## the web app, then the binary that embeds it
 	cd server && go build -o ../bin/mpb ./cmd/mpb
 
 test:              ## Go tests (database tests need MPB_TEST_DATABASE_URL)
-	cd server && go vet ./... && go test ./...
+	cd server && go vet ./... && go test -p 1 ./...
 
 check: test        ## everything the CI would run
 	cd web && npx tsc -b && npx vite build

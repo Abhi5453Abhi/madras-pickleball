@@ -98,12 +98,13 @@ export function ScorePage() {
               winnerTeamId: payload.winnerTeamId,
               retiredTeamId: payload.retiredTeamId,
               reason: payload.reason,
+              expectedVersion: data.match.version,
             })
             if (res.ok) {
               navigate(back)
               return { ok: true }
             }
-            return { ok: false, error: res.error }
+            return { ok: false, error: res.error, recover: res.recover }
           } catch (e) {
             if (e instanceof RpcError && e.redirect) navigate(e.redirect, { replace: true })
             return {

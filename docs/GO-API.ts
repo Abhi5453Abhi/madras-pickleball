@@ -1326,6 +1326,8 @@ export type Scoring_getMatchForScoring = {
       resultState: ResultState
       resultType: ResultType
       winnerTeamId: string | null
+      /** Sent back as `expectedVersion`, so a score typed against a stale screen is refused. */
+      version: number
     }
     /** "Men's Doubles" — the eyebrow over the two names. */
     categoryName: string
@@ -1370,8 +1372,11 @@ export type Scoring_saveResult = {
     retiredTeamId: string | null
     /** Required, and 3+ characters, when the match already has a result. */
     reason?: string
+    /** The match's `version` as the screen loaded it; the save is refused
+     *  with recover:'reload' when the match has moved on since. */
+    expectedVersion?: number
   }
-  output: { ok: true } | { ok: false; error: string }
+  output: { ok: true } | { ok: false; error: string; recover?: 'retry' | 'reload' }
 }
 
 // ═══════════════════════════════ chaos ═══════════════════════════════

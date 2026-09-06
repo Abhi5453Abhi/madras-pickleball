@@ -11,8 +11,11 @@ import (
 	"mpb/internal/setup"
 )
 
-// Register adds every module to the mux and the RPC registry.
+// Register adds every module to the mux and the RPC registry, and joins the
+// two halves: starting a tournament or changing its courts (setup) sends
+// the next matches onto free courts (live).
 func Register(mux *http.ServeMux, reg *rpc.Registry, d *core.Deps) {
+	setup.FlowTournament = live.FlowTournament
 	setup.Register(mux, reg, d)
 	live.Register(mux, reg, d)
 }
