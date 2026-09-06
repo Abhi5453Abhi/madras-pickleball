@@ -518,3 +518,35 @@ func Placeholders(start, n int) string {
 	}
 	return strings.Join(parts, ", ")
 }
+
+// StandingsMatches turns a tournament's group matches into what the engine's
+// Standings needs. Only matches with both teams and a result count; voided
+// ones are passed through with State "voided" so the engine can ignore them
+// the same way the reference did. groupID "" means every group.
+func StandingsMatches(ctx context.Context, q core.Querier, tournamentID, groupID string) ([]engine.StandingsMatch, error) {
+	all, err := Matches(ctx, q, tournamentID)
+	if err != nil {
+		return nil, err
+	}
+	var out []engine.StandingsMatch
+	for _, m := range all {
+		if m.Stage != "group" || m.TeamAID == nil || m.TeamBID == nil {
+			continue
+		}
+		if groupID != "" && (m.GroupID == nil || *m.GroupID != groupID) {
+			continue
+		}
+		if m.ResultState == "none" {
+			continue
+		}
+		sm := engine.StandingsMatch{
+			MatchID: m.ID, TeamAID: *m.TeamAID, TeamBID: *m.TeamBID,
+			State: m.ResultState, ResultType: m.ResultType, Games: m.Games,
+		}
+		if m.WinnerTeamID != nil {
+			sm.WinnerTeamID = *m.WinnerTeamID
+		}
+		out = append(out, sm)
+	}
+	return out, nil
+}
