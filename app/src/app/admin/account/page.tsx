@@ -34,16 +34,11 @@ export default async function AccountPage(props: PageProps<'/admin/account'>) {
 
       {forced ? (
         <>
-          <Notice tone="info" title="Temporary PIN" detail="Nothing else opens until this is done.">
+          <Notice tone="info" title="Temporary PIN">
             Pick your own before you carry on — the one you were given is written down somewhere.
           </Notice>
           <Card className="p-4">
-            <h2 className="text-section text-text">
-              {forced ? 'Choose your PIN' : 'Change your PIN'}
-            </h2>
-            <p className="mt-1 mb-4 text-body text-text-2">
-              Every other phone you are signed in on is signed out. This one stays signed in.
-            </p>
+            <h2 className="mb-4 text-section text-text">Choose your PIN</h2>
             <PinForm forced={forced} />
           </Card>
         </>
@@ -103,11 +98,9 @@ export default async function AccountPage(props: PageProps<'/admin/account'>) {
             The venue&rsquo;s courts
           </Link>
           <Card className="p-4">
-            <h2 className="text-section text-text">
-              {forced ? 'Choose your PIN' : 'Change your PIN'}
-            </h2>
+            <h2 className="text-section text-text">Change your PIN</h2>
             <p className="mt-1 mb-4 text-body text-text-2">
-              Every other phone you are signed in on is signed out. This one stays signed in.
+              Any other phone signed in with the old one is signed out.
             </p>
             <PinForm forced={forced} />
           </Card>

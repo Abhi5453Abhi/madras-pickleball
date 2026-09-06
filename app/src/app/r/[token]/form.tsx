@@ -28,7 +28,7 @@ export function SignupForm({ token, doubles }: { token: string; doubles: boolean
 
   if (state.ok) {
     return (
-      <div className="rounded-card border border-live bg-live-soft p-4">
+      <div className="rounded-card border border-line-key bg-paper p-4 shadow-card">
         <p className="text-section text-text">
           {state.alreadyIn ? 'You’re already on the list.' : 'You’re on the list.'}
         </p>
@@ -64,7 +64,7 @@ export function SignupForm({ token, doubles }: { token: string; doubles: boolean
 
       <label className="block">
         <span className="text-row text-text">
-          Phone <span className="font-normal text-text-3">· optional, only the organiser sees it</span>
+          Phone <span className="font-normal text-text-3">· optional</span>
         </span>
         <Input
           name="phone"

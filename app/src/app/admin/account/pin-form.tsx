@@ -37,10 +37,7 @@ export function PinForm({ forced }: { forced?: boolean }) {
       <PinField id="current" name="current" label="Current PIN" autoComplete="current-password" />
       <PinField id="next" name="next" label="New PIN" autoComplete="new-password" />
       <PinField id="confirm" name="confirm" label="Type it again" autoComplete="new-password" />
-      <p className="text-meta text-text-2">
-        Six digits. Not your birthday, not 123456 — it is the only thing between the internet and
-        your scores.
-      </p>
+      <p className="text-meta text-text-2">Six digits. Not your birthday, not 123456.</p>
       <Button type="submit" disabled={pending}>
         {pending ? 'Saving…' : forced ? 'Save my PIN' : 'Change PIN'}
       </Button>

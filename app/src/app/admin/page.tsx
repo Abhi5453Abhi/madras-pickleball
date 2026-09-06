@@ -11,7 +11,7 @@ import {
 import { venueDate } from '@/lib/time'
 import { ensureReady } from '@/server/bootstrap'
 import { dashboard, formatWords, type DashboardRow } from '@/server/events'
-import { PRIMARY_LINK, SECONDARY_LINK } from './_ui'
+import { PRIMARY_LINK } from './_ui'
 
 /**
  * The front door once you are in. Everything on today at the top with its
@@ -67,7 +67,7 @@ export default async function AdminHome(props: PageProps<'/admin'>) {
 
       {today.length ? (
         <section className="flex flex-col gap-3">
-          <Eyebrow live>
+          <Eyebrow live={anyLive}>
             On today <small className="num ml-1 font-normal normal-case text-text-3">{venueDate(new Date())}</small>
           </Eyebrow>
           <ul className="flex flex-col gap-3">
@@ -126,11 +126,7 @@ export default async function AdminHome(props: PageProps<'/admin'>) {
         <p className="text-meta text-text-3">
           Players sign up from a link you send them. You enter every score.
         </p>
-      ) : (
-        <Link href="/admin/new" className={SECONDARY_LINK}>
-          Make another tournament
-        </Link>
-      )}
+      ) : null}
     </div>
   )
 }
@@ -149,6 +145,11 @@ function sizeLine(t: DashboardRow) {
   return `${t.players} ${t.players === 1 ? 'player' : 'players'}${
     t.discipline === 'doubles' ? teams : ''
   } · ${formatWords(t.format)}`
+}
+
+/** "Men's Doubles · 12 players" says the name twice when the name IS the category. */
+function categoryPrefix(t: DashboardRow) {
+  return t.name.includes(t.category) ? '' : `${t.category} · `
 }
 
 function CourtChips({ courts }: { courts: DashboardRow['courts'] }) {
@@ -185,7 +186,8 @@ function TodayCard({ row: t }: { row: DashboardRow }) {
           )}
         </div>
         <p className="num mt-1 text-meta text-text-2">
-          {t.category} · {sizeLine(t)}
+          {categoryPrefix(t)}
+          {sizeLine(t)}
         </p>
         <div className="mt-2.5">
           <CourtChips courts={t.courts} />
@@ -222,7 +224,8 @@ function UpcomingCard({ row: t }: { row: DashboardRow }) {
           <StatusPill state="waiting">{venueDate(t.startDate)}</StatusPill>
         </div>
         <p className="num mt-1 text-meta text-text-2">
-          {t.category} · {t.players} registered · {formatWords(t.format)}
+          {categoryPrefix(t)}
+          {t.players} registered · {formatWords(t.format)}
         </p>
         <p className="mt-1 text-meta text-text-3">
           {t.registrationOpen ? 'Sign-ups open' : 'Sign-ups closed'}

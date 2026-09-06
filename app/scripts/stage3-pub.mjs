@@ -119,12 +119,12 @@ for (const label of [
   'A pair has pulled out',
   'Swap a player',
   'Change the courts',
-  'Change the order of play',
   'Shorten what’s left',
   'Pause the tournament',
   'Add or remove players',
   'Delete this tournament',
 ]) ok(`lists "${label}"`, t.includes(label))
+ok('no row for the order of play — it cannot be changed once a score is in', !/Change the order of play/.test(t))
 await shot(a, 'more')
 
 console.log('\n6. fix a score')
@@ -181,7 +181,7 @@ ok('still 7 played', /7 of 16 played/i.test(t))
 console.log('\n9. swap a player')
 await a.goto(`${BASE}/admin/t/${MENS}/more?do=swap`)
 t = await textOf(a)
-ok('the form is there, or it says nobody is free to step in', /Who is coming out[\s\S]*Who is going in/i.test(t) || /Nobody is free to step in/.test(t), t.slice(0, 300))
+ok('the form is there, or it says nobody is free to step in', /Who is coming out[\s\S]*Who is going in/i.test(t) || /already in a pair/.test(t), t.slice(0, 300))
 await shot(a, 'more-swap')
 
 console.log('\n10. shorten')

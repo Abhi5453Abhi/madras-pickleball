@@ -32,15 +32,16 @@ function ConfirmCard({
   action,
   notNow,
 }: {
-  title: string
+  /** Left out where the page title already says it. */
+  title?: string
   children: React.ReactNode
   action?: React.ReactNode
   notNow: string
 }) {
   return (
     <div className="rounded-card border-2 border-ink bg-paper p-4 shadow-card">
-      <p className="text-row text-text">{title}</p>
-      <div className="mt-1 text-body text-text-2">{children}</div>
+      {title ? <p className="text-row text-text">{title}</p> : null}
+      <div className={clsx('text-body text-text-2', title && 'mt-1')}>{children}</div>
       {action ? <div className="mt-3">{action}</div> : null}
       <Link href={notNow as never} className={`${SECONDARY_LINK} mt-2`}>
         Not now
@@ -254,8 +255,11 @@ export function Swap({
   if (!roster.length) {
     return (
       <p className="text-body text-text-2">
-        Nobody is free to step in. Add the substitute under Registration first — everyone on the
-        list is already in a pair.
+        Everyone on the list is already in a pair. Add the substitute under{' '}
+        <Link href={`/admin/t/${slug}/registration` as never} className="font-semibold text-link">
+          Registration
+        </Link>{' '}
+        first.
       </p>
     )
   }
@@ -402,8 +406,8 @@ export function Pause({ slug, pauseNote }: { slug: string; pauseNote: string | n
   return (
     <div className="rounded-card border border-line-strong bg-paper p-4 shadow-card">
       <p className="text-body text-text-2">
-        Nothing is cancelled and nothing is lost. Matches already on court carry on. The public page
-        says why you have stopped, and you start it again whenever you like.
+        Matches already on court carry on. Nothing else goes on until you start again, and the public
+        page says why.
       </p>
       <form action={pauseDayAction} className="mt-4 flex flex-col gap-2">
         <input type="hidden" name="slug" value={slug} />
@@ -438,14 +442,13 @@ export function DeleteTournament({
   const back = `/admin/t/${slug}/more`
   if (liveOn) {
     return (
-      <ConfirmCard title={`Delete ${name}`} notNow={back}>
+      <ConfirmCard notNow={back}>
         There is a match on {liveOn} right now. Let it finish, or take it off court, then delete.
       </ConfirmCard>
     )
   }
   return (
     <ConfirmCard
-      title={`Delete ${name}`}
       notNow={back}
       action={
         <form action={deleteEventAction}>
@@ -454,7 +457,7 @@ export function DeleteTournament({
         </form>
       }
     >
-      It comes off every list and its public page stops working.{' '}
+      {name} comes off every list and its public page stops working.{' '}
       {players ? `Its ${players} ${players === 1 ? 'player' : 'players'}` : 'Its sign-up link'}
       {matches ? ` and ${matches} ${matches === 1 ? 'match' : 'matches'}` : ''} go with it.
       {courts.length

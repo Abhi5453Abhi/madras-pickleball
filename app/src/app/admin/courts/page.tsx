@@ -56,11 +56,11 @@ export default async function CourtsPage(props: PageProps<'/admin/courts'>) {
                   required
                   className="h-12 min-w-0 flex-1"
                 />
-                <button className={`${ROW_BUTTON} shrink-0`}>Rename</button>
+                <button className={`${SECONDARY_LINK} h-12 shrink-0`}>Rename</button>
               </form>
               <div className="flex items-center justify-between gap-3 pl-8">
                 <p className="text-meta text-text-3">
-                  {c.heldBy.length ? `Used by ${c.heldBy.join(', ')}` : 'Not assigned to anything coming up'}
+                  {c.heldBy.length ? `Used by ${c.heldBy.join(', ')}` : 'Free'}
                 </p>
                 {c.heldBy.length ? null : (
                   <Confirm

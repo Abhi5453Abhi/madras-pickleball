@@ -49,9 +49,6 @@ export function LoginForm({ next }: { next?: string }) {
       <Button type="submit" disabled={pending}>
         {pending ? 'Checking…' : 'Sign in'}
       </Button>
-      <p className="text-center text-meta text-text-2">
-        Players don&rsquo;t need this. Send them the tournament link.
-      </p>
     </form>
   )
 }

@@ -70,9 +70,8 @@ export function NewForm({
     return map
   }, [calendar.held, date])
 
-  const takenNote = calendar.courts
-    .filter((c) => heldToday.has(c.id))
-    .map((c) => `${c.name} belongs to ${heldToday.get(c.id)!.name} that day`)
+  // The greyed chip already names who holds the court; one sentence says why.
+  const anyHeld = calendar.courts.some((c) => heldToday.has(c.id))
 
   function toggleCourt(id: string) {
     setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]))
@@ -114,7 +113,7 @@ export function NewForm({
       </div>
 
       <Chips
-        legend="Category"
+        legend="Who plays"
         name="gender"
         value={gender}
         onChange={setGender}
@@ -178,11 +177,12 @@ export function NewForm({
           })}
         </div>
         <p className="text-meta text-text-3">
-          {takenNote.length
-            ? `${takenNote.join('. ')}. To use one here, take it off there first.`
-            : picked.length
-              ? `${picked.length} court${picked.length === 1 ? '' : 's'} picked. You can change this right up to the start.`
-              : 'Pick the courts this tournament plays on. You can change this right up to the start.'}
+          {picked.length
+            ? `${picked.length} court${picked.length === 1 ? '' : 's'} picked. `
+            : 'Pick the courts it plays on. '}
+          {anyHeld
+            ? 'A greyed court belongs to another tournament that day — take it off there to use it here.'
+            : 'You can change them until the start.'}
         </p>
       </fieldset>
 
@@ -194,9 +194,6 @@ export function NewForm({
         >
           {pending ? 'Making it…' : 'Create · opens sign-ups'}
         </button>
-        <p className="text-center text-meta text-text-2">
-          You get a sign-up link straight away. Nothing else happens until you say so.
-        </p>
       </div>
     </form>
   )

@@ -78,7 +78,7 @@ export function AddPlayerForm({ slug }: { slug: string }) {
           autoComplete="off"
           enterKeyHint="done"
           aria-label="Add a player, or paste a list"
-          placeholder="Add a player — or paste the list from the group chat"
+          placeholder="Add a player, or paste a list"
           rows={1}
           onInput={(e) => {
             const el = e.currentTarget

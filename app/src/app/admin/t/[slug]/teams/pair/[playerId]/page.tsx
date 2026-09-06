@@ -4,7 +4,6 @@ import { requireUser } from '@/lib/auth'
 import { Chevron, Notice, Panel } from '@/components/ui'
 import { teamBoard, type Unpaired } from '@/server/teams'
 import { getTournamentBySlug } from '@/server/tournaments'
-import { SECONDARY_LINK } from '../../../../../_ui'
 import { pairWithAction } from '../../actions'
 
 export const metadata = { title: 'Pair with · Madras Pickleball' }
@@ -45,14 +44,13 @@ export default async function PairWithPage(props: PageProps<'/admin/t/[slug]/tea
       </header>
 
       {free.length === 0 ? (
-        <>
-          <Notice tone="waiting">
-            Nobody is free to pair with {me.name}. Split a pair, or add a player under Registration.
-          </Notice>
-          <Link href={teamsHref as never} className={SECONDARY_LINK}>
-            Back to Teams
+        <Notice tone="waiting">
+          Nobody is free to pair with {me.name}. Split a pair, or add a player under{' '}
+          <Link href={`/admin/t/${slug}/registration` as never} className="font-semibold text-link">
+            Registration
           </Link>
-        </>
+          .
+        </Notice>
       ) : (
         <Panel>
           <ul className="divide-y divide-line">
@@ -70,7 +68,9 @@ export default async function PairWithPage(props: PageProps<'/admin/t/[slug]/tea
                       <span className="block text-row text-text">{p.name}</span>
                       <span className="block text-meta text-text-3">{pickerLine(p)}</span>
                     </span>
-                    <span className="font-score shrink-0 text-eyebrow text-text-3 uppercase">Tap</span>
+                    <span aria-hidden className="shrink-0 text-text-3">
+                      <Chevron className="-rotate-90" />
+                    </span>
                   </button>
                 </form>
               </li>
@@ -79,9 +79,7 @@ export default async function PairWithPage(props: PageProps<'/admin/t/[slug]/tea
         </Panel>
       )}
 
-      <p className="text-meta text-text-3">
-        A pair can be split and re-made any time before the schedule is made. After that it&rsquo;s under More.
-      </p>
+      <p className="text-meta text-text-3">A pair can be split again any time before the schedule is made.</p>
     </div>
   )
 }

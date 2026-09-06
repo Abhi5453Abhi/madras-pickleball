@@ -114,7 +114,7 @@ ok('Court 4 comes back', /5 at the venue/.test(t) && /Court 4/.test(t), t.slice(
 
 console.log('\n4. paste a list into Registration')
 t = await goto(`${BASE}/admin/t/${slug}/registration`)
-ok('the add box invites a paste', /paste the list from the group chat/.test(await page.getAttribute('textarea[name=text]', 'placeholder')))
+ok('the add box invites a paste', /paste a list/.test(await page.getAttribute('textarea[name=text]', 'placeholder')))
 await page.fill('textarea[name=text]', '1. Karthik Subramanian ✅\n2. Sathish Kumar 98400 12345\n3. Ravi Shankar\n4. Arun Prakash\n5. Hari Venkatesh\n6. Naveen Krishnan')
 await shot('registration-paste')
 await page.click('form:has(textarea[name=text]) button')

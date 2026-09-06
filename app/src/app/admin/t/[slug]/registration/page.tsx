@@ -36,6 +36,9 @@ export default async function RegistrationPage(props: PageProps<'/admin/t/[slug]
 
   const closed = signupsClosed(tournament)
   const started = tournament.status !== 'draft' && tournament.status !== 'registration'
+  // Once it is over, the list is a record: nobody is added to or taken off a
+  // finished tournament.
+  const over = tournament.status === 'completed' || tournament.status === 'archived'
   const [raw, roster, category, h] = await Promise.all([
     ensureRegistrationLink(tournament.id, endOfVenueDay(tournament.endDate)),
     listRoster(tournament.id),
@@ -79,20 +82,18 @@ export default async function RegistrationPage(props: PageProps<'/admin/t/[slug]
       ) : null}
       {note ? <Notice tone="done">{String(note)}</Notice> : null}
 
-      {closed ? (
+      {/* Started: the sub line already says sign-ups are closed, and there is
+          nothing to reopen, so the card would only explain itself. */}
+      {closed && started ? null : closed ? (
         <Card className="border-line-key p-4">
           <p className="font-score text-eyebrow text-text-2 uppercase">Sign-ups closed</p>
           <p className="mt-1 text-body text-text-2">
-            {started
-              ? 'The tournament has started, so the link no longer accepts anyone. You can still add or remove people here.'
-              : 'The link no longer accepts anyone. Players who open it see “Sign-ups have closed — ask the organiser.”'}
+            Players who open the link see “Sign-ups have closed — ask the organiser.”
           </p>
-          {started ? null : (
-            <form action={reopenSignups} className="mt-3">
-              <input type="hidden" name="slug" value={slug} />
-              <button className={SECONDARY_LINK}>Reopen sign-ups</button>
-            </form>
-          )}
+          <form action={reopenSignups} className="mt-3">
+            <input type="hidden" name="slug" value={slug} />
+            <button className={SECONDARY_LINK}>Reopen sign-ups</button>
+          </form>
         </Card>
       ) : !raw ? (
         <Card className="border-line-key p-4">
@@ -119,7 +120,7 @@ export default async function RegistrationPage(props: PageProps<'/admin/t/[slug]
         </>
       )}
 
-      <AddPlayerForm slug={slug} />
+      {over ? null : <AddPlayerForm slug={slug} />}
 
       <section className="flex flex-col gap-3">
         <h2 className="font-score text-eyebrow text-text-2 uppercase">
@@ -161,19 +162,21 @@ export default async function RegistrationPage(props: PageProps<'/admin/t/[slug]
                           </p>
                         ) : null}
                       </div>
-                      <Confirm
-                        className="ml-auto shrink-0 [&>summary]:border-0 [&>summary]:px-2 [&>summary]:text-link [&[open]]:w-full"
-                        label="Remove"
-                        question={`${r.name} comes off the list. If they are in a pair that has not played, the pair is split.`}
-                      >
-                        <form action={remove}>
-                          <input type="hidden" name="slug" value={slug} />
-                          <input type="hidden" name="playerId" value={r.playerId} />
-                          <button className="tap-lg w-full rounded-control bg-ink px-4 text-[18px] font-bold text-white">
-                            Take {r.name} off
-                          </button>
-                        </form>
-                      </Confirm>
+                      {over ? null : (
+                        <Confirm
+                          className="ml-auto shrink-0 [&>summary]:border-0 [&>summary]:px-2 [&>summary]:text-link [&[open]]:w-full"
+                          label="Remove"
+                          question={`${r.name} comes off the list. If they are in a pair that has not played, the pair is split.`}
+                        >
+                          <form action={remove}>
+                            <input type="hidden" name="slug" value={slug} />
+                            <input type="hidden" name="playerId" value={r.playerId} />
+                            <button className="tap-lg w-full rounded-control bg-ink px-4 text-[18px] font-bold text-white">
+                              Take {r.name} off
+                            </button>
+                          </form>
+                        </Confirm>
+                      )}
                     </div>
                     {r.duplicateOf ? (
                       <form action={settleDuplicate} className="flex gap-2">

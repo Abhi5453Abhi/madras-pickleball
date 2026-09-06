@@ -28,9 +28,7 @@ export default async function LoginPage(props: PageProps<'/login'>) {
         </div>
         <NetRule className="mt-3 mb-4" />
         <h1 className="text-title text-text">Organiser</h1>
-        <p className="mt-1.5 text-body text-text-2">
-          Your six-digit PIN. This phone stays signed in for two weeks.
-        </p>
+        <p className="mt-1.5 text-body text-text-2">Your six-digit PIN.</p>
       </div>
 
       <Card className="p-4">

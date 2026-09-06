@@ -95,7 +95,9 @@ export default async function TournamentHub(props: PageProps<'/admin/t/[slug]'>)
 
       {h.phase === 'setup' ? (
         <SetupChecklist
-          steps={h.steps}
+          // Singles has no pairs to make, so it skips the Teams step: the
+          // players are the registration list.
+          steps={h.steps.filter((s) => !(s.key === 'teams' && category.discipline === 'singles'))}
           slug={slug}
           canStart={h.steps.every((s) => s.key === 'start' || s.state === 'done')}
         />
@@ -118,7 +120,11 @@ export default async function TournamentHub(props: PageProps<'/admin/t/[slug]'>)
           Public page — what players see
         </Link>
         <Link href={`${base}/more` as never} className="tap flex items-center justify-center px-3 text-[16px] font-semibold text-link">
-          More · players, courts, fixes, delete
+          {h.phase === 'running'
+            ? 'More · pause, pull-outs, fix a score, delete'
+            : h.phase === 'finished'
+              ? 'More · fix a score, delete'
+              : 'More · delete this tournament'}
         </Link>
       </div>
     </div>
@@ -148,7 +154,7 @@ function SetupChecklist({
                 className={clsx(
                   'font-score grid size-8 shrink-0 place-items-center rounded-full text-[15px] font-bold',
                   s.state === 'done'
-                    ? 'bg-live-soft text-live-text'
+                    ? 'bg-done-soft text-done'
                     : s.state === 'current'
                       ? 'bg-ink text-white'
                       : 'border border-line-strong text-text-3',
@@ -304,8 +310,7 @@ async function Running({
             </form>
           }
         >
-          Finishing puts the winner on top of the public page and frees the courts for whatever is
-          next.
+          The winner goes on top of the public page and the courts come free.
         </Notice>
       ) : null}
 

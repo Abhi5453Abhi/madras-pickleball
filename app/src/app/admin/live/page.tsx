@@ -118,8 +118,7 @@ export default async function LiveBoardPage(props: PageProps<'/admin/live'>) {
             <input type="hidden" name="slug" value={t.slug} />
             <button className={PRIMARY_LINK}>Finish {t.name}</button>
             <p className="mt-2 text-center text-meta text-text-2">
-              All {t.total} played. Finishing puts the winners on top of the public page and frees its
-              courts.
+              All {t.total} played. The winners go on top of the public page and its courts come free.
             </p>
           </form>
         ))}
@@ -281,45 +280,33 @@ function NextLine({ court }: { court: VenueCourt }) {
   )
 }
 
-/** A court nobody holds today. Either say so, or offer it to the tournament that needs it. */
+/**
+ * A court nobody holds today. "Not assigned" is the whole story unless a
+ * tournament could use it, in which case the card offers it.
+ */
 function UnassignedCard({ court, board }: { court: VenueCourt; board: VenueBoard }) {
   const wants = board.wants
-  const first = board.tournaments.find((t) => t.running) ?? board.tournaments[0]
   return (
     <article data-court className="hatched rounded-card border border-dashed border-line-strong bg-paper">
-      <div className={HEAD}>
+      <div className={clsx(HEAD, !wants && 'pb-3')}>
         <CourtSwatch colorKey={court.colorKey} size="md" />
         <span className={EYEBROW}>{court.name}</span>
         <span className="ml-auto text-meta text-text-3">Not assigned</span>
       </div>
-      <div className="px-4 pt-2 pb-4 text-body text-text-2">
-        {wants ? (
-          <>
-            <p>
-              {wants.shortName} has {wants.toPlay} to play and a court sitting empty.
-            </p>
-            <form action={addCourtFromBoard} className="mt-3">
-              <input type="hidden" name="tournamentId" value={wants.id} />
-              <input type="hidden" name="courtId" value={court.id} />
-              <button className={`${QUIET_BUTTON} w-full`}>
-                Add {court.name} to {wants.categoryName}
-              </button>
-            </form>
-          </>
-        ) : (
+      {wants ? (
+        <div className="px-4 pt-2 pb-4 text-body text-text-2">
           <p>
-            No tournament is using this court today. Assign it under a tournament’s{' '}
-            {first ? (
-              <Link href={`/admin/t/${first.slug}/schedule` as never} className="font-semibold text-link">
-                Schedule &amp; courts
-              </Link>
-            ) : (
-              'Schedule & courts'
-            )}
-            .
+            {wants.shortName} has {wants.toPlay} to play and a court sitting empty.
           </p>
-        )}
-      </div>
+          <form action={addCourtFromBoard} className="mt-3">
+            <input type="hidden" name="tournamentId" value={wants.id} />
+            <input type="hidden" name="courtId" value={court.id} />
+            <button className={`${QUIET_BUTTON} w-full`}>
+              Add {court.name} to {wants.categoryName}
+            </button>
+          </form>
+        </div>
+      ) : null}
     </article>
   )
 }

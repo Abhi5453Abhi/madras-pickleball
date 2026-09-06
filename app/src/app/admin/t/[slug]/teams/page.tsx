@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
-import { Chevron, Confirm, EmptyState, Notice, Panel, Tag, TeamName } from '@/components/ui'
+import { Chevron, Confirm, EmptyState, Notice, Panel, TeamName } from '@/components/ui'
 import { LOCKED_MESSAGE, teamBoard, type BoardPair, type Unpaired } from '@/server/teams'
 import { getTournamentBySlug } from '@/server/tournaments'
 import { ROW_BUTTON, SECONDARY_LINK } from '../../../_ui'
@@ -145,9 +145,9 @@ export default async function TeamsPage(props: PageProps<'/admin/t/[slug]/teams'
         </section>
       ) : null}
 
-      {allPaired && pairs.length >= 2 ? (
+      {allPaired && pairs.length >= 2 && !locked ? (
         <Link href={`${base}/schedule` as const} className={SECONDARY_LINK}>
-          {locked ? 'Schedule & courts' : 'Next: Schedule & courts'}
+          Next: Schedule &amp; courts
         </Link>
       ) : null}
     </div>
@@ -241,12 +241,7 @@ function PairRow({ pair, slug, locked }: { pair: BoardPair; slug: string; locked
     </span>
   )
   if (pair.how === 'mutual' || locked) {
-    return (
-      <li className="flex min-h-[56px] items-center gap-3 px-4 py-2.5">
-        {names}
-        {pair.how === 'mutual' ? <Tag>✓ mutual</Tag> : null}
-      </li>
-    )
+    return <li className="flex min-h-[56px] items-center gap-3 px-4 py-2.5">{names}</li>
   }
   return (
     <li>

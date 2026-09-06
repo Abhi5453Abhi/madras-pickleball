@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
-import { Chevron, CourtSwatch, Notice, Panel, Tag, splitTeam } from '@/components/ui'
+import { Chevron, CourtSwatch, Notice, Panel, splitTeam } from '@/components/ui'
 import { moveOptions } from '@/server/board'
 import { backToQueueAction, moveMatchAction } from './actions'
 
@@ -77,7 +77,9 @@ export default async function MovePage(props: PageProps<'/admin/live/move/[match
                         <span className="block text-row text-text">{c.name}</span>
                         <span className="block text-meta text-text-3">{meta}</span>
                       </span>
-                      <Tag tone="accent">Pick</Tag>
+                      <span aria-hidden className="text-text-3">
+                        <Chevron className="-rotate-90" />
+                      </span>
                     </button>
                   </form>
                 ) : (
@@ -102,7 +104,9 @@ export default async function MovePage(props: PageProps<'/admin/live/move/[match
                   <span className="block text-row text-text">Back to the queue</span>
                   <span className="block text-meta text-text-3">take it off court — it goes to the back of the order</span>
                 </span>
-                <Tag tone="accent">Pick</Tag>
+                <span aria-hidden className="text-text-3">
+                  <Chevron className="-rotate-90" />
+                </span>
               </button>
             </form>
           </li>
@@ -113,13 +117,13 @@ export default async function MovePage(props: PageProps<'/admin/live/move/[match
         {opts.courts.length === 0
           ? `${opts.tournament.categoryName} has only the one court. `
           : free.length === 0 && opts.courts.length
-            ? 'Every other court is busy — the queue is the only way off. '
+            ? 'Every other court is busy. '
             : ''}
-        Need another court? Add one to this tournament under{' '}
+        Need another court? Add one under{' '}
         <Link href={`/admin/t/${opts.tournament.slug}/schedule` as never} className="font-semibold text-link">
           Schedule &amp; courts
-        </Link>{' '}
-        — that’s where courts change, not here.
+        </Link>
+        .
       </p>
     </div>
   )
