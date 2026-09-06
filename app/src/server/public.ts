@@ -338,6 +338,11 @@ export const publicTournament = cache(async function publicTournament(slug: stri
       })),
     }))
 
+  // A tie is only "for the organiser" once there is nothing left to play.
+  const leagueDone = !allMatches.some(
+    (m) => m.stage === 'group' && m.state === 'none' && m.resultType !== 'cancelled',
+  )
+
   // A pair who pulled out are still in the table — their played matches
   // stand — but the row says so, or it gets argued about at the desk.
   const table: PublicTableRow[] = category
@@ -353,7 +358,7 @@ export const publicTournament = cache(async function publicTournament(slug: stri
         won: row.won,
         pointsFor: row.pointsFor,
         withdrawn: withdrawnTeams.has(row.teamId),
-        note: tieNote(row.reason),
+        note: tieNote(row.reason, leagueDone),
       }))
     : []
 

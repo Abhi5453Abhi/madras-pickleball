@@ -305,8 +305,10 @@ export function tiebreakNote(rule: TiebreakRule): string {
  * did not settle it. "2 won from 3 played" is the two columns beside it,
  * said again; "ahead on head-to-head" is the thing someone will ask about.
  */
-export function tieNote(reason?: string): string | null {
+export function tieNote(reason: string | undefined, leagueDone: boolean): string | null {
   if (!reason) return null
   if (reason.startsWith('wins') || reason.startsWith('total points scored')) return null
+  // Nothing separates them YET is not a decision for anyone to make.
+  if (reason.startsWith('drawn')) return leagueDone ? 'level — the organiser decides' : 'level so far'
   return reason
 }

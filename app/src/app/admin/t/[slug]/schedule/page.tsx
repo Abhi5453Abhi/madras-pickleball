@@ -170,7 +170,7 @@ export default async function SchedulePage(props: PageProps<'/admin/t/[slug]/sch
                     </span>
                     {m.roundName ? (
                       <span className="shrink-0 rounded-full border border-line-strong bg-sunken px-2 py-0.5 text-meta font-semibold text-text-2">
-                        {m.roundName}
+                        {m.roundName.replace(/^Round (\d+)$/, 'R$1')}
                       </span>
                     ) : null}
                   </li>

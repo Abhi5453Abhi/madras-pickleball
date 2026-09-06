@@ -237,6 +237,9 @@ async function Running({
       return ty - tx
     })
   const remaining = all.filter((m) => m.resultState === 'none' && m.status !== 'cancelled').length
+  const leagueDone = !all.some(
+    (m) => m.stage === 'group' && m.resultState === 'none' && m.status !== 'cancelled',
+  )
 
   // The final: the knockout match with the highest round, once decided.
   const finalMatch = [...all]
@@ -323,8 +326,10 @@ async function Running({
                     <td className="num py-2.5 pl-4 text-meta text-text-3">{i + 1}</td>
                     <td className="py-2.5 text-row text-text">
                       {names.get(r.teamId) ?? '—'}
-                      {tieNote(r.reason) ? (
-                        <span className="block text-meta font-normal text-text-3">{tieNote(r.reason)}</span>
+                      {tieNote(r.reason, leagueDone) ? (
+                        <span className="block text-meta font-normal text-text-3">
+                          {tieNote(r.reason, leagueDone)}
+                        </span>
                       ) : null}
                     </td>
                     <td className="num py-2.5 pl-3 text-right text-row text-text">{r.won}</td>
