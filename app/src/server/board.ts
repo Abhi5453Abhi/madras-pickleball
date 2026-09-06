@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm'
 import { db, transact } from '@/db'
 import {
   categories,
@@ -10,20 +10,22 @@ import {
   players,
   teamPlayers,
   teams,
+  tournamentCourts,
   tournaments,
-  venues,
 } from '@/db/schema'
 import { bumpStreamVersion } from '@/lib/stream'
 import { estimateDay, minutesPerMatch } from '@/lib/estimate'
-import { VENUE_SLUG, getVenue } from './tournaments'
+import { venueDayKey } from '@/lib/time'
+import { getVenue } from './tournaments'
 
 /**
- * The court board — SPEC A4.
+ * The court board — SPEC A4, v4.
  *
- * This is the reason to build the product at all: the only thing that knows
- * four categories are sharing four courts. With 40 players across 3 categories
- * about 12 are in two of them, so double-booking is the median case, not an
- * edge case.
+ * A tournament has its own courts and its matches never leave them. The next
+ * match in order goes onto whichever of those courts is free, on its own,
+ * so the organiser does nothing but enter scores. `boardData` is one
+ * tournament's view; `venueBoard` is every court at the venue at once, which
+ * is the screen the organiser actually looks at.
  */
 
 export type BoardMatch = {
@@ -74,6 +76,8 @@ export type BoardData = {
   waiting: BoardMatch[]
   liveCount: number
   remaining: number
+  /** Matches with a result in. Voided ones are in neither count. */
+  played: number
   /** Set while the day is stopped: the note the organiser gave. */
   pausedNote: string | null
   /** Courts actually available — the basis the finish estimate is computed on. */
@@ -145,12 +149,15 @@ async function playersByMatch(matchIds: string[]): Promise<Roster> {
  * queries cost a network hop each, and eight hops is the difference between a
  * board that answers instantly and one an organiser waits on with four courts
  * standing idle.
+ *
+ * `courts` is THIS tournament's courts, not the venue's. Counting the venue's
+ * four when the tournament holds two put the finish estimate an hour early
+ * and offered Mixed Doubles a match on a Men's court.
  */
 export async function boardData(tournamentId: string): Promise<BoardData> {
   // The first entry is deliberately dropped: getVenue is here only because it
   // throws when the venue was never seeded, which is a setup mistake that
-  // should say so rather than render an empty board. Its id is not needed —
-  // the courts query joins the venue by slug itself.
+  // should say so rather than render an empty board.
   const [, tournament, courtRows, closures, rows, teamNameRows, rosterRows, slotRows] =
     await Promise.all([
       getVenue(),
@@ -162,8 +169,6 @@ export async function boardData(tournamentId: string): Promise<BoardData> {
         .limit(1)
         .then((r) => r[0]),
 
-      // Joined to the venue by slug rather than waiting for getVenue's id, so
-      // this does not need a second round trip.
       db
         .select({
           id: courts.id,
@@ -171,9 +176,9 @@ export async function boardData(tournamentId: string): Promise<BoardData> {
           colorKey: courts.colorKey,
           sortOrder: courts.sortOrder,
         })
-        .from(courts)
-        .innerJoin(venues, eq(venues.id, courts.venueId))
-        .where(and(eq(venues.slug, VENUE_SLUG), eq(courts.active, true)))
+        .from(tournamentCourts)
+        .innerJoin(courts, eq(courts.id, tournamentCourts.courtId))
+        .where(and(eq(tournamentCourts.tournamentId, tournamentId), eq(courts.active, true)))
         .orderBy(courts.sortOrder),
 
       db
@@ -375,6 +380,7 @@ export async function boardData(tournamentId: string): Promise<BoardData> {
     waiting,
     liveCount: boardCourts.filter((c) => c.live).length,
     remaining: outstanding.length,
+    played: rows.filter((r) => r.resultState === 'final' || r.resultState === 'reported').length,
     pausedNote: tournament?.pauseNote ?? null,
     openCourts,
     finishEstimateMinutes: est.minutes,
@@ -459,14 +465,31 @@ export async function sendToCourt(matchId: string, courtId: string, opts?: { for
   if (match.resultState !== 'none') {
     return { ok: false as const, error: 'This match already has a result.' }
   }
+  // Two flows running at once — a score saved on each of two courts in the
+  // same second — both pick the same next match from the same snapshot. The
+  // second send must not quietly move a match that just went on.
+  if (match.status === 'live') {
+    return { ok: false as const, error: 'This match is already on a court.' }
+  }
 
-  // Three independent checks; the organiser is standing on a court waiting for
+  // Four independent checks; the organiser is standing on a court waiting for
   // the answer, so they go out together rather than one hop at a time.
-  const [court, closed, busyCourt] = await Promise.all([
+  const [court, held, closed, busyCourt] = await Promise.all([
     db
       .select({ name: courts.name })
       .from(courts)
       .where(eq(courts.id, courtId))
+      .limit(1)
+      .then((r) => r[0]),
+    db
+      .select({ id: tournamentCourts.id })
+      .from(tournamentCourts)
+      .where(
+        and(
+          eq(tournamentCourts.tournamentId, match.tournamentId),
+          eq(tournamentCourts.courtId, courtId),
+        ),
+      )
       .limit(1)
       .then((r) => r[0]),
     db
@@ -490,11 +513,20 @@ export async function sendToCourt(matchId: string, courtId: string, opts?: { for
   ])
 
   if (!court) return { ok: false as const, error: 'That court no longer exists.' }
+  // A match only ever goes onto its own tournament's courts. Enforced here,
+  // not in the screens: the Move list never offers another tournament's
+  // court, but a form field is a wire value and this is the write.
+  if (!held) {
+    return {
+      ok: false as const,
+      error: `${court.name} isn’t one of this tournament’s courts — a match only goes on its own tournament’s courts.`,
+    }
+  }
   if (closed) {
     return { ok: false as const, error: `${court.name} is out of action — ${closed.reason ?? 'closed'}.` }
   }
   if (busyCourt) {
-    return { ok: false as const, error: 'That court already has a live match — end it first.' }
+    return { ok: false as const, error: `${court.name} already has a match on it.` }
   }
 
   // The conflict check has to run HERE, not only when the board rendered.
@@ -506,9 +538,10 @@ export async function sendToCourt(matchId: string, courtId: string, opts?: { for
   }
 
   // One transaction: a match that went live without the board's version moving
-  // is a board that never refreshes.
-  await transact(async (tx) => {
-    await tx
+  // is a board that never refreshes. The status is re-asserted in the WHERE
+  // because it was read before the transaction opened.
+  const placed = await transact(async (tx) => {
+    const rows = await tx
       .update(matches)
       .set({
         courtId,
@@ -517,10 +550,525 @@ export async function sendToCourt(matchId: string, courtId: string, opts?: { for
         version: sql`${matches.version} + 1`,
         updatedAt: new Date(),
       })
-      .where(eq(matches.id, matchId))
+      .where(and(eq(matches.id, matchId), ne(matches.status, 'live'), eq(matches.resultState, 'none')))
+      .returning({ id: matches.id })
+    if (rows.length) await bumpStreamVersion(match.tournamentId, tx)
+    return rows.length > 0
+  })
+  if (!placed) return { ok: false as const, error: 'This match is already on a court.' }
+  return { ok: true as const }
+}
+
+/**
+ * Which match to offer each free court.
+ *
+ * Each free court is offered a DIFFERENT match — and never one that shares a
+ * player with a match already offered somewhere else. Handing Court 1 and
+ * Court 2 two matches that both contain Ravi meant the second was refused,
+ * which is the exact collision the board exists to prevent.
+ *
+ * This is the one queue. The auto-flow places what it offers; the board's
+ * "Next here" line predicts from the same rule; the More page's attention
+ * block offers the same thing. Two functions that disagree about which pair
+ * is next is worse than either answer.
+ */
+export function offersForFreeCourts(data: BoardData): Map<string, BoardMatch> {
+  const placeable = data.queue.filter((m) => m.ready && !m.blockedBy)
+  const freeCourts = data.courts.filter((c) => !c.closed && !c.live)
+
+  const offers = new Map<string, BoardMatch>()
+  const taken = new Set<string>()
+  const spokenFor = new Set<string>()
+
+  for (const court of freeCourts) {
+    const pick = placeable.find(
+      (m) => !taken.has(m.id) && !m.playerIds.some((p) => spokenFor.has(p)),
+    )
+    if (!pick) continue
+    offers.set(court.id, pick)
+    taken.add(pick.id)
+    for (const p of pick.playerIds) spokenFor.add(p)
+  }
+  return offers
+}
+
+/**
+ * Fill every free court this tournament holds with the next match in order.
+ *
+ * Idempotent and cheap: one board read, then one send per court that is
+ * actually free and actually has something playable. Called after anything
+ * that frees a court or adds one — a saved score, a move, a court added, a
+ * pause lifted, the start of the day — so the organiser never sends a match
+ * anywhere by hand. Nothing goes on while the tournament is paused.
+ *
+ * `skip`: a match the organiser has just taken off court. "Play it later"
+ * means not this second; it is back in its place in the order for the next
+ * court that frees up.
+ */
+export async function flowTournament(tournamentId: string, opts?: { skip?: string[] }) {
+  const [t] = await db
+    .select({ status: tournaments.status, breakStartsAt: tournaments.breakStartsAt })
+    .from(tournaments)
+    .where(eq(tournaments.id, tournamentId))
+    .limit(1)
+  if (!t || t.status !== 'live' || t.breakStartsAt) return { placed: 0 }
+
+  const data = await boardData(tournamentId)
+  if (!data.courts.some((c) => !c.closed && !c.live)) return { placed: 0 }
+
+  const skip = new Set(opts?.skip ?? [])
+  const offers = offersForFreeCourts({
+    ...data,
+    queue: data.queue.filter((m) => !skip.has(m.id)),
+  })
+
+  // One at a time: each send re-checks the court and the players against the
+  // database as it is now, not as the snapshot above had it.
+  let placed = 0
+  for (const [courtId, m] of offers) {
+    const res = await sendToCourt(m.id, courtId)
+    if (res.ok) placed++
+  }
+  return { placed }
+}
+
+/**
+ * Move a live match to another of its own tournament's courts. The clock
+ * starts again on the new court — a moved match is a match that is starting,
+ * and a false "on for 52 min" is worse than a lost ten.
+ */
+export async function moveMatch(matchId: string, courtId: string) {
+  const [match] = await db.select().from(matches).where(eq(matches.id, matchId)).limit(1)
+  if (!match) return { ok: false as const, error: 'That match no longer exists.' }
+  if (match.status !== 'live') {
+    return { ok: false as const, error: 'That match isn’t on a court.' }
+  }
+  if (match.courtId === courtId) return { ok: true as const }
+
+  const [court, held, closed, busyCourt] = await Promise.all([
+    db
+      .select({ name: courts.name })
+      .from(courts)
+      .where(eq(courts.id, courtId))
+      .limit(1)
+      .then((r) => r[0]),
+    db
+      .select({ id: tournamentCourts.id })
+      .from(tournamentCourts)
+      .where(
+        and(
+          eq(tournamentCourts.tournamentId, match.tournamentId),
+          eq(tournamentCourts.courtId, courtId),
+        ),
+      )
+      .limit(1)
+      .then((r) => r[0]),
+    db
+      .select({ reason: courtClosures.reason })
+      .from(courtClosures)
+      .where(
+        and(
+          eq(courtClosures.courtId, courtId),
+          eq(courtClosures.tournamentId, match.tournamentId),
+          isNull(courtClosures.until),
+        ),
+      )
+      .limit(1)
+      .then((r) => r[0]),
+    db
+      .select({ id: matches.id })
+      .from(matches)
+      .where(and(eq(matches.courtId, courtId), eq(matches.status, 'live')))
+      .limit(1)
+      .then((r) => r[0]),
+  ])
+
+  if (!court) return { ok: false as const, error: 'That court no longer exists.' }
+  if (!held) {
+    return {
+      ok: false as const,
+      error: `${court.name} isn’t one of this tournament’s courts — a match only goes on its own tournament’s courts.`,
+    }
+  }
+  if (closed) {
+    return { ok: false as const, error: `${court.name} is out of action — ${closed.reason ?? 'closed'}.` }
+  }
+  if (busyCourt) {
+    return { ok: false as const, error: `${court.name} already has a match on it.` }
+  }
+
+  await transact(async (tx) => {
+    await tx
+      .update(matches)
+      .set({
+        courtId,
+        startedAt: new Date(),
+        version: sql`${matches.version} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(matches.id, matchId), eq(matches.status, 'live')))
     await bumpStreamVersion(match.tournamentId, tx)
   })
   return { ok: true as const }
+}
+
+export type MoveOption = {
+  id: string
+  name: string
+  colorKey: string
+  /** Who is on it, and for how long — a busy court is shown, not offered. */
+  busy: { nameA: string | null; nameB: string | null; minutes: number } | null
+  closedReason: string | null
+}
+
+export type MoveOptions = {
+  match: { id: string; nameA: string | null; nameB: string | null; courtName: string | null }
+  tournament: { id: string; slug: string; categoryName: string }
+  /** The OTHER courts of the same tournament, in venue order. */
+  courts: MoveOption[]
+}
+
+/** The Move screen's data: only this tournament's courts are ever on the list. */
+export async function moveOptions(matchId: string): Promise<MoveOptions | null> {
+  const [row] = await db
+    .select({
+      id: matches.id,
+      tournamentId: matches.tournamentId,
+      status: matches.status,
+      courtId: matches.courtId,
+      slug: tournaments.slug,
+    })
+    .from(matches)
+    .innerJoin(tournaments, eq(tournaments.id, matches.tournamentId))
+    .where(eq(matches.id, matchId))
+    .limit(1)
+  if (!row || row.status !== 'live') return null
+
+  const data = await boardData(row.tournamentId)
+  const here = data.courts.find((c) => c.id === row.courtId)
+  const live = here?.live ?? null
+  if (!live) return null
+  const now = Date.now()
+
+  return {
+    match: { id: live.id, nameA: live.nameA, nameB: live.nameB, courtName: here?.name ?? null },
+    tournament: { id: row.tournamentId, slug: row.slug, categoryName: live.categoryName },
+    courts: data.courts
+      .filter((c) => c.id !== row.courtId)
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        colorKey: c.colorKey,
+        busy: c.live
+          ? {
+              nameA: c.live.nameA,
+              nameB: c.live.nameB,
+              minutes: c.live.startedAt
+                ? Math.max(0, Math.floor((now - c.live.startedAt.getTime()) / 60_000))
+                : 0,
+            }
+          : null,
+        closedReason: c.closedReason,
+      })),
+  }
+}
+
+// ───────────────────────── the venue-wide board ─────────────────────────
+
+export type VenueTournament = {
+  id: string
+  slug: string
+  name: string
+  categoryName: string
+  /** "Men's", "Mixed" — the strip has room for one word. */
+  shortName: string
+  running: boolean
+  /** Set while the day is stopped: the note the organiser gave. */
+  paused: string | null
+  played: number
+  total: number
+  /** Not yet on a court: what the day still has to get through. */
+  toPlay: number
+  finishAt: Date | null
+  courtIds: string[]
+  board: BoardData | null
+}
+
+export type VenueCourt = {
+  id: string
+  name: string
+  colorKey: string
+  /** Who holds it today, running or not. Null: nobody. */
+  tournament: VenueTournament | null
+  closedReason: string | null
+  live: BoardMatch | null
+  /** What will go on here next, when it is known. */
+  next: BoardMatch | null
+  /** When `next` is not a match: "waiting on Court 1's result". */
+  nextNote: string | null
+  /** A free court with a playable match nobody put on — the safety net. */
+  offer: BoardMatch | null
+  /** Why a free court is standing empty, in one sentence. */
+  idleReason: string | null
+}
+
+export type VenueBoard = {
+  now: Date
+  tournaments: VenueTournament[]
+  courts: VenueCourt[]
+  liveCount: number
+  /** For a court nobody holds: the running tournament that could use it. */
+  wants: VenueTournament | null
+}
+
+/** Every tournament on today: running, or on today's date and not finished. */
+async function todaysTournaments() {
+  const todayKey = venueDayKey(new Date())
+  const rows = await db
+    .select({
+      id: tournaments.id,
+      slug: tournaments.slug,
+      name: tournaments.name,
+      status: tournaments.status,
+      startDate: tournaments.startDate,
+      pauseNote: tournaments.pauseNote,
+      breakStartsAt: tournaments.breakStartsAt,
+      streamVersion: tournaments.streamVersion,
+      categoryName: categories.name,
+    })
+    .from(tournaments)
+    .innerJoin(categories, eq(categories.tournamentId, tournaments.id))
+    .where(
+      and(
+        isNull(tournaments.deletedAt),
+        isNull(categories.deletedAt),
+        ne(tournaments.status, 'completed'),
+        ne(tournaments.status, 'archived'),
+      ),
+    )
+    .orderBy(asc(tournaments.createdAt), asc(categories.seq))
+  const seen = new Set<string>()
+  return rows.filter((r) => {
+    if (seen.has(r.id)) return false
+    seen.add(r.id)
+    return r.status === 'live' || venueDayKey(r.startDate) === todayKey
+  })
+}
+
+/**
+ * One number the board polls. Moves when anything board-visible moves in any
+ * of today's tournaments, and when the set of them changes.
+ */
+export async function venueVersion(): Promise<string> {
+  const rows = await todaysTournaments()
+  return `${rows.length}:${rows.reduce((n, r) => n + Number(r.streamVersion), 0)}`
+}
+
+/** "Men's" from "Men's Doubles". */
+function shortCategory(name: string) {
+  return name.replace(/\s+(Doubles|Singles)$/i, '')
+}
+
+/**
+ * Every court at the venue, one entry each, in venue order, across every
+ * tournament on today. Read-only: the auto-flow runs at the writes, never
+ * while a page renders.
+ */
+export async function venueBoard(): Promise<VenueBoard> {
+  const venue = await getVenue()
+  const [courtRows, todays] = await Promise.all([
+    db
+      .select({ id: courts.id, name: courts.name, colorKey: courts.colorKey })
+      .from(courts)
+      .where(and(eq(courts.venueId, venue.id), eq(courts.active, true)))
+      .orderBy(asc(courts.sortOrder)),
+    todaysTournaments(),
+  ])
+
+  const ids = todays.map((t) => t.id)
+  const [heldRows, boards] = await Promise.all([
+    ids.length
+      ? db
+          .select({ tournamentId: tournamentCourts.tournamentId, courtId: tournamentCourts.courtId })
+          .from(tournamentCourts)
+          .where(inArray(tournamentCourts.tournamentId, ids))
+      : Promise.resolve([]),
+    Promise.all(todays.map((t) => (t.status === 'live' ? boardData(t.id) : Promise.resolve(null)))),
+  ])
+
+  const courtIdsBy = new Map<string, string[]>()
+  for (const h of heldRows) {
+    const list = courtIdsBy.get(h.tournamentId) ?? []
+    list.push(h.courtId)
+    courtIdsBy.set(h.tournamentId, list)
+  }
+
+  const venueTournaments: VenueTournament[] = todays.map((t, i) => {
+    const board = boards[i]
+    const total = board ? board.remaining + board.played : 0
+    return {
+      id: t.id,
+      slug: t.slug,
+      name: t.name,
+      categoryName: t.categoryName,
+      shortName: shortCategory(t.categoryName),
+      running: t.status === 'live',
+      paused: t.breakStartsAt ? (t.pauseNote ?? 'Paused') : null,
+      played: board?.played ?? 0,
+      total,
+      toPlay: board ? board.queue.length + board.waiting.length : 0,
+      finishAt: board?.finishAt ?? null,
+      courtIds: courtIdsBy.get(t.id) ?? [],
+      board,
+    }
+  })
+
+  const holder = new Map<string, VenueTournament>()
+  for (const t of venueTournaments) for (const c of t.courtIds) holder.set(c, t)
+
+  // Per running tournament: what each of its courts is doing and what comes
+  // next there, from the same rule the flow places by.
+  const perCourt = new Map<string, Omit<VenueCourt, 'id' | 'name' | 'colorKey' | 'tournament'>>()
+  for (const t of venueTournaments) {
+    if (!t.board) continue
+    for (const [courtId, entry] of nextByCourt(t)) perCourt.set(courtId, entry)
+  }
+
+  const running = venueTournaments.filter((t) => t.running)
+  const wants =
+    [...running].filter((t) => t.toPlay >= 3 && !t.paused).sort((a, b) => b.toPlay - a.toPlay)[0] ??
+    null
+
+  const venueCourts: VenueCourt[] = courtRows.map((c) => {
+    const t = holder.get(c.id) ?? null
+    const entry = perCourt.get(c.id)
+    return {
+      id: c.id,
+      name: c.name,
+      colorKey: c.colorKey,
+      tournament: t,
+      closedReason: entry?.closedReason ?? null,
+      live: entry?.live ?? null,
+      next: entry?.next ?? null,
+      nextNote: entry?.nextNote ?? null,
+      offer: entry?.offer ?? null,
+      idleReason: entry?.idleReason ?? null,
+    }
+  })
+
+  return {
+    now: new Date(),
+    tournaments: venueTournaments,
+    courts: venueCourts,
+    liveCount: venueCourts.filter((c) => c.live).length,
+    wants,
+  }
+}
+
+/**
+ * "Next here" for each of one tournament's courts.
+ *
+ * A free court is offered what the flow would put on it (which, if the flow
+ * has done its job, is nothing — the offer is the safety net for a court that
+ * came free by a door the flow does not watch). A busy court is told the
+ * first match in order that could start once IT finishes: nothing sharing a
+ * player with a match on another court, nothing already promised to a court
+ * that will free up sooner.
+ */
+function nextByCourt(t: VenueTournament) {
+  const board = t.board!
+  const out = new Map<string, Omit<VenueCourt, 'id' | 'name' | 'colorKey' | 'tournament'>>()
+  const offers = offersForFreeCourts(board)
+  const promised = new Set([...offers.values()].map((m) => m.id))
+  // Players in a match already promised to a court: two cards must never
+  // both say Ravi is next, because only one of them can be right.
+  const spokenFor = new Set<string>()
+  for (const m of offers.values()) for (const p of m.playerIds) spokenFor.add(p)
+
+  const liveCourts = board.courts.filter((c) => c.live)
+  const liveCourtNames = liveCourts.map((c) => c.name)
+
+  const waitingNote = (courtId: string | null) => {
+    const others = liveCourts.filter((c) => c.id !== courtId).map((c) => c.name)
+    const first = board.waiting[0]
+    const label = first?.roundName ?? 'The next round'
+    if (others.length) return `${label} · waiting on ${possessive(others)}`
+    if (courtId && liveCourts.some((c) => c.id === courtId)) return `${label} · waiting on this result`
+    return `${label} · ${(first?.waitingOn ?? 'waiting on an earlier result').replace(/^Waiting/, 'waiting')}`
+  }
+
+  // Busy courts in the order they are likely to free up.
+  const busyInOrder = [...liveCourts].sort(
+    (a, b) => (a.live!.startedAt?.getTime() ?? 0) - (b.live!.startedAt?.getTime() ?? 0),
+  )
+  for (const c of busyInOrder) {
+    const onOtherCourts = new Set<string>()
+    for (const o of liveCourts) if (o.id !== c.id) for (const p of o.live!.playerIds) onOtherCourts.add(p)
+    const pick = board.queue.find(
+      (m) =>
+        !promised.has(m.id) &&
+        !m.playerIds.some((p) => onOtherCourts.has(p) || spokenFor.has(p)),
+    )
+    if (pick) {
+      promised.add(pick.id)
+      for (const p of pick.playerIds) spokenFor.add(p)
+    }
+    let nextNote: string | null = null
+    if (!pick) {
+      if (board.queue.some((m) => !promised.has(m.id))) {
+        const others = liveCourts.filter((o) => o.id !== c.id).map((o) => o.name)
+        nextNote = others.length ? `waiting on ${possessive(others)}` : null
+      } else if (board.waiting.length) nextNote = waitingNote(c.id)
+      else nextNote = 'Nothing left for this court'
+    }
+    out.set(c.id, {
+      closedReason: c.closedReason,
+      live: c.live,
+      next: pick ?? null,
+      nextNote,
+      offer: null,
+      idleReason: null,
+    })
+  }
+
+  for (const c of board.courts) {
+    if (c.live) continue
+    const offer = offers.get(c.id) ?? null
+    let idleReason: string | null = null
+    let next: BoardMatch | null = null
+    let nextNote: string | null = null
+    if (c.closed) {
+      idleReason = null
+    } else if (offer) {
+      // The flow should have placed this. It did not, so the board offers it.
+      next = offer
+    } else if (board.queue.length) {
+      idleReason = 'Everyone who could play next is already on a court'
+      next = board.queue[0]
+      if (t.paused) idleReason = null
+    } else if (board.waiting.length) {
+      nextNote = waitingNote(c.id)
+    } else if (board.remaining === 0) {
+      idleReason = `Every ${t.categoryName} match has been played`
+    } else if (liveCourtNames.length) {
+      nextNote = 'Nothing left for this court'
+    }
+    out.set(c.id, {
+      closedReason: c.closedReason,
+      live: null,
+      next,
+      nextNote,
+      offer: t.paused ? null : offer,
+      idleReason,
+    })
+  }
+  return out
+}
+
+/** "Court 1’s result", "Court 1 and Court 2", "Court 1, Court 2 and Court 3". */
+function possessive(names: string[]) {
+  if (names.length <= 1) return `${names[0] ?? ''}’s result`
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 }
 
 /** Names the player, because "blocked" is not actionable and a name is. */

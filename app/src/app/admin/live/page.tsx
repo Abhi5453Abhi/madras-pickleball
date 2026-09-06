@@ -1,0 +1,354 @@
+import { clsx } from 'clsx'
+import Link from 'next/link'
+import { requireUser } from '@/lib/auth'
+import { Chevron, CourtSwatch, Notice, StatusPill, TeamName, splitTeam } from '@/components/ui'
+import { venueDate, venueTime } from '@/lib/time'
+import {
+  venueBoard,
+  venueVersion,
+  type BoardMatch,
+  type VenueBoard,
+  type VenueCourt,
+  type VenueTournament,
+} from '@/server/board'
+import { addCourtFromBoard, putOnCourt, resumeFromBoard } from './actions'
+import { BoardRefresh } from './refresh'
+
+/**
+ * The one screen you look at while it's all happening — every court in the
+ * venue, one card each, with the match on it and the match after. It covers
+ * every tournament running today at once, so you never switch between them.
+ * One tap into the score. Matches go on by themselves.
+ */
+export const metadata = { title: 'Live board · Madras Pickleball' }
+
+export const dynamic = 'force-dynamic'
+
+/** "Round 3" → "R3"; "Semi-final" and "Final" stay as they are. */
+function roundShort(roundName: string | null) {
+  if (!roundName) return null
+  return roundName.replace(/\bRound (\d+)/, 'R$1')
+}
+
+/** "Karthik Subramanian / Sathish Kumar" → "Karthik / Sathish": the next line has one line. */
+function shortPair(name: string | null) {
+  const parts = splitTeam(name)
+  if (!parts.length) return 'To be decided'
+  return parts.map((p) => p.split(/\s+/)[0]).join(' / ')
+}
+
+function pairLine(m: BoardMatch) {
+  return `${shortPair(m.nameA)} v ${shortPair(m.nameB)}`
+}
+
+const CARD = 'overflow-hidden rounded-card border border-line-strong bg-paper shadow-card'
+const HEAD = 'flex items-center gap-2 px-4 pt-3'
+const EYEBROW = 'font-score text-eyebrow text-text-2 uppercase'
+const QUIET_BUTTON =
+  'tap flex items-center justify-center rounded-control border border-line-key bg-paper px-4 text-[16px] font-semibold text-text'
+
+export default async function LiveBoardPage(props: PageProps<'/admin/live'>) {
+  await requireUser('admin')
+  const { err } = await props.searchParams
+  const [board, version] = await Promise.all([venueBoard(), venueVersion()])
+  const running = board.tournaments.filter((t) => t.running)
+
+  return (
+    <div className="flex flex-col gap-6">
+      <BoardRefresh version={version} />
+
+      <header>
+        <Link
+          href="/admin"
+          className="tap -ml-2 inline-flex items-center gap-0.5 px-2 text-[16px] font-semibold text-link"
+        >
+          <Chevron className="rotate-90" />
+          Tournaments
+        </Link>
+        <div className="mt-1 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-title text-text">Live board</h1>
+            <p className="num mt-1 text-meta text-text-3">
+              {venueDate(board.now)} ·{' '}
+              {running.length === 0
+                ? 'nothing running'
+                : `${running.length} ${running.length === 1 ? 'tournament' : 'tournaments'} running`}
+            </p>
+          </div>
+          <StatusPill state={board.liveCount ? 'live' : 'done'}>{board.liveCount} on court</StatusPill>
+        </div>
+      </header>
+
+      {err ? (
+        <Notice tone="alert" title="Not done">
+          {String(err)}
+        </Notice>
+      ) : null}
+
+      {running.length ? <Strip tournaments={running} /> : null}
+
+      {running.length === 0 ? (
+        <Notice tone="info" title="Nothing on court yet">
+          Start a tournament from its page and its first matches go straight onto its courts.
+        </Notice>
+      ) : null}
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        {board.courts.map((court) => (
+          <CourtCard key={court.id} court={court} board={board} />
+        ))}
+      </div>
+
+      <MoreLinks tournaments={running} />
+    </div>
+  )
+}
+
+/** "Men's 7 of 16 · about 17:40 · Mixed paused" — the day in one line. */
+function Strip({ tournaments }: { tournaments: VenueTournament[] }) {
+  return (
+    <ul className="num flex flex-wrap gap-x-5 gap-y-1 text-meta text-text-2">
+      {tournaments.map((t) => (
+        <li key={t.id}>
+          <b className="font-semibold text-text">{t.shortName}</b>{' '}
+          {t.paused
+            ? 'paused'
+            : t.total === 0
+              ? 'no schedule'
+              : t.played === t.total
+                ? 'all played'
+                : `${t.played} of ${t.total}${t.finishAt ? ` · about ${venueTime(t.finishAt)}` : ''}`}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function CourtCard({ court, board }: { court: VenueCourt; board: VenueBoard }) {
+  const t = court.tournament
+  if (!t) return <UnassignedCard court={court} board={board} />
+  if (!t.running) return <NotStartedCard court={court} tournament={t} />
+
+  const live = court.live
+  const stale = !!live && live.overrunMinutes !== null
+
+  return (
+    <article
+      data-court
+      className={clsx(CARD, live && (stale ? 'ring-2 ring-waiting/40' : 'ring-2 ring-live/30'))}
+    >
+      {/* The common failure is not a wrong score, it is NO score — the pair
+          walked off for water and the court stays occupied. The signal is a
+          match that has been on far longer than its format takes. */}
+      {stale ? (
+        <p className="bg-waiting-soft px-4 py-2 text-meta font-semibold text-waiting">
+          On for {live.overrunMinutes} min and no score — did they finish?
+        </p>
+      ) : null}
+
+      {t.paused ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 bg-waiting-soft px-4 py-2 text-meta font-semibold text-waiting">
+          <span>
+            {t.categoryName} is paused — {t.paused}.
+          </span>
+          <form action={resumeFromBoard} className="-my-2">
+            <input type="hidden" name="tournamentId" value={t.id} />
+            <button className="tap px-1 text-[15px] font-bold text-link">Start again</button>
+          </form>
+        </div>
+      ) : null}
+
+      {court.closedReason ? (
+        <p className="bg-sunken px-4 py-2 text-meta font-semibold text-text-2">
+          Out of action — {court.closedReason}
+        </p>
+      ) : null}
+
+      <div className={HEAD}>
+        <CourtSwatch colorKey={court.colorKey} size="md" />
+        <span className={EYEBROW}>{court.name}</span>
+        <span className="ml-auto text-right text-meta text-text-3">
+          {t.categoryName}
+          {live?.roundName ? ` · ${roundShort(live.roundName)}` : ''}
+        </span>
+      </div>
+
+      {live ? (
+        <>
+          <div className="mt-2 px-4">
+            <TeamName name={live.nameA} />
+            <span className="my-1 block text-meta text-text-3">against</span>
+            <TeamName name={live.nameB} />
+          </div>
+          {/* gap-3, not gap-2: the brief's floor is that nothing important
+              sits within 8px of another target, and these are the two a wet
+              thumb reaches for. */}
+          <div className="flex gap-3 p-3">
+            <Link
+              href={`/admin/m/${live.id}`}
+              className={clsx(
+                'tap flex flex-1 items-center justify-center rounded-control text-[17px] font-bold text-white',
+                stale ? 'bg-accent shadow-key' : 'bg-ink',
+              )}
+            >
+              {stale ? 'Enter it for them' : 'Enter the score'}
+            </Link>
+            <Link href={`/admin/live/move/${live.id}` as never} className={QUIET_BUTTON}>
+              Move
+            </Link>
+          </div>
+        </>
+      ) : (
+        <div className="mt-2 px-4 pb-3">
+          <p className="text-row text-text-3">Nothing on court</p>
+          {court.idleReason ? (
+            <p className="mt-1 text-meta text-text-2">
+              {court.idleReason}
+              {t.board && t.board.remaining === 0 ? (
+                <>
+                  .{' '}
+                  <Link href={`/admin/t/${t.slug}`} className="font-semibold text-link">
+                    Finish it on its page
+                  </Link>
+                </>
+              ) : null}
+            </p>
+          ) : null}
+          {court.offer ? (
+            // The flow should have put this on. It did not — a court came free
+            // by a door the flow does not watch — so the board offers it, in
+            // the only terracotta button on the screen.
+            <form action={putOnCourt} className="mt-3">
+              <input type="hidden" name="matchId" value={court.offer.id} />
+              <input type="hidden" name="courtId" value={court.id} />
+              <input type="hidden" name="tournamentId" value={t.id} />
+              <button className="tap w-full rounded-control bg-accent px-4 text-[17px] font-bold text-white shadow-key active:translate-y-px active:shadow-none">
+                Put {pairLine(court.offer)} on {court.name}
+              </button>
+            </form>
+          ) : null}
+        </div>
+      )}
+
+      <NextLine court={court} />
+    </article>
+  )
+}
+
+/** "Next here: Arun / Manoj v Deepak / Bala" — or what it is waiting on. */
+function NextLine({ court }: { court: VenueCourt }) {
+  if (court.offer) return null
+  if (court.next) {
+    return (
+      <p className="border-t border-line px-4 py-2.5 text-meta text-text-2">
+        Next here: <b className="font-semibold text-text">{pairLine(court.next)}</b>
+      </p>
+    )
+  }
+  if (!court.nextNote) return null
+  if (court.nextNote === 'Nothing left for this court') {
+    return <p className="border-t border-line px-4 py-2.5 text-meta text-text-3">{court.nextNote}</p>
+  }
+  const [head, ...rest] = court.nextNote.split(' · ')
+  return (
+    <p className="border-t border-line px-4 py-2.5 text-meta text-text-2">
+      Next here: <b className="font-semibold text-text">{head}</b>
+      {rest.length ? ` · ${rest.join(' · ')}` : ''}
+    </p>
+  )
+}
+
+/** A court nobody holds today. Either say so, or offer it to the tournament that needs it. */
+function UnassignedCard({ court, board }: { court: VenueCourt; board: VenueBoard }) {
+  const wants = board.wants
+  const first = board.tournaments.find((t) => t.running) ?? board.tournaments[0]
+  return (
+    <article data-court className="hatched rounded-card border border-dashed border-line-strong bg-paper">
+      <div className={HEAD}>
+        <CourtSwatch colorKey={court.colorKey} size="md" />
+        <span className={EYEBROW}>{court.name}</span>
+        <span className="ml-auto text-meta text-text-3">Not assigned</span>
+      </div>
+      <div className="px-4 pt-2 pb-4 text-body text-text-2">
+        {wants ? (
+          <>
+            <p>
+              {wants.shortName} has {wants.toPlay} to play and a court sitting empty.
+            </p>
+            <form action={addCourtFromBoard} className="mt-3">
+              <input type="hidden" name="tournamentId" value={wants.id} />
+              <input type="hidden" name="courtId" value={court.id} />
+              <button className={`${QUIET_BUTTON} w-full`}>
+                Add {court.name} to {wants.categoryName}
+              </button>
+            </form>
+          </>
+        ) : (
+          <p>
+            No tournament is using this court today. Assign it under a tournament’s{' '}
+            {first ? (
+              <Link href={`/admin/t/${first.slug}/schedule` as never} className="font-semibold text-link">
+                Schedule &amp; courts
+              </Link>
+            ) : (
+              'Schedule & courts'
+            )}
+            .
+          </p>
+        )}
+      </div>
+    </article>
+  )
+}
+
+/** Held by a tournament on today that has not been started. */
+function NotStartedCard({ court, tournament: t }: { court: VenueCourt; tournament: VenueTournament }) {
+  return (
+    <article data-court className="hatched rounded-card border border-dashed border-line-strong bg-paper">
+      <div className={HEAD}>
+        <CourtSwatch colorKey={court.colorKey} size="md" />
+        <span className={EYEBROW}>{court.name}</span>
+        <span className="ml-auto text-right text-meta text-text-3">{t.categoryName}</span>
+      </div>
+      <p className="px-4 pt-2 pb-4 text-body text-text-2">
+        {t.name} hasn’t started yet.{' '}
+        <Link href={`/admin/t/${t.slug}`} className="font-semibold text-link">
+          Start it from its page
+        </Link>
+        .
+      </p>
+    </article>
+  )
+}
+
+/** The escape hatch: pause, pull a pair out, fix a score — on the tournament's More page. */
+function MoreLinks({ tournaments }: { tournaments: VenueTournament[] }) {
+  if (tournaments.length === 0) return null
+  if (tournaments.length === 1) {
+    return (
+      <Link
+        href={`/admin/t/${tournaments[0].slug}/more` as never}
+        className="tap flex items-center justify-center px-3 text-center text-[16px] font-semibold text-link"
+      >
+        More · pause, pull a pair out, fix a score
+      </Link>
+    )
+  }
+  return (
+    <div className="flex flex-col items-center">
+      <p className="text-center text-meta text-text-3">More · pause, pull a pair out, fix a score</p>
+      <ul className="flex flex-wrap justify-center gap-x-2">
+        {tournaments.map((t) => (
+          <li key={t.id}>
+            <Link
+              href={`/admin/t/${t.slug}/more` as never}
+              className="tap flex items-center justify-center px-3 text-center text-[16px] font-semibold text-link"
+            >
+              {t.categoryName}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}

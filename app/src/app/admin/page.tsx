@@ -78,7 +78,7 @@ export default async function AdminHome(props: PageProps<'/admin'>) {
             ))}
           </ul>
           {anyLive ? (
-            <Link href={`/admin/t/${today.find((t) => t.status === 'live')!.slug}/board` as never} className={PRIMARY_LINK}>
+            <Link href="/admin/live" className={PRIMARY_LINK}>
               Open the live board
             </Link>
           ) : null}

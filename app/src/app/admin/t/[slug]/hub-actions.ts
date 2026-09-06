@@ -27,7 +27,7 @@ export async function startEventAction(formData: FormData) {
     entityId: tournament.id,
   })
   revalidatePath('/admin', 'layout')
-  redirect(`/admin/t/${slug}/board` as never)
+  redirect('/admin/live')
 }
 
 export async function finishEventAction(formData: FormData) {

@@ -16,6 +16,7 @@ import {
 import { newId } from '@/lib/ids'
 import { bumpStreamVersion } from '@/lib/stream'
 import { venueDayKey } from '@/lib/time'
+import { flowTournament } from './board'
 import { createCategory, createTournament, getVenue } from './tournaments'
 
 /**
@@ -285,6 +286,8 @@ export async function assignCourts(tournamentId: string, courtIds: string[]) {
     }
   })
   await bumpStreamVersion(tournamentId)
+  // A court added to a running tournament is a free court: fill it.
+  await flowTournament(tournamentId)
   return { ok: true as const, count: wanted.length }
 }
 
@@ -664,6 +667,9 @@ export async function startEvent(tournamentId: string) {
     })
     .where(eq(tournaments.id, tournamentId))
   await bumpStreamVersion(tournamentId)
+  // Off we go: the first matches in order go straight onto every court the
+  // tournament holds. The organiser's next job is a score.
+  await flowTournament(tournamentId)
   return { ok: true as const }
 }
 

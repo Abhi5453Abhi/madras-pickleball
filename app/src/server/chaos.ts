@@ -16,6 +16,7 @@ import {
 import { bumpStreamVersion } from '@/lib/stream'
 import { newId } from '@/lib/ids'
 import { walkoverGames } from '@/lib/rules'
+import { flowTournament } from './board'
 import { resolveSlotsFor, rulesFor } from './scoring'
 
 /**
@@ -512,6 +513,8 @@ export async function resumeDay(tournamentId: string) {
     .set({ pauseNote: null, breakStartsAt: null })
     .where(eq(tournaments.id, tournamentId))
   await bumpStreamVersion(tournamentId)
+  // Nothing went on while it was stopped; the free courts fill again now.
+  await flowTournament(tournamentId)
   return { ok: true as const }
 }
 

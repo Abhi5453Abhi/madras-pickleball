@@ -250,7 +250,7 @@ async function Running({
   return (
     <>
       {phase === 'running' ? (
-        <Link href={`${base}/board` as never} className={PRIMARY_LINK}>
+        <Link href="/admin/live" className={PRIMARY_LINK}>
           Live board
         </Link>
       ) : winnerName ? (

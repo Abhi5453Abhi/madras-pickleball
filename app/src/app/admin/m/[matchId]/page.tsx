@@ -7,7 +7,7 @@ import { getMatchForScoring, projectedState } from '@/server/scoring'
 import { AdminEntry } from './entry'
 import { useSubmission, voidThisMatch } from './actions'
 import Link from 'next/link'
-import { Confirm, Notice, Panel, SectionHead } from '@/components/ui'
+import { Chevron, Confirm, Notice, Panel, SectionHead } from '@/components/ui'
 import { SECONDARY_LINK } from '../../_ui'
 
 export const metadata = { title: 'Enter a score · Madras Pickleball' }
@@ -108,10 +108,19 @@ export default async function AdminMatchPage(props: PageProps<'/admin/m/[matchId
       </section>
     ) : null
 
-  const back = `/admin/t/${tournament?.slug ?? ''}/board`
+  // Saving sends you straight back to the venue-wide board — the one screen
+  // the organiser looks at while it is all happening.
+  const back = '/admin/live'
 
   return (
     <div className="flex flex-col gap-7">
+      <Link
+        href={back as never}
+        className="tap -mb-4 -ml-2 inline-flex items-center gap-0.5 self-start px-2 text-[16px] font-semibold text-link"
+      >
+        <Chevron className="rotate-90" />
+        Live board
+      </Link>
       {/* `voidMatch` refuses by naming the later match that was built off this
           result. Throwing that sentence away is the bug that had to be fixed on
           `sendToCourt`; it is the only thing that tells the organiser what to

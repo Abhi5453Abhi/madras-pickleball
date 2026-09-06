@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
 import { newId } from '@/lib/ids'
 import { adminSetResult, getMatchForScoring, submitResult } from '@/server/scoring'
+import { flowTournament } from '@/server/board'
 import { voidMatch } from '@/server/chaos'
 import { recordAudit } from '@/lib/audit'
 import type { GameScore } from '@/lib/rules'
@@ -65,6 +66,7 @@ export async function saveResult(payload: SavePayload) {
       userId: user.id,
       actorLabel: user.name,
     })
+    if (res.ok) await flowTournament(loaded.match.tournamentId)
     revalidatePath('/admin', 'layout')
     return res.ok ? { ok: true as const } : { ok: false as const, error: res.error }
   }
@@ -85,6 +87,9 @@ export async function saveResult(payload: SavePayload) {
     // dance.
     authoritative: true,
   })
+  // The court this was on is free the moment the score is in. The next match
+  // in order goes on before the organiser is back on the board.
+  if (res.ok) await flowTournament(loaded.match.tournamentId)
   revalidatePath('/admin', 'layout')
   return res.ok ? { ok: true as const } : { ok: false as const, error: res.error }
 }
