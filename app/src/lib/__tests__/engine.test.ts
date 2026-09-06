@@ -24,6 +24,7 @@ import {
   seededShuffle,
 } from '../draw'
 import { standings, tallyRows, type StandingsMatch } from '../standings'
+import { winnerChips, loserChips } from '../chips'
 import { estimateDay, leagueMatchCount, groupsKnockoutMatchCount, minutesPerMatch } from '../estimate'
 
 // ─────────────────────────────── rules ───────────────────────────────
@@ -419,5 +420,53 @@ describe('day estimate', () => {
     expect(minutesPerMatch({ bestOf: 3, pointsToWin: 11 })).toBe(30)
     expect(minutesPerMatch({ bestOf: 1, pointsToWin: 15 })).toBe(20)
     expect(minutesPerMatch({ bestOf: 1, pointsToWin: 11 })).toBe(15)
+  })
+})
+
+// ──────────────────────────── score chips ────────────────────────────
+
+describe('score chips', () => {
+  const to11: ScoringRules = { bestOf: 3, pointsToWin: 11, winBy: 2, hardCap: null }
+  const to11cap15: ScoringRules = { ...to11, hardCap: 15 }
+  const to15: ScoringRules = { bestOf: 1, pointsToWin: 15, winBy: 2, hardCap: null }
+
+  it('offers the target and four above it, with more behind a link', () => {
+    expect(winnerChips(to11).chips).toEqual([11, 12, 13, 14, 15])
+    expect(winnerChips(to11).more).toContain(21)
+  })
+
+  it('stops at the cap and offers no more', () => {
+    expect(winnerChips(to11cap15).chips).toEqual([11, 12, 13, 14, 15])
+    expect(winnerChips(to11cap15).more).toEqual([])
+  })
+
+  it('offers every legal losing score at the target', () => {
+    expect(loserChips(to11, 11)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+    expect(loserChips(to15, 15)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
+  })
+
+  it('offers exactly one chip past the target, because only one is legal', () => {
+    expect(loserChips(to11, 13)).toEqual([11])
+    expect(loserChips(to11, 12)).toEqual([10])
+  })
+
+  it('offers both cap endings at the cap', () => {
+    expect(loserChips(to11cap15, 15)).toEqual([13, 14])
+  })
+
+  it('never offers a reversed score', () => {
+    for (const w of winnerChips(to11).chips) {
+      for (const l of loserChips(to11, w)) expect(l).toBeLessThan(w)
+    }
+  })
+
+  it('every offered pair is a score the rules engine accepts', () => {
+    for (const rules of [to11, to11cap15, to15]) {
+      for (const w of winnerChips(rules).chips) {
+        for (const l of loserChips(rules, w)) {
+          expect(gameWinner(rules, { gameNo: 1, scoreA: w, scoreB: l })).toBe('A')
+        }
+      }
+    }
   })
 })

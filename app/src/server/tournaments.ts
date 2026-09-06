@@ -490,6 +490,29 @@ export async function standingsFor(categoryId: string) {
   return { rows, rule: category.tiebreakRule, teams: teamRows }
 }
 
+/** Per-game scores for a whole tournament, for the "11-9, 8-11, 11-6" line. */
+export async function gamesByMatch(tournamentId: string) {
+  const rows = await db
+    .select({
+      matchId: games.matchId,
+      gameNo: games.gameNo,
+      scoreA: games.scoreA,
+      scoreB: games.scoreB,
+    })
+    .from(games)
+    .innerJoin(matches, eq(matches.id, games.matchId))
+    .where(eq(matches.tournamentId, tournamentId))
+    .orderBy(asc(games.gameNo))
+
+  const out = new Map<string, Array<{ scoreA: number; scoreB: number }>>()
+  for (const g of rows) {
+    const list = out.get(g.matchId) ?? []
+    list.push({ scoreA: g.scoreA, scoreB: g.scoreB })
+    out.set(g.matchId, list)
+  }
+  return out
+}
+
 export async function teamNameMap(tournamentId: string) {
   const rows = await db
     .select({ id: teams.id, name: teams.name, categoryId: teams.categoryId })

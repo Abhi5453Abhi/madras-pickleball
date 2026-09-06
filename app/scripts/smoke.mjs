@@ -13,7 +13,19 @@ try {
 
 const BASE = process.env.BASE ?? 'http://localhost:3100'
 // CHROME is only needed where a preinstalled browser must be pointed at explicitly.
-const EXE = process.env.CHROME
+const CHROME_CANDIDATES = [
+  process.env.CHROME,
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+  '/usr/bin/google-chrome',
+  '/usr/bin/chromium',
+].filter(Boolean)
+const { existsSync } = await import('node:fs')
+const EXE = CHROME_CANDIDATES.find((p) => existsSync(p))
+if (!EXE) {
+  console.error('No Chrome found. Set CHROME=/path/to/chrome')
+  process.exit(1)
+}
 const browser = await chromium.launch({
   ...(EXE ? { executablePath: EXE } : {}),
   args: ['--no-sandbox'],

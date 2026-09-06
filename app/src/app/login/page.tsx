@@ -3,10 +3,12 @@ import { redirect } from 'next/navigation'
 import { currentUser } from '@/lib/auth'
 import { Card } from '@/components/ui'
 import { LoginForm } from './login-form'
+import { ensureReady } from '@/server/bootstrap'
 
 export const metadata = { title: 'Sign in · Madras Pickleball' }
 
 export default async function LoginPage() {
+  await ensureReady()
   if (await currentUser()) redirect('/admin')
 
   return (

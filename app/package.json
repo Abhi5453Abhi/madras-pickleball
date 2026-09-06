@@ -17,7 +17,8 @@
     "smoke": "tsx scripts/reset-lockouts.ts && node scripts/smoke.mjs",
     "setup": "tsx scripts/setup.ts",
     "predev": "tsx scripts/setup.ts",
-    "smoke:setup": "npm i -D playwright && npx playwright install chromium"
+    "db:bootstrap": "tsx scripts/gen-bootstrap.ts",
+    "e2e": "node scripts/e2e.mjs"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
@@ -27,6 +28,7 @@
     "nanoid": "^6.0.1",
     "next": "16.3.4",
     "postgres": "^3.4.9",
+    "qrcode": "^1.5.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",
@@ -35,12 +37,14 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^22",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",
     "eslint-config-next": "16.3.4",
+    "playwright-core": "^1.63.0",
     "tailwindcss": "^4",
     "tsx": "^4.23.13",
     "typescript": "^5",

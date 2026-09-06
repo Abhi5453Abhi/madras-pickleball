@@ -1,8 +1,20 @@
 /** End-to-end: sign in, run Quick Play, check the draw that comes out. */
-import { chromium } from 'playwright'
+import { chromium } from 'playwright-core'
 
 const BASE = process.env.BASE ?? 'http://localhost:3200'
-const EXE = process.env.CHROME
+const CHROME_CANDIDATES = [
+  process.env.CHROME,
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+  '/usr/bin/google-chrome',
+  '/usr/bin/chromium',
+].filter(Boolean)
+const { existsSync } = await import('node:fs')
+const EXE = CHROME_CANDIDATES.find((p) => existsSync(p))
+if (!EXE) {
+  console.error('No Chrome found. Set CHROME=/path/to/chrome')
+  process.exit(1)
+}
 const browser = await chromium.launch({ ...(EXE ? { executablePath: EXE } : {}), args: ['--no-sandbox'] })
 const page = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage()
 page.on('pageerror', (e) => console.log('  pageerror:', e.message.slice(0, 200)))

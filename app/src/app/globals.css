@@ -1,62 +1,162 @@
 @import 'tailwindcss';
 
 /*
- * Madras Pickleball design tokens — SPEC D3.
- * Written as constraints, not adjectives: legible at 1m in direct sun, one-handed,
- * assuming a 20% brightness loss through a screen protector.
+ * Madras Pickleball — design system.
  *
- * Green means one thing only: LIVE. Amber = waiting. Grey = done.
- * The accent is terracotta, not lime — yellow-greens have the lowest contrast
- * against white and wash out first under glare.
+ * Written as constraints, not adjectives: legible at 1m in direct sun,
+ * one-handed, assuming a 20% brightness loss through a screen protector.
+ *
+ * Three rules that carry most of the look:
+ *   1. Green means one thing only — LIVE, right now. Finished is grey,
+ *      confirmed is ink. A second green destroys both.
+ *   2. Terracotta is the single accent, and it is spent on structure (the net
+ *      rule, a qualifying position, an idle court's call to action) — never on
+ *      status, never on text below 14px.
+ *   3. Ink is a chrome FILL, not body text. Blue-tinted body copy at 15px just
+ *      reads as generic dark grey; a solid ink band reads as a brand.
  */
 
+/* Self-hosted: no font CDN is reachable from the build, and a webfont that
+   fails to load is a layout shift on tournament morning. */
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/inter.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Barlow SC';
+  src: url('/fonts/barlow-600.woff2') format('woff2');
+  font-weight: 600;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Barlow SC';
+  src: url('/fonts/barlow-700.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
+  font-style: normal;
+}
+
 @theme {
-  /* ink + interactive */
-  --color-ink: #0e3a5e;
-  --color-ink-2: #1a4f78;
-  --color-link: #1565c0;
-  --color-link-hi: #0d4ea0;
-
-  /* the one accent */
-  --color-accent: #e2582b;
-  --color-accent-soft: #fdece5;
-
-  /* status — reserved meanings */
-  --color-live: #16a34a;
-  --color-live-soft: #e7f7ed;
-  --color-waiting: #b45309;
-  --color-waiting-soft: #fdf3e3;
-  --color-done: #64748b;
-  --color-alert: #c0261c;
-  --color-alert-soft: #fdeceb;
-
-  /* surfaces */
+  /* ── surfaces ── */
+  --color-ground: #eef1f5;
   --color-paper: #ffffff;
-  --color-ground: #f6f7f9;
-  --color-line: #e2e6ec;
-  --color-line-strong: #cbd3dd;
-  --color-muted: #5b6775;
-
-  /* scoreboard + display view: hue, not shade, so it survives colour-vision deficiency */
+  --color-sunken: #e4e9f0;
+  --color-ink: #0e3a5e;
+  --color-ink-2: #16507e;
   --color-board: #0b0f14;
   --color-board-2: #151c25;
+
+  /* ── text ── */
+  --color-text: #10151b;
+  --color-text-2: #414d5c;
+  --color-text-3: #6b7889;
+  --color-on-ink: #ffffff;
+  --color-on-ink-2: #b9cde0;
+
+  /* ── lines ── */
+  --color-line: #dce2ea;
+  --color-line-strong: #c3ccd8;
+  --color-line-ink: #1e4e77;
+
+  /* ── the one accent ── */
+  --color-accent: #ce4318;
+  --color-accent-hi: #b23a13;
+  --color-accent-line: #e2582b;
+  --color-accent-soft: #fcebe4;
+
+  /* ── status: three, reserved, always paired with a word ── */
+  --color-live: #16a34a;
+  --color-live-text: #0f7b37;
+  --color-live-soft: #e3f6ea;
+  --color-waiting: #b45309;
+  --color-waiting-soft: #fbf0dc;
+  --color-done: #6b7889;
+  --color-done-soft: #edf0f4;
+  --color-alert: #c0261c;
+  --color-alert-soft: #fdeceb;
+  --color-link: #1257a8;
+
+  /* ── court identity: an identifier, never a status ── */
+  --color-court-blue: #1d4ed8;
+  --color-court-orange: #c2410c;
+  --color-court-teal: #0f766e;
+  --color-court-violet: #6d28d9;
+  --color-court-clay: #7c3f12;
+  --color-court-indigo: #3f3d8f;
+
+  /* ── two sides, separated by hue not shade, for dark surfaces and print ── */
   --color-side-a: #2563eb;
   --color-side-b: #ea580c;
-  /* light-mode variants of the same pair, defined once so there is one orange */
-  --color-side-a-lite: #dbe6fd;
-  --color-side-b-lite: #fde6d6;
 
-  --font-sans:
-    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  /*
-   * Barlow Semi Condensed is the intended score face. Google Fonts is not
-   * reachable from this build environment, so the stack falls back to the
-   * narrowest system faces; drop the woff2 into /public/fonts and point
-   * --font-score at it to switch (see docs/RUNBOOK.md).
-   */
-  --font-score:
-    'Barlow Semi Condensed', 'Roboto Condensed', 'Archivo Narrow', 'Liberation Sans Narrow',
-    ui-sans-serif, system-ui, sans-serif;
+  /* ── type ── */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-score: 'Barlow SC', 'Barlow Semi Condensed', 'Roboto Condensed', 'Arial Narrow',
+    ui-sans-serif, sans-serif;
+
+  --text-board: 72px;
+  --text-board--line-height: 66px;
+  --text-board--font-weight: 700;
+  --text-board--letter-spacing: -0.03em;
+
+  --text-score-lg: 44px;
+  --text-score-lg--line-height: 40px;
+  --text-score-lg--font-weight: 700;
+  --text-score-lg--letter-spacing: -0.02em;
+
+  --text-score: 34px;
+  --text-score--line-height: 32px;
+  --text-score--font-weight: 700;
+  --text-score--letter-spacing: -0.02em;
+
+  --text-hero: 32px;
+  --text-hero--line-height: 36px;
+  --text-hero--font-weight: 700;
+  --text-hero--letter-spacing: -0.02em;
+
+  --text-title: 28px;
+  --text-title--line-height: 32px;
+  --text-title--font-weight: 700;
+  --text-title--letter-spacing: -0.02em;
+
+  --text-section: 20px;
+  --text-section--line-height: 26px;
+  --text-section--font-weight: 700;
+  --text-section--letter-spacing: -0.01em;
+
+  --text-num: 18px;
+  --text-num--line-height: 20px;
+  --text-num--font-weight: 700;
+
+  --text-row: 17px;
+  --text-row--line-height: 22px;
+  --text-row--font-weight: 600;
+
+  --text-body: 16px;
+  --text-body--line-height: 24px;
+
+  --text-eyebrow: 15px;
+  --text-eyebrow--line-height: 16px;
+  --text-eyebrow--font-weight: 700;
+  --text-eyebrow--letter-spacing: 0.08em;
+
+  --text-meta: 14px;
+  --text-meta--line-height: 18px;
+  --text-meta--font-weight: 500;
+
+  /* ── radius: nothing gets 24px+, a 64px pill looks like a toy ── */
+  --radius-control: 12px;
+  --radius-card: 14px;
+
+  /* ── elevation: a seated edge, not a float. Blue-tinted — a black shadow on
+       a cool grey ground reads as dirt. ── */
+  --shadow-card: 0 1px 0 0 #dce2ea;
+  --shadow-bar: 0 6px 16px -10px rgb(14 58 94 / 0.55);
+  --shadow-dock: 0 -8px 24px -12px rgb(14 58 94 / 0.45);
+  --shadow-key: inset 0 -3px 0 0 rgb(0 0 0 / 0.25);
 }
 
 html {
@@ -68,18 +168,63 @@ html {
 body {
   min-height: 100%;
   background: var(--color-ground);
-  color: var(--color-ink);
+  color: var(--color-text);
   font-family: var(--font-sans);
-  /* Anywhere a number updates live, tabular figures stop the layout twitching. */
-  font-variant-numeric: tabular-nums;
+  font-size: 16px;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Numbers that change while you watch them. */
+/*
+ * Any digit that changes while someone watches, or that sits in a column.
+ * Never a name — a person's name in a condensed face looks like a departure board.
+ */
 .num {
   font-family: var(--font-score);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+}
+
+.font-score {
+  font-family: var(--font-score);
+}
+
+/*
+ * The signature: any full-width line separating two sides is drawn with a gap
+ * at one third — the net post. Header, the divider between two teams, the top
+ * of score entry. Nowhere else.
+ */
+.net-rule {
+  height: 3px;
+  background: var(--color-accent-line);
+  -webkit-mask-image: linear-gradient(90deg, #000 0 32%, transparent 32% 38%, #000 38% 100%);
+  mask-image: linear-gradient(90deg, #000 0 32%, transparent 32% 38%, #000 38% 100%);
+}
+
+/* A pickleball's defining feature is its holes. Texture, not decoration. */
+.court-dots {
+  background-image: radial-gradient(circle, currentColor 1.6px, transparent 1.7px);
+  background-size: 28px 28px;
+  opacity: 0.06;
+}
+
+/* Taped off. Four lines of CSS, no asset. */
+.hatched {
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 10px,
+    rgb(16 21 27 / 0.035) 10px 20px
+  );
+}
+
+/* Hit targets: glare, sweat and motion mean 44px is not enough. */
+.tap {
+  min-height: 56px;
+}
+.tap-lg {
+  min-height: 64px;
+}
+.tap-xl {
+  min-height: 72px;
 }
 
 /* Courtside and TV surfaces opt into the dark ground explicitly. */
@@ -89,16 +234,11 @@ body {
   color-scheme: dark;
 }
 
-/* Hit targets: 56px minimum, 64 preferred — glare, sweat and motion (SPEC A5). */
-.tap {
-  min-height: 56px;
-  min-width: 56px;
-}
-
-.tap-lg {
-  min-height: 64px;
-}
-
+/*
+ * Motion in bright sun is noise, and a pulsing live dot competes with a real
+ * live match. The hold-to-submit meter is the one exception, because it carries
+ * information the user needs.
+ */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
