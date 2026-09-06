@@ -133,6 +133,20 @@ func (r *Registry) Names() []string {
 	return out
 }
 
+// Call runs a registered function in this process, with the body it would
+// have arrived with over HTTP. It is for programs that already hold the
+// database — cmd/seed, which builds the walks' test data — so they go through
+// the same code a screen does instead of writing their own SQL. The session,
+// role and CSRF checks are the HTTP handler's: they guard a browser, and there
+// is no browser here.
+func (r *Registry) Call(ctx context.Context, name string, body json.RawMessage) (any, error) {
+	e, ok := r.entries[name]
+	if !ok {
+		return nil, NotFound("No such function.")
+	}
+	return e.call(ctx, body)
+}
+
 // AuthOf reports how a function is guarded.
 func (r *Registry) AuthOf(name string) (Auth, bool) {
 	e, ok := r.entries[name]
