@@ -1125,7 +1125,7 @@ console.log('\n7. Men’s Singles — five players on Court 4 (item 3)')
 const singles = await create({ name: "Men's Singles", gender: "Men's", discipline: 'Singles', format: 'top 2 play a final', courts: ['Court 4'] })
 {
   const t = await body()
-  ok('  hub step 2 says Players', /Players/.test(t) && !/Teams/.test(t), t.slice(0, 400))
+  ok('  hub has no Teams step for singles', !/Teams/.test(t) && /2 Schedule & courts/.test(t), t.slice(0, 400))
   ok('  sub line says singles', /singles · league, then a final/.test(t), t.slice(0, 200))
   await shot('hub-singles-empty')
 }
