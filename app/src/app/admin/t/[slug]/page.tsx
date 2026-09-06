@@ -5,6 +5,7 @@ import { requireUser } from '@/lib/auth'
 import { Card, Chevron, Notice, Panel, TeamName } from '@/components/ui'
 import { venueDate, venueTime } from '@/lib/time'
 import { formatWords, hub, type Step } from '@/server/events'
+import { settleTeams } from '@/server/teams'
 import { gamesByMatch, getTournamentBySlug, listMatches, standingsFor, teamNameMap } from '@/server/tournaments'
 import { PRIMARY_LINK, SECONDARY_LINK } from '../../_ui'
 import { finishEventAction, startEventAction } from './hub-actions'
@@ -32,6 +33,12 @@ export default async function TournamentHub(props: PageProps<'/admin/t/[slug]'>)
   const { slug } = await props.params
   const { err, courts: courtsErr } = await props.searchParams
 
+  // Mutual pairs are made on the way in, as the Teams and Schedule screens do,
+  // so the Teams step does not say "0 of 4 pairs made · 8 still to pair" for
+  // a list where two pairs have already named each other.
+  const found = await getTournamentBySlug(slug)
+  if (!found) notFound()
+  if (found.status === 'draft' || found.status === 'registration') await settleTeams(found.id)
   const h = await hub(slug)
   if (!h) notFound()
   const { tournament: t, category } = h
@@ -301,10 +308,10 @@ async function Running({
                   <th className="py-2 font-semibold" scope="col">
                     {unit}
                   </th>
-                  <th className="py-2 text-right font-semibold" scope="col">
+                  <th className="py-2 pl-3 text-right font-semibold" scope="col">
                     Won
                   </th>
-                  <th className="py-2 pr-4 text-right font-semibold" scope="col">
+                  <th className="py-2 pr-4 pl-3 text-right font-semibold" scope="col">
                     Points
                   </th>
                 </tr>
@@ -314,8 +321,8 @@ async function Running({
                   <RowWithCut key={r.teamId} index={i} cut={cut} finished={phase === 'finished'}>
                     <td className="num py-2.5 pl-4 text-meta text-text-3">{i + 1}</td>
                     <td className="py-2.5 text-row text-text">{names.get(r.teamId) ?? '—'}</td>
-                    <td className="num py-2.5 text-right text-row text-text">{r.won}</td>
-                    <td className="num py-2.5 pr-4 text-right text-row text-text">{r.pointsFor}</td>
+                    <td className="num py-2.5 pl-3 text-right text-row text-text">{r.won}</td>
+                    <td className="num py-2.5 pr-4 pl-3 text-right text-row text-text">{r.pointsFor}</td>
                   </RowWithCut>
                 ))}
               </tbody>

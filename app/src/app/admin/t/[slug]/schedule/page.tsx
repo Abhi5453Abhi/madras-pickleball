@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
 import { Chevron, CourtSwatch, Notice, Panel, TeamName } from '@/components/ui'
-import { courtOptions, hub } from '@/server/events'
+import { courtOptions, formatWords, hub } from '@/server/events'
 import { settleTeams } from '@/server/teams'
 import { getTournamentBySlug, listMatches, teamNameMap } from '@/server/tournaments'
 import { PRIMARY_LINK, SECONDARY_LINK } from '../../../_ui'
@@ -106,9 +106,9 @@ export default async function SchedulePage(props: PageProps<'/admin/t/[slug]/sch
             <p className="text-center text-meta text-text-2">
               {h.teamsMade < 2
                 ? 'Make the pairs first — you need at least two.'
-                : `${h.teamsMade} ${category.discipline === 'doubles' ? 'pairs' : 'players'} · ${
-                    category.finalsStage === 'none' ? 'everyone plays everyone' : 'league, then the finals'
-                  }. No times — matches go on in order onto whichever court is free.`}
+                : `${h.teamsMade} ${category.discipline === 'doubles' ? 'pairs' : 'players'} · ${formatWords(
+                    category.finalsStage,
+                  )}. No times — matches go on in order onto whichever court is free.`}
             </p>
           </form>
         ) : (

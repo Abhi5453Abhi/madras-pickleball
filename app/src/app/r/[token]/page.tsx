@@ -55,8 +55,7 @@ export default async function SignupPage(props: PageProps<'/r/[token]'>) {
             <SignupForm token={token} doubles={view.discipline === 'doubles'} />
             <NetRule className="mt-8" />
             <p className="mt-3 text-meta text-text-3">
-              Your name goes on the public page once the schedule is made. Your phone number never
-              does.
+              Your name goes on the public page. Your phone number never does.
             </p>
           </>
         )}

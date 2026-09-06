@@ -275,7 +275,9 @@ function describeWish(
   const r = q.wishPlayerId ? byId.get(q.wishPlayerId) : undefined
   if (r) return { ...base, note: `${firstName(q.name)} named ${firstName(r.name)}` }
   if (q.wishText) return { ...base, note: `${firstName(q.name)} named ${q.wishText}` }
-  return { ...base, note: 'not mutual' }
+  // "not mutual" read as if Arun wanted somebody else. He named nobody, which
+  // is the one case where the wish can simply be granted.
+  return { ...base, note: `${firstName(q.name)} named nobody` }
 }
 
 /**

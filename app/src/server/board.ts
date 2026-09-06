@@ -936,8 +936,9 @@ export async function venueBoard(): Promise<VenueBoard> {
 
   const running = venueTournaments.filter((t) => t.running)
   const wants =
-    [...running].filter((t) => t.toPlay >= 3 && !t.paused).sort((a, b) => b.toPlay - a.toPlay)[0] ??
-    null
+    [...running]
+      .filter((t) => t.toPlay >= 3 && !t.paused && !!t.board && couldUseAnotherCourt(t.board))
+      .sort((a, b) => b.toPlay - a.toPlay)[0] ?? null
 
   const venueCourts: VenueCourt[] = courtRows.map((c) => {
     const t = holder.get(c.id) ?? null
@@ -963,6 +964,27 @@ export async function venueBoard(): Promise<VenueBoard> {
     liveCount: venueCourts.filter((c) => c.live).length,
     wants,
   }
+}
+
+/**
+ * Would one more court actually get a match on? Only when every court the
+ * tournament holds is busy or closed AND a match is waiting whose players are
+ * all free. "5 to play and a court sitting empty" used to show with four pairs
+ * on two courts — all eight players already playing — and while the
+ * tournament's own second court stood empty after a match was taken off it.
+ */
+function couldUseAnotherCourt(board: BoardData) {
+  if (!board.courts.every((c) => c.live || c.closed)) return false
+  const another: BoardCourt = {
+    id: 'another',
+    name: '',
+    colorKey: '',
+    closed: false,
+    closedReason: null,
+    live: null,
+    freeSinceMinutes: null,
+  }
+  return offersForFreeCourts({ ...board, courts: [...board.courts, another] }).size > 0
 }
 
 /**
@@ -1044,7 +1066,10 @@ function nextByCourt(t: VenueTournament) {
       next = offer
     } else if (board.queue.length) {
       idleReason = 'Everyone who could play next is already on a court'
-      next = board.queue[0]
+      // Not the raw head of the queue: a busy court may already be promised
+      // it, and the same pair cannot be next on two courts at once.
+      next = board.queue.find((m) => !promised.has(m.id)) ?? null
+      if (next) promised.add(next.id)
       if (t.paused) idleReason = null
     } else if (board.waiting.length) {
       nextNote = waitingNote(c.id)

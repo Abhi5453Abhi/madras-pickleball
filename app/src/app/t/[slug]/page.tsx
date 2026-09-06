@@ -217,7 +217,7 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
                     <th className="py-2 pl-3 text-right font-semibold" scope="col">
                       Won
                     </th>
-                    <th className="py-2 pr-4 text-right font-semibold" scope="col">
+                    <th className="py-2 pr-4 pl-3 text-right font-semibold" scope="col">
                       Points
                     </th>
                   </tr>
@@ -242,7 +242,7 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
                           ) : null}
                         </td>
                         <td className="num py-2.5 pl-3 text-right text-row text-text">{r.won}</td>
-                        <td className="num py-2.5 pr-4 text-right text-row text-text">{r.pointsFor}</td>
+                        <td className="num py-2.5 pr-4 pl-3 text-right text-row text-text">{r.pointsFor}</td>
                       </RowWithCut>
                     )
                   })}
