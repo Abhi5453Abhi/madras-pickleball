@@ -7,8 +7,8 @@
  *   BASE=http://localhost:3402 node scripts/stage2-teams.mjs
  *
  * Seeds its own tournaments through scripts/seed-teams.ts unless SLUGS is
- * given as "doubles,singles,odd". Signs in with the temporary PIN and picks
- * 482913 the first time; uses 482913 straight away after that.
+ * given as "doubles,singles,odd". Signs in with 482913, or with the temporary
+ * PIN on a fresh database and picks 482913 then.
  */
 import { chromium } from 'playwright-core'
 import { execFileSync } from 'node:child_process'
@@ -79,11 +79,13 @@ const O = `${BASE}/admin/t/${slugs.odd}`
 
 console.log('\n1. sign in')
 await page.goto(`${BASE}/login`)
-await page.fill('#pin', '123456')
+// The chosen PIN first: a wrong guess counts against the lockout, and the
+// temporary PIN is wrong on every run but the first.
+await page.fill('#pin', '482913')
 await page.click('button[type=submit]')
 await page.waitForTimeout(1500)
 if (/not it/.test(await body())) {
-  await page.fill('#pin', '482913')
+  await page.fill('#pin', '123456')
   await page.click('button[type=submit]')
 }
 await page.waitForURL(/\/admin/, { timeout: 20000 })
