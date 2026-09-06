@@ -233,7 +233,10 @@ type publicMatch struct {
 }
 
 type publicTableRow struct {
-	TeamID    string   `json:"teamId"`
+	TeamID string `json:"teamId"`
+	// Group is the pool this row belongs to — "Pool A" — or null when the
+	// tournament is one league. The page draws one table per pool.
+	Group     *string  `json:"group"`
 	Name      string   `json:"name"`
 	Players   []string `json:"players"`
 	Won       int      `json:"won"`
@@ -307,7 +310,6 @@ func publicTournament(ctx context.Context, d *core.Deps, slug string) (*publicTo
 	teamName := map[string]string{}
 	teamPlayers := map[string][]string{}
 	withdrawn := map[string]bool{}
-	teamIDs := make([]string, 0, len(teams))
 	for _, tm := range teams {
 		teamName[tm.ID] = tm.Name
 		list := make([]string, 0, len(tm.Players))
@@ -316,7 +318,6 @@ func publicTournament(ctx context.Context, d *core.Deps, slug string) (*publicTo
 		}
 		teamPlayers[tm.ID] = list
 		withdrawn[tm.ID] = tm.Status == "withdrawn"
-		teamIDs = append(teamIDs, tm.ID)
 	}
 
 	out := &publicTournamentOut{
@@ -402,31 +403,46 @@ func publicTournament(ctx context.Context, d *core.Deps, slug string) (*publicTo
 		out.Matches = append(out.Matches, pm)
 	}
 
-	// A pair who pulled out are still in the table — their played matches stand
-	// — but the row says so, or it gets argued about at the desk.
-	input, err := store.StandingsMatches(ctx, d.DB, t.ID, "")
+	// One table per pool, in pool order — two go through from EACH pool, so one
+	// merged table put a pair who had qualified below the line. A league is one
+	// table and every row's group is null.
+	//
+	// A pair who pulled out are still in their pool's table — their played
+	// matches stand — but the row says so, or it gets argued about at the desk.
+	tables, err := store.Tables(ctx, d.DB, t.ID, teams)
 	if err != nil {
 		return nil, err
 	}
-	for _, row := range engine.Standings(teamIDs, input, engine.PointsScoredFirst) {
-		r := publicTableRow{
-			TeamID: row.TeamID, Name: "—", Players: teamPlayers[row.TeamID],
-			Won: row.Won, PointsFor: row.PointsFor, Withdrawn: withdrawn[row.TeamID],
+	for _, table := range tables {
+		var group *string
+		if table.Group != "" {
+			group = strp(table.Group)
 		}
-		if n, ok := teamName[row.TeamID]; ok {
-			r.Name = n
+		for _, row := range table.Rows {
+			r := publicTableRow{
+				TeamID: row.TeamID, Group: group, Name: "—", Players: teamPlayers[row.TeamID],
+				Won: row.Won, PointsFor: row.PointsFor, Withdrawn: withdrawn[row.TeamID],
+			}
+			if n, ok := teamName[row.TeamID]; ok {
+				r.Name = n
+			}
+			if r.Players == nil {
+				r.Players = []string{}
+			}
+			if note := engine.TieNote(row.Reason, leagueDone); note != "" {
+				r.Note = strp(note)
+			}
+			out.Table = append(out.Table, r)
 		}
-		if r.Players == nil {
-			r.Players = []string{}
-		}
-		if note := engine.TieNote(row.Reason, leagueDone); note != "" {
-			r.Note = strp(note)
-		}
-		out.Table = append(out.Table, r)
 	}
 
-	// Once the final has been played the cut line has done its job.
-	if t.FinalsStage != "none" && !finalDecided {
+	// Once the final has been played the cut line has done its job. `cut` is how
+	// many go through from EACH table, and advance_per_group is what the draw
+	// actually built: 0 for a league that ends with the table, 2 out of every
+	// pool. Reading the finals stage as well hid the cut line on a pooled
+	// tournament whose format says "everyone plays everyone" — eight pairs or
+	// more get pools and a knockout whatever the format says.
+	if !finalDecided {
 		out.Cut = t.AdvancePerGroup
 	}
 	out.Version, err = tournamentVersion(ctx, d.DB, t)

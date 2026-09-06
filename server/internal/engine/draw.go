@@ -249,7 +249,11 @@ func BuildGroupsKnockout(seedOrder []string, poolCount int) DrawPlan {
 	groups := make([]GroupPlan, len(pools))
 	for i, teamIDs := range pools {
 		groups[i] = GroupPlan{
-			Name:         fmt.Sprintf("Group %c", rune('A'+i)),
+			// "Pool A", not the reference's "Group A": the name is what the
+			// screens print — a table heading, a round name, "1st in Pool A" on
+			// a knockout slot — and the organiser calls them pools everywhere
+			// else. One word for one thing.
+			Name:         fmt.Sprintf("Pool %c", rune('A'+i)),
 			TeamIDs:      teamIDs,
 			AdvanceCount: 2,
 		}

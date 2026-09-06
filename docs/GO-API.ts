@@ -839,9 +839,18 @@ export type Tournaments_listTournamentPlayers = {
  *  Used by: /admin/t/[slug] (the Table / Final table)
  *  Reference: src/server/tournaments.ts standingsFor()
  *  Notes: takes the tournament id — the reference took a categoryId.
+ *    ONE TABLE PER POOL. Eight pairs or more are drawn into pools and
+ *    `advancePerGroup` go through from EACH of them, so the rows come back
+ *    pool by pool in draw order and each one says which pool it is in:
+ *    `group` is "Pool A", "Pool B" … A tournament that is a single league —
+ *    or has no draw yet — is one table and every row's `group` is null, which
+ *    is what the screens have always rendered. Position is the array index
+ *    within its own pool, not a field. A pair who pulled out BEFORE the
+ *    schedule was made is in no pool and has no row in a pooled tournament;
+ *    a pair who pull out during the day keep their pool and their row.
  *    `rows` is ORDERED: wins first, then total points scored, then the
- *    tiebreaks, and last of all the order the pairs were made in. Position is
- *    the array index, not a field. `reason` is set once the table is ordered
+ *    tiebreaks, and last of all the order the pairs were made in. `reason`
+ *    is set once the table is ordered
  *    and only where wins and points did not settle it, e.g. "2nd on
  *    head-to-head vs Arun / Deepa" — the screen suppresses reasons that only
  *    repeat the two visible columns, and turns "drawn…" into "level so far"
@@ -857,6 +866,8 @@ export type Tournaments_standingsFor = {
   output: {
     rows: Array<{
       teamId: string
+      /** The pool this row is in — "Pool A" — or null for a single league. */
+      group: string | null
       won: number
       /** Total points scored — the venue's headline tiebreak. */
       pointsFor: number
@@ -1619,10 +1630,14 @@ export type Public_TodayTournament = {
  *    tournament is not public, and its existence is not either. Cookie-free,
  *    built by explicit mappers and never from a raw row, because phone
  *    numbers are organiser-only and that is how they stay unleaked.
- *    `cut` is how many go through from the table; 0 when everyone just plays
- *    everyone. The page draws the cut line AROUND withdrawn pairs — the draw
- *    is built without them, so the line has to be too, or the page promises a
- *    final to a pair who have gone home.
+ *    `cut` is how many go through from EACH table; 0 when everyone just plays
+ *    everyone and the day ends with the table. The page draws the cut line
+ *    AROUND withdrawn pairs — the draw is built without them, so the line has
+ *    to be too, or the page promises a final to a pair who have gone home.
+ *    `table` is ONE TABLE PER POOL: eight pairs or more are drawn into pools,
+ *    the rows come back pool by pool in draw order, and each row's `group`
+ *    says which pool it is in ("Pool A"). A single league is one table and
+ *    every row's `group` is null.
  *    `matches` is in play order. The page derives from it: "On court now"
  *    (status 'live', ordered by court), "Up next" (the first two with
  *    state 'none', status 'ready' and both sides known), and "Played"
@@ -1653,7 +1668,7 @@ export type Public_publicTournament = {
     }
     discipline: Discipline
     finalsStage: FinalsStage
-    /** How many go through from the table; 0 when everyone just plays everyone. */
+    /** How many go through from EACH table; 0 when everyone just plays everyone. */
     cut: number
     /** This tournament's courts, in venue order. */
     courts: Array<{ id: string; name: string }>
@@ -1697,6 +1712,8 @@ export type Public_Match = {
 /** One row of the public table, already in order. */
 export type Public_TableRow = {
   teamId: string
+  /** The pool this row is in — "Pool A" — or null for a single league. */
+  group: string | null
   name: string
   players: string[]
   won: number

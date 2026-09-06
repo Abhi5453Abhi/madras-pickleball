@@ -131,7 +131,7 @@ func TestDrawForEightTeamsIsTwoPools(t *testing.T) {
 		}
 		names = append(names, n)
 	}
-	if len(names) != 2 || names[0] != "Group A" || names[1] != "Group B" {
+	if len(names) != 2 || names[0] != "Pool A" || names[1] != "Pool B" {
 		t.Fatalf("two pools, A and B: %v", names)
 	}
 
@@ -181,6 +181,76 @@ func TestDrawForEightTeamsIsTwoPools(t *testing.T) {
 	after := h.reload(id)
 	if len(after.SeedOrder) != 8 {
 		t.Fatalf("seed_order holds every team: %v", after.SeedOrder)
+	}
+}
+
+// Two pools means TWO tables, each with its own top two. Merged into one, the
+// table told 3rd in Pool A they were out when the draw had them in a semi.
+func TestTheTableOfATwoPoolTournamentIsOneTablePerPool(t *testing.T) {
+	h := newHarness(t)
+	id := withPairs(t, h, 8, "semis_and_final")
+	if r, err := generateDraw(h.ctx, h.Deps, tournamentIDIn{TournamentID: id}); err != nil || !r.OK {
+		t.Fatalf("generateDraw: %+v %v", r, err)
+	}
+
+	table, err := standingsFor(h.ctx, h.Deps, tournamentIDIn{TournamentID: id})
+	if err != nil {
+		t.Fatalf("standingsFor: %v", err)
+	}
+	if len(table.Rows) != 8 || len(table.Teams) != 8 {
+		t.Fatalf("eight pairs, eight rows: %d rows, %d teams", len(table.Rows), len(table.Teams))
+	}
+	// Pool A's four rows first, then Pool B's — in draw order, so the screen
+	// can group them without sorting anything.
+	var order []string
+	byPool := map[string][]string{}
+	for _, r := range table.Rows {
+		if r.Group == nil {
+			t.Fatalf("a row of a pooled tournament has no pool: %+v", r)
+		}
+		if len(order) == 0 || order[len(order)-1] != *r.Group {
+			for _, seen := range order {
+				if seen == *r.Group {
+					t.Fatalf("%s's rows are split up: %v", *r.Group, order)
+				}
+			}
+			order = append(order, *r.Group)
+		}
+		byPool[*r.Group] = append(byPool[*r.Group], r.TeamID)
+	}
+	if len(order) != 2 || order[0] != "Pool A" || order[1] != "Pool B" {
+		t.Fatalf("the tables come out as %v, wanted Pool A then Pool B", order)
+	}
+	for _, name := range order {
+		if len(byPool[name]) != 4 {
+			t.Fatalf("%s has %d rows, wanted 4", name, len(byPool[name]))
+		}
+	}
+
+	// Every row is in the pool its team was actually drawn into.
+	group := map[string]string{}
+	rows, err := h.DB.QueryContext(h.ctx,
+		`select t.id, g.name from teams t join groups g on g.id = t.group_id where t.tournament_id = $1`, id)
+	if err != nil {
+		t.Fatalf("teams: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var teamID, name string
+		if err := rows.Scan(&teamID, &name); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		group[teamID] = name
+	}
+	for _, r := range table.Rows {
+		if group[r.TeamID] != *r.Group {
+			t.Fatalf("%s is drawn in %s and its row says %s", r.TeamID, group[r.TeamID], *r.Group)
+		}
+	}
+
+	// And the cut line the screens draw is per pool: two out of each.
+	if after := h.reload(id); after.AdvancePerGroup != 2 {
+		t.Fatalf("two go through from each pool, advance_per_group is %d", after.AdvancePerGroup)
 	}
 }
 
@@ -303,6 +373,11 @@ func TestListsAndMaps(t *testing.T) {
 	for _, r := range table.Rows {
 		if r.Won != 0 || r.PointsFor != 0 {
 			t.Fatalf("nothing has been played: %+v", r)
+		}
+		// One league is one table with no pool name on it, and the screens
+		// render it exactly as they always did.
+		if r.Group != nil {
+			t.Fatalf("a league row names a pool: %q", *r.Group)
 		}
 	}
 }

@@ -326,11 +326,20 @@ func sortByPlayOrder(ms []*store.Match) {
 // waitingLabels — "Waiting for the winner of Semi-final 1", "Waiting for the
 // 1st and 2nd in the group". The board used to drop these rows entirely, so the
 // header said 7 to play above a list of 4.
+//
+// With more than one pool the pool has to be named — "the 1st in Pool A and the
+// 2nd in Pool B" — because "the group" is two different tables and the pair
+// reading the board want to know which one is theirs.
 func waitingLabels(all []*store.Match) map[string]string {
 	byID := make(map[string]*store.Match, len(all))
+	pools := map[string]bool{}
 	for _, m := range all {
 		byID[m.ID] = m
+		if m.Stage == "group" && m.GroupID != nil {
+			pools[*m.GroupID] = true
+		}
 	}
+	pooled := len(pools) > 1
 	out := map[string]string{}
 	for _, m := range all {
 		if m.TeamAID != nil && m.TeamBID != nil {
@@ -359,7 +368,11 @@ func waitingLabels(all []*store.Match) map[string]string {
 				label = word + name
 			case "group_rank":
 				if side.src.Rank > 0 {
-					label = ordinal(side.src.Rank) + " in the group"
+					where := "the group"
+					if pooled && side.src.GroupName != "" {
+						where = side.src.GroupName
+					}
+					label = ordinal(side.src.Rank) + " in " + where
 				}
 			}
 			if label != "" {

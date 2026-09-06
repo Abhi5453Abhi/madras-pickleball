@@ -63,7 +63,10 @@ type playerOut struct {
 }
 
 type standingsRowOut struct {
-	TeamID    string  `json:"teamId"`
+	TeamID string `json:"teamId"`
+	// Group is the pool this row belongs to — "Pool A" — or null when the
+	// tournament is one league. The screen draws one table per pool.
+	Group     *string `json:"group"`
 	Won       int     `json:"won"`
 	PointsFor int     `json:"pointsFor"`
 	Reason    *string `json:"reason"`
@@ -207,9 +210,10 @@ func listTeams(ctx context.Context, d *core.Deps, in tournamentIDIn) ([]teamOut,
 	return out, nil
 }
 
-// standingsFor is the table, straight from the ledger. Withdrawn pairs keep
-// their row for the record; the screen greys them and draws the cut line
-// around them.
+// standingsFor is the table, straight from the ledger — one table per pool,
+// in pool order, each row saying which pool it is in. A league is one table
+// and every row's group is null. Withdrawn pairs keep their row for the
+// record; the screen greys them and draws the cut line around them.
 func standingsFor(ctx context.Context, d *core.Deps, in tournamentIDIn) (standingsOut, error) {
 	t, err := mustTournament(ctx, d, d.DB, in.TournamentID)
 	if err != nil {
@@ -219,26 +223,31 @@ func standingsFor(ctx context.Context, d *core.Deps, in tournamentIDIn) (standin
 	if err != nil {
 		return standingsOut{}, err
 	}
-	ids_ := make([]string, 0, len(teams))
 	out := standingsOut{Rows: []standingsRowOut{}, Teams: []standingsTeamOut{}}
 	for _, tm := range teams {
-		ids_ = append(ids_, tm.ID)
 		out.Teams = append(out.Teams, standingsTeamOut{ID: tm.ID, Status: tm.Status})
 	}
-	if len(ids_) == 0 {
+	if len(teams) == 0 {
 		return out, nil
 	}
-	sm, err := store.StandingsMatches(ctx, d.DB, t.ID, "")
+	tables, err := store.Tables(ctx, d.DB, t.ID, teams)
 	if err != nil {
 		return standingsOut{}, err
 	}
-	for _, r := range engine.Standings(ids_, sm, engine.PointsScoredFirst) {
-		row := standingsRowOut{TeamID: r.TeamID, Won: r.Won, PointsFor: r.PointsFor}
-		if r.Reason != "" {
-			reason := r.Reason
-			row.Reason = &reason
+	for _, table := range tables {
+		var group *string
+		if table.Group != "" {
+			name := table.Group
+			group = &name
 		}
-		out.Rows = append(out.Rows, row)
+		for _, r := range table.Rows {
+			row := standingsRowOut{TeamID: r.TeamID, Group: group, Won: r.Won, PointsFor: r.PointsFor}
+			if r.Reason != "" {
+				reason := r.Reason
+				row.Reason = &reason
+			}
+			out.Rows = append(out.Rows, row)
+		}
 	}
 	return out, nil
 }

@@ -54,6 +54,53 @@ func TestPoolsResolveIntoSemisAndTheFinal(t *testing.T) {
 	}
 }
 
+// A semi-final waiting on two different pools has to name them: "the group" is
+// two tables here, and the pair reading the board want to know which is theirs.
+func TestTheBoardNamesThePoolAKnockoutSlotWaitsOn(t *testing.T) {
+	d := deps(t)
+	f := makeFixture(t, d, fixtureOpts{
+		Name: "Open Doubles", Slug: "open", Gender: "any", FinalsStage: "semis_and_final",
+		Teams: 8, Courts: 2, Pools: true,
+	})
+	f.flow(t)
+
+	board, err := loadBoard(context.Background(), d.DB, d, f.tournament(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	said := map[string]string{}
+	for _, m := range board.Waiting {
+		if m.WaitingOn != nil {
+			said[m.ID] = *m.WaitingOn
+		}
+	}
+	semis := f.knockout()[:2]
+	if got := said[semis[0].ID]; got != "Waiting for the 1st in Pool A and the 2nd in Pool B" {
+		t.Errorf("the first semi says %q", got)
+	}
+	if got := said[semis[1].ID]; got != "Waiting for the 1st in Pool B and the 2nd in Pool A" {
+		t.Errorf("the second semi says %q", got)
+	}
+
+	// One league still says "the group": there is only one table to be 1st in.
+	league := makeFixture(t, d, fixtureOpts{
+		Name: "Men's Doubles", Slug: "mens", FinalsStage: "final_only", Teams: 4, Courts: 2, CourtFrom: 2})
+	league.flow(t)
+	leagueBoard, err := loadBoard(context.Background(), d.DB, d, league.tournament(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := ""
+	for _, m := range leagueBoard.Waiting {
+		if m.WaitingOn != nil {
+			found = *m.WaitingOn
+		}
+	}
+	if found != "Waiting for the 1st and 2nd in the group" {
+		t.Errorf("the league's final says %q", found)
+	}
+}
+
 // The safety net: a court that came free by a door the flow does not watch is
 // offered the match that should be on it, and the offer is what goes on.
 func TestAFreeCourtIsOfferedTheNextMatch(t *testing.T) {

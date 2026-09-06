@@ -291,10 +291,10 @@ func TestGroupsKnockoutBuildsExactlyTwoPerPool(t *testing.T) {
 		t.Fatalf("got %d groups, want 4", len(plan.Groups))
 	}
 	wantGroups := []GroupPlan{
-		{Name: "Group A", TeamIDs: []string{"t0", "t7", "t8", "t15"}, AdvanceCount: 2},
-		{Name: "Group B", TeamIDs: []string{"t1", "t6", "t9", "t14"}, AdvanceCount: 2},
-		{Name: "Group C", TeamIDs: []string{"t2", "t5", "t10", "t13"}, AdvanceCount: 2},
-		{Name: "Group D", TeamIDs: []string{"t3", "t4", "t11", "t12"}, AdvanceCount: 2},
+		{Name: "Pool A", TeamIDs: []string{"t0", "t7", "t8", "t15"}, AdvanceCount: 2},
+		{Name: "Pool B", TeamIDs: []string{"t1", "t6", "t9", "t14"}, AdvanceCount: 2},
+		{Name: "Pool C", TeamIDs: []string{"t2", "t5", "t10", "t13"}, AdvanceCount: 2},
+		{Name: "Pool D", TeamIDs: []string{"t3", "t4", "t11", "t12"}, AdvanceCount: 2},
 	}
 	if !reflect.DeepEqual(plan.Groups, wantGroups) {
 		t.Fatalf("groups %+v, want %+v", plan.Groups, wantGroups)
@@ -325,11 +325,11 @@ func TestGroupsKnockoutBuildsExactlyTwoPerPool(t *testing.T) {
 
 	// Group matches are numbered across the whole draw, not within a round.
 	wantFirst := []MatchPlan{
-		{Key: "g0-0-0", Stage: "group", GroupName: "Group A", RoundIndex: 0, RoundName: "Group A · Round 1", Seq: 0,
+		{Key: "g0-0-0", Stage: "group", GroupName: "Pool A", RoundIndex: 0, RoundName: "Pool A · Round 1", Seq: 0,
 			SlotA: SlotSource{Type: "entry", TeamID: "t0"}, SlotB: SlotSource{Type: "entry", TeamID: "t15"}},
-		{Key: "g0-0-1", Stage: "group", GroupName: "Group A", RoundIndex: 0, RoundName: "Group A · Round 1", Seq: 1,
+		{Key: "g0-0-1", Stage: "group", GroupName: "Pool A", RoundIndex: 0, RoundName: "Pool A · Round 1", Seq: 1,
 			SlotA: SlotSource{Type: "entry", TeamID: "t7"}, SlotB: SlotSource{Type: "entry", TeamID: "t8"}},
-		{Key: "g0-1-0", Stage: "group", GroupName: "Group A", RoundIndex: 1, RoundName: "Group A · Round 2", Seq: 2,
+		{Key: "g0-1-0", Stage: "group", GroupName: "Pool A", RoundIndex: 1, RoundName: "Pool A · Round 2", Seq: 2,
 			SlotA: SlotSource{Type: "entry", TeamID: "t8"}, SlotB: SlotSource{Type: "entry", TeamID: "t0"}},
 	}
 	if !reflect.DeepEqual(group[:3], wantFirst) {
@@ -338,17 +338,17 @@ func TestGroupsKnockoutBuildsExactlyTwoPerPool(t *testing.T) {
 
 	wantKO := []MatchPlan{
 		{Key: "ko-3-0", Stage: "knockout", RoundIndex: 3, RoundName: "Quarter-final", Seq: 0,
-			SlotA: SlotSource{Type: "group_rank", GroupName: "Group A", Rank: 1},
-			SlotB: SlotSource{Type: "group_rank", GroupName: "Group B", Rank: 2}},
+			SlotA: SlotSource{Type: "group_rank", GroupName: "Pool A", Rank: 1},
+			SlotB: SlotSource{Type: "group_rank", GroupName: "Pool B", Rank: 2}},
 		{Key: "ko-3-1", Stage: "knockout", RoundIndex: 3, RoundName: "Quarter-final", Seq: 1,
-			SlotA: SlotSource{Type: "group_rank", GroupName: "Group B", Rank: 1},
-			SlotB: SlotSource{Type: "group_rank", GroupName: "Group C", Rank: 2}},
+			SlotA: SlotSource{Type: "group_rank", GroupName: "Pool B", Rank: 1},
+			SlotB: SlotSource{Type: "group_rank", GroupName: "Pool C", Rank: 2}},
 		{Key: "ko-3-2", Stage: "knockout", RoundIndex: 3, RoundName: "Quarter-final", Seq: 2,
-			SlotA: SlotSource{Type: "group_rank", GroupName: "Group C", Rank: 1},
-			SlotB: SlotSource{Type: "group_rank", GroupName: "Group D", Rank: 2}},
+			SlotA: SlotSource{Type: "group_rank", GroupName: "Pool C", Rank: 1},
+			SlotB: SlotSource{Type: "group_rank", GroupName: "Pool D", Rank: 2}},
 		{Key: "ko-3-3", Stage: "knockout", RoundIndex: 3, RoundName: "Quarter-final", Seq: 3,
-			SlotA: SlotSource{Type: "group_rank", GroupName: "Group D", Rank: 1},
-			SlotB: SlotSource{Type: "group_rank", GroupName: "Group A", Rank: 2}},
+			SlotA: SlotSource{Type: "group_rank", GroupName: "Pool D", Rank: 1},
+			SlotB: SlotSource{Type: "group_rank", GroupName: "Pool A", Rank: 2}},
 		{Key: "ko-4-0", Stage: "knockout", RoundIndex: 4, RoundName: "Semi-final", Seq: 0,
 			SlotA: SlotSource{Type: "winner_of", MatchKey: "ko-3-0"},
 			SlotB: SlotSource{Type: "winner_of", MatchKey: "ko-3-1"}},
@@ -384,11 +384,11 @@ func TestGroupsKnockoutPairsAWinnerAgainstAnotherPoolsRunnerUp(t *testing.T) {
 	}
 	wantKO := []MatchPlan{
 		{Key: "ko-5-0", Stage: "knockout", RoundIndex: 5, RoundName: "Semi-final", Seq: 0,
-			SlotA: SlotSource{Type: "group_rank", GroupName: "Group A", Rank: 1},
-			SlotB: SlotSource{Type: "group_rank", GroupName: "Group B", Rank: 2}},
+			SlotA: SlotSource{Type: "group_rank", GroupName: "Pool A", Rank: 1},
+			SlotB: SlotSource{Type: "group_rank", GroupName: "Pool B", Rank: 2}},
 		{Key: "ko-5-1", Stage: "knockout", RoundIndex: 5, RoundName: "Semi-final", Seq: 1,
-			SlotA: SlotSource{Type: "group_rank", GroupName: "Group B", Rank: 1},
-			SlotB: SlotSource{Type: "group_rank", GroupName: "Group A", Rank: 2}},
+			SlotA: SlotSource{Type: "group_rank", GroupName: "Pool B", Rank: 1},
+			SlotB: SlotSource{Type: "group_rank", GroupName: "Pool A", Rank: 2}},
 		{Key: "ko-6-0", Stage: "knockout", RoundIndex: 6, RoundName: "Final", Seq: 0,
 			SlotA: SlotSource{Type: "winner_of", MatchKey: "ko-5-0"},
 			SlotB: SlotSource{Type: "winner_of", MatchKey: "ko-5-1"}},
@@ -398,7 +398,7 @@ func TestGroupsKnockoutPairsAWinnerAgainstAnotherPoolsRunnerUp(t *testing.T) {
 	}
 	// The last group match carries the running seq, not a per-round index.
 	last := plan.Matches[29]
-	if last.Key != "g1-4-2" || last.Seq != 29 || last.RoundName != "Group B · Round 5" {
+	if last.Key != "g1-4-2" || last.Seq != 29 || last.RoundName != "Pool B · Round 5" {
 		t.Fatalf("last group match %+v", last)
 	}
 }
@@ -413,8 +413,8 @@ func TestBuildDrawPicksTheFormat(t *testing.T) {
 		t.Fatalf("10 entries gave %d groups and %d matches, want 2 and 23", len(pools.Groups), len(pools.Matches))
 	}
 	wantGroups := []GroupPlan{
-		{Name: "Group A", TeamIDs: []string{"t0", "t3", "t4", "t7", "t8"}, AdvanceCount: 2},
-		{Name: "Group B", TeamIDs: []string{"t1", "t2", "t5", "t6", "t9"}, AdvanceCount: 2},
+		{Name: "Pool A", TeamIDs: []string{"t0", "t3", "t4", "t7", "t8"}, AdvanceCount: 2},
+		{Name: "Pool B", TeamIDs: []string{"t1", "t2", "t5", "t6", "t9"}, AdvanceCount: 2},
 	}
 	if !reflect.DeepEqual(pools.Groups, wantGroups) {
 		t.Fatalf("groups %+v, want %+v", pools.Groups, wantGroups)

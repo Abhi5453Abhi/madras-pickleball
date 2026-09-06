@@ -550,3 +550,67 @@ func StandingsMatches(ctx context.Context, q core.Querier, tournamentID, groupID
 	}
 	return out, nil
 }
+
+// GroupTable is one pool's table: the pool's name — empty for a tournament
+// that is a single league, or has no draw yet — and its rows in table order.
+type GroupTable struct {
+	Group string
+	Rows  []engine.TeamRow
+}
+
+// Tables is a tournament's standings, ONE TABLE PER POOL.
+//
+// Eight pairs or more are drawn into pools (engine.PoolCountFor) and
+// advance_per_group go through from EACH of them. One merged table across
+// every pool put 3rd in Pool A below the cut line when they were in fact
+// through, and told them so on the public page.
+//
+// A tournament with one group — every league, whatever its finals stage — or
+// with no draw yet comes back as a single table with no pool name on it, which
+// is what every screen has always rendered.
+//
+// A pair who pulled out BEFORE the schedule was made is in no pool: the draw
+// was built without them and they play nothing, so a pooled tournament has no
+// table to put them in and they are left out. A pair who pull out during the
+// day keep their pool, and their row, and their results.
+func Tables(ctx context.Context, q core.Querier, tournamentID string, teams []Team) ([]GroupTable, error) {
+	groups, err := Groups(ctx, q, tournamentID)
+	if err != nil {
+		return nil, err
+	}
+	if len(groups) < 2 {
+		ids := make([]string, 0, len(teams))
+		for _, tm := range teams {
+			ids = append(ids, tm.ID)
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		sm, err := StandingsMatches(ctx, q, tournamentID, "")
+		if err != nil {
+			return nil, err
+		}
+		return []GroupTable{{Rows: engine.Standings(ids, sm, engine.PointsScoredFirst)}}, nil
+	}
+	out := make([]GroupTable, 0, len(groups))
+	for _, g := range groups {
+		// Teams arrive in the order the pairs were made, which is the table's
+		// last-resort dead-heat order; taking the pool's own slice of that keeps
+		// it.
+		var ids []string
+		for _, tm := range teams {
+			if tm.GroupID != nil && *tm.GroupID == g.ID {
+				ids = append(ids, tm.ID)
+			}
+		}
+		if len(ids) == 0 {
+			continue
+		}
+		sm, err := StandingsMatches(ctx, q, tournamentID, g.ID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, GroupTable{Group: g.Name, Rows: engine.Standings(ids, sm, engine.PointsScoredFirst)})
+	}
+	return out, nil
+}

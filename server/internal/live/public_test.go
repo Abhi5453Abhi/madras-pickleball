@@ -176,6 +176,90 @@ func TestPublicTournament(t *testing.T) {
 	}
 }
 
+// Eight pairs are drawn into two pools and TWO go through from EACH of them.
+// The page carries one table per pool, in draw order, and the cut line at the
+// top of each is exactly the four pairs the semi-finals resolve to. Merged
+// into one table it told 3rd in Pool A they were out and then called them to
+// a semi-final.
+func TestPublicTournamentWithTwoPoolsIsTwoTables(t *testing.T) {
+	d := deps(t)
+	ctx := context.Background()
+	f := makeFixture(t, d, fixtureOpts{Name: "Open Doubles", Slug: "open", Gender: "any",
+		FinalsStage: "semis_and_final", Teams: 8, Courts: 2, Pools: true})
+	f.flow(t)
+	playTheLeague(t, f)
+
+	got, err := publicTournament(ctx, d, "open")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Cut != 2 {
+		t.Errorf("the cut line is at %d; two go through from each pool", got.Cut)
+	}
+	if len(got.Table) != 8 {
+		t.Fatalf("%d table rows, wanted eight pairs", len(got.Table))
+	}
+
+	// Pool A's rows, then Pool B's — never interleaved, so the page can slice
+	// them into tables without sorting anything.
+	var pools []string
+	rowsOf := map[string][]publicTableRow{}
+	for _, r := range got.Table {
+		if r.Group == nil {
+			t.Fatalf("%s's row names no pool", r.Name)
+		}
+		if len(pools) == 0 || pools[len(pools)-1] != *r.Group {
+			pools = append(pools, *r.Group)
+		}
+		rowsOf[*r.Group] = append(rowsOf[*r.Group], r)
+	}
+	if len(pools) != 2 || pools[0] != "Pool A" || pools[1] != "Pool B" {
+		t.Fatalf("the tables are %v, wanted Pool A then Pool B", pools)
+	}
+
+	// The earlier seed won every match, and the serpentine split put seeds
+	// 1, 4, 5, 8 in Pool A and 2, 3, 6, 7 in Pool B.
+	want := map[string][]string{
+		"Pool A": {f.Teams[0], f.Teams[3], f.Teams[4], f.Teams[7]},
+		"Pool B": {f.Teams[1], f.Teams[2], f.Teams[5], f.Teams[6]},
+	}
+	through := map[string]bool{}
+	for pool, ids := range want {
+		rows := rowsOf[pool]
+		if len(rows) != 4 {
+			t.Fatalf("%s has %d rows, wanted 4", pool, len(rows))
+		}
+		for i, id := range ids {
+			if rows[i].TeamID != id {
+				t.Fatalf("%s row %d is %s, wanted %s", pool, i+1, rows[i].Name, f.Names[id])
+			}
+		}
+		// Each pool's table stands on its own matches: the top of Pool B has
+		// won three even though nobody in it beat anybody in Pool A.
+		if rows[0].Won != 3 || rows[3].Won != 0 {
+			t.Errorf("%s reads %d wins down to %d", pool, rows[0].Won, rows[3].Won)
+		}
+		for _, r := range rows[:got.Cut] {
+			through[r.TeamID] = true
+		}
+	}
+
+	// And the cut line tells the truth: those four are the semi-finalists.
+	semis := f.knockout()[:2]
+	for _, m := range semis {
+		s := f.match(t, m.ID)
+		for _, id := range []string{deref(s.TeamAID), deref(s.TeamBID)} {
+			if !through[id] {
+				t.Errorf("%s is in a semi-final and sits below the cut line", f.Names[id])
+			}
+			delete(through, id)
+		}
+	}
+	if len(through) != 0 {
+		t.Errorf("%d pairs are above the cut line and in no semi-final", len(through))
+	}
+}
+
 // The front door: every court, whatever is on it, and a link per tournament.
 func TestPublicToday(t *testing.T) {
 	d := deps(t)
