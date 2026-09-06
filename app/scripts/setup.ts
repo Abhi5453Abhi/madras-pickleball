@@ -25,7 +25,11 @@ async function main() {
       console.error(
         'DATABASE_URL is set, so the app tried to use that server instead of its own.',
       )
-      console.error('If you did not mean to point it there, run it on the embedded database:\n')
+      // Naming the two places it comes from, because "DATABASE_URL is set"
+      // sends people hunting through .zshrc when the answer is a file sitting
+      // in this folder.
+      console.error('It comes from app/.env, or from your shell. Check app/.env first.\n')
+      console.error('To ignore it and use the database the app brings with it:\n')
       console.error('    MPB_DB=embedded npm run dev\n')
       console.error('Underlying error:')
     }
