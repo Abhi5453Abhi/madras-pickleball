@@ -57,6 +57,17 @@ PIN **`123456`**, which must be replaced the first time it is used (set `MPB_SEE
 real one instead). Accounts from before PIN sign-in are given temporary PINs in order —
 `123456`, `234567`, … — and `npm run dev` prints which account got which.
 
+## The venue and the people with keys
+
+- **Courts**: *Your account → The venue's courts* (`/admin/courts`). Rename, add, take out. A court a
+  tournament is counting on cannot be taken out from there — take it off the tournament first under
+  *Schedule & courts*. A court taken out comes back with its history if you add it by the same name.
+- **A second organiser**: the venue owner adds them under *Your account → Organisers*. They get a
+  temporary PIN shown once; they choose their own the first time they sign in. Removing them ends
+  their PIN and signs them out everywhere. Every organiser can do everything except this list.
+- **Players**: from the sign-up link, or pasted into *Registration* as the list from the group
+  chat — one name per line, numbering and phone numbers fine, names already in are skipped.
+
 ## Someone is locked out
 
 Five wrong PINs from one phone and that phone waits fifteen minutes. There is no email service,
