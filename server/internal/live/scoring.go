@@ -190,7 +190,7 @@ func normalizeResult(rules engine.ScoringRules, match *store.Match, in saveResul
 				stoppedByHorn = true
 			}
 		}
-		outcome := engine.Outcome(rules, games)
+		outcome := outcomeFor(rules, games)
 		if stoppedByHorn {
 			outcome = engine.HornOutcome(rules, games)
 		}

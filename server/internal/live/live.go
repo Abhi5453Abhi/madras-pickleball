@@ -11,11 +11,18 @@
 package live
 
 import (
+	"context"
+	"database/sql"
 	"net/http"
 
 	"mpb/internal/core"
 	"mpb/internal/rpc"
 )
+
+// The setup module holds a hook of exactly this shape and the integrator
+// points it at FlowTournament. Asserting the type here means a change to the
+// signature fails to compile in this package rather than in the wiring.
+var _ func(ctx context.Context, tx *sql.Tx, d *core.Deps, tournamentID string) error = FlowTournament
 
 // Register wires this package's RPCs and version endpoints.
 func Register(mux *http.ServeMux, reg *rpc.Registry, d *core.Deps) {

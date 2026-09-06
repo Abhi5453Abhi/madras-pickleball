@@ -3,6 +3,7 @@ package live
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 )
 
@@ -131,5 +132,52 @@ func TestMoveOptions(t *testing.T) {
 	}
 	if only.Busy.Minutes != 0 {
 		t.Errorf("a match that just started has been on %d minutes", only.Busy.Minutes)
+	}
+}
+
+// One person is in Men's and Mixed on the same Sunday, and has one body. The
+// flow will not call them to two courts at once.
+func TestAPlayerOnCourtElsewhereIsNotCalledAgain(t *testing.T) {
+	d := deps(t)
+	mens := makeFixture(t, d, fixtureOpts{Name: "Men's Doubles", Slug: "mens", FinalsStage: "none", Teams: 4, Courts: 2})
+	mixed := makeFixture(t, d, fixtureOpts{
+		Name: "Mixed Doubles", Slug: "mixed", Gender: "mixed", FinalsStage: "none", Teams: 4, Courts: 2, CourtFrom: 2})
+	mens.flow(t)
+
+	// The player standing on Men's Court 1 is also entered in Mixed, in the
+	// pair that Mixed's first match needs.
+	onCourt := mens.Players[0]
+	first := mixed.Matches[0]
+	leaving := mixed.Players[0]
+	mustExec(t, d.DB, `update team_players set player_id = $2 where player_id = $1`, leaving, onCourt)
+	mustExec(t, d.DB, `update tournament_players set player_id = $2 where tournament_id = $3 and player_id = $1`,
+		leaving, onCourt, mixed.ID)
+
+	mixed.flow(t)
+
+	if m := mixed.match(t, first.ID); m.Status == "live" {
+		t.Fatalf("%s is on two courts at once", mixed.Names[deref(first.TeamAID)])
+	}
+	live := mixed.live(t)
+	if len(live) != 1 {
+		t.Fatalf("%d Mixed matches went on; the second one shares a player with the first", len(live))
+	}
+	if live["Court 3"].ID != mixed.Matches[1].ID {
+		t.Errorf("Court 3 has the wrong match on it")
+	}
+
+	// And the board says who is blocking it, by name.
+	board, err := loadBoard(context.Background(), d.DB, d, mixed.tournament(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blocked string
+	for _, m := range board.Queue {
+		if m.ID == first.ID && m.BlockedBy != nil {
+			blocked = *m.BlockedBy
+		}
+	}
+	if blocked == "" || !strings.HasSuffix(blocked, " is on Court 1") {
+		t.Errorf("the board says %q; it has to name the person and the court", blocked)
 	}
 }
