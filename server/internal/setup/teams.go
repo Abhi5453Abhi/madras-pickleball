@@ -524,17 +524,18 @@ func pairWith(ctx context.Context, d *core.Deps, in pairWithIn) (pairWithOut, er
 				}
 			}
 		}
-		// The schedule points at the pairs; a changed pair takes it with it.
-		if err := dropStaleDraw(ctx, tx, t.ID); err != nil {
-			return err
-		}
 		id, err := insertTeam(ctx, tx, t.ID, []store.Player{a, b})
 		if err != nil {
 			return err
 		}
 		if id == "" {
+			// Paired from another phone between the read and the tap.
 			out = pairWithOut{Error: "One of them is in a pair already. Split it first."}
 			return nil
+		}
+		// The schedule points at the pairs; a changed pair takes it with it.
+		if err := dropStaleDraw(ctx, tx, t.ID); err != nil {
+			return err
 		}
 		if err := core.Audit(ctx, tx, actor(ctx), "team.paired", "team", id, "",
 			map[string]any{"players": []string{a.ID, b.ID}}); err != nil {
@@ -655,11 +656,6 @@ func pairRestRandomly(ctx context.Context, d *core.Deps, in tournamentIDIn) (pai
 			}
 		}
 
-		if len(groups) > 0 {
-			if err := dropStaleDraw(ctx, tx, t.ID); err != nil {
-				return err
-			}
-		}
 		made := 0
 		for _, g := range groups {
 			members := make([]store.Player, 0, len(g))
@@ -672,6 +668,11 @@ func pairRestRandomly(ctx context.Context, d *core.Deps, in tournamentIDIn) (pai
 			}
 			if id != "" {
 				made++
+			}
+		}
+		if made > 0 {
+			if err := dropStaleDraw(ctx, tx, t.ID); err != nil {
+				return err
 			}
 		}
 		if err := core.Audit(ctx, tx, actor(ctx), "teams.paired_randomly", "tournament", t.ID, "",
