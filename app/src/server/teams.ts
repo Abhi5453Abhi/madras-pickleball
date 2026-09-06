@@ -137,8 +137,31 @@ function teamName(names: string[]) {
  * Write one team. Seeds are unique per category, so the next one is
  * max + 1; names are unique per category too, which two players called Ravi
  * in a singles draw would otherwise trip over.
+ *
+ * One pair at a time per category. The hub, the Teams screen and the schedule
+ * step all settle pairs on load, so two of them open at once used to race
+ * this: the second either hit the seed index (a 500 on a page render) or, a
+ * moment later, made the same two people a second pair called "… (2)". Under
+ * the lock the second run finds the pair already made and returns null.
  */
 async function insertTeam(tx: Tx, categoryId: string, members: BoardPlayer[]) {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${categoryId}))`)
+  const [already] = await tx
+    .select({ teamId: teamPlayers.teamId })
+    .from(teamPlayers)
+    .innerJoin(teams, eq(teams.id, teamPlayers.teamId))
+    .where(
+      and(
+        eq(teams.categoryId, categoryId),
+        inArray(
+          teamPlayers.playerId,
+          members.map((m) => m.id),
+        ),
+      ),
+    )
+    .limit(1)
+  if (already) return null
+
   const [agg] = await tx
     .select({ seed: sql<number>`coalesce(max(${teams.seed}), 0)::int` })
     .from(teams)
@@ -389,9 +412,11 @@ export async function pairWith(
       { id: a.id, name: a.name },
       { id: b.id, name: b.name },
     ])
-    await bumpStreamVersion(tournamentId, tx)
+    if (id) await bumpStreamVersion(tournamentId, tx)
     return id
   })
+  // Paired from another phone between the page rendering and the tap.
+  if (!teamId) return { ok: false, error: 'One of them is in a pair already. Split it first.' }
   return { ok: true, teamId }
 }
 

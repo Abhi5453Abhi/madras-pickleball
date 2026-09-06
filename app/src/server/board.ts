@@ -158,7 +158,7 @@ export async function boardData(tournamentId: string): Promise<BoardData> {
   // The first entry is deliberately dropped: getVenue is here only because it
   // throws when the venue was never seeded, which is a setup mistake that
   // should say so rather than render an empty board.
-  const [, tournament, courtRows, closures, rows, teamNameRows, rosterRows, slotRows] =
+  const [, tournament, courtRows, closures, rows, teamNameRows, rosterRows, slotRows, elsewhere] =
     await Promise.all([
       getVenue(),
 
@@ -241,6 +241,18 @@ export async function boardData(tournamentId: string): Promise<BoardData> {
             or(isNull(matches.teamAId), isNull(matches.teamBId)),
           ),
         ),
+
+      // Who is on a court in ANOTHER tournament right now. Ravi plays Men's
+      // Doubles on Court 1 and Mixed on Court 3, and the one thing this board
+      // exists to prevent is calling him to both at once.
+      db
+        .select({ playerId: players.id, courtName: courts.name })
+        .from(matches)
+        .innerJoin(teams, sql`${teams.id} = ${matches.teamAId} or ${teams.id} = ${matches.teamBId}`)
+        .innerJoin(teamPlayers, eq(teamPlayers.teamId, teams.id))
+        .innerJoin(players, eq(players.id, teamPlayers.playerId))
+        .leftJoin(courts, eq(courts.id, matches.courtId))
+        .where(and(eq(matches.status, 'live'), ne(matches.tournamentId, tournamentId))),
     ])
 
   const closedByCourt = new Map(closures.map((c) => [c.courtId, c.reason ?? 'Out of action']))
@@ -250,8 +262,9 @@ export async function boardData(tournamentId: string): Promise<BoardData> {
 
   const courtNames = new Map(courtRows.map((c) => [c.id, c.name]))
 
-  // Who is physically on a court right now, across every category.
+  // Who is physically on a court right now, in this tournament or any other.
   const busy = new Map<string, string>() // playerId → court label
+  for (const e of elsewhere) busy.set(e.playerId, e.courtName ?? 'another court')
   const liveByCourt = new Map<string, (typeof rows)[number]>()
   for (const r of rows) {
     if (r.status !== 'live') continue
@@ -533,7 +546,7 @@ export async function sendToCourt(matchId: string, courtId: string, opts?: { for
   // Otherwise two sends from a stale board put the same player on two courts —
   // the one thing this product exists to prevent.
   if (!opts?.force) {
-    const conflict = await livePlayerConflict(match.tournamentId, matchId)
+    const conflict = await livePlayerConflict(matchId)
     if (conflict) return { ok: false as const, error: conflict }
   }
 
@@ -1096,13 +1109,17 @@ function possessive(names: string[]) {
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 }
 
-/** Names the player, because "blocked" is not actionable and a name is. */
-export async function livePlayerConflict(tournamentId: string, matchId: string) {
+/**
+ * Names the player, because "blocked" is not actionable and a name is. Every
+ * live match at the venue counts, not only this tournament's: a person can be
+ * entered in two tournaments on the same day, and has one body.
+ */
+export async function livePlayerConflict(matchId: string) {
   const [live, courtNames] = await Promise.all([
     db
       .select({ id: matches.id, courtId: matches.courtId })
       .from(matches)
-      .where(and(eq(matches.tournamentId, tournamentId), eq(matches.status, 'live'))),
+      .where(eq(matches.status, 'live')),
     db
       .select({ id: courts.id, name: courts.name })
       .from(courts)
@@ -1137,17 +1154,29 @@ export async function clearCourt(matchId: string, opts?: { later?: boolean }) {
 
   // "Play it later" has to mean something the next flow can see, or the
   // court it just left offers the same match straight back. The order of
-  // play is (round, seq): the match goes to the back of its stage.
-  let order: { roundIndex: number; seq: number; roundName: string | null } | null = null
+  // play is (round, seq): a league match goes to the back of its stage and
+  // takes that round's tag. A knockout match can only go to the back of its
+  // OWN round — sending a semi-final behind the final renamed it "Final" and
+  // listed it after the match it feeds.
+  let order: { roundIndex: number; seq: number; roundName?: string | null } | null = null
   if (opts?.later) {
+    const knockout = match.stage === 'knockout'
     const [last] = await db
       .select({ roundIndex: matches.roundIndex, seq: matches.seq, roundName: matches.roundName })
       .from(matches)
-      .where(and(eq(matches.categoryId, match.categoryId), eq(matches.stage, match.stage)))
+      .where(
+        and(
+          eq(matches.categoryId, match.categoryId),
+          eq(matches.stage, match.stage),
+          knockout ? eq(matches.roundIndex, match.roundIndex) : undefined,
+        ),
+      )
       .orderBy(desc(matches.roundIndex), desc(matches.seq))
       .limit(1)
     if (last && (last.roundIndex !== match.roundIndex || last.seq !== match.seq)) {
-      order = { roundIndex: last.roundIndex, seq: last.seq + 1, roundName: last.roundName }
+      order = knockout
+        ? { roundIndex: last.roundIndex, seq: last.seq + 1 }
+        : { roundIndex: last.roundIndex, seq: last.seq + 1, roundName: last.roundName }
     }
   }
 

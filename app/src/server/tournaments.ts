@@ -17,7 +17,7 @@ import {
   venues,
 } from '@/db/schema'
 import { newId } from '@/lib/ids'
-import { normalizeName, normalizePhone, type ParsedRow } from '@/lib/parse-players'
+import { normalizeName, normalizePhone } from '@/lib/parse-players'
 import { bumpStreamVersion } from '@/lib/stream'
 import { buildDraw, seededShuffle, type DrawPlan, type SlotSource } from '@/lib/draw'
 import { standings, type StandingsMatch } from '@/lib/standings'
@@ -471,7 +471,9 @@ export async function persistDraw(categoryId: string, tournamentId: string, plan
 export async function generateDrawForCategory(categoryId: string) {
   const category = await getCategory(categoryId)
   if (!category) throw new Error('Category not found')
-  const teamRows = await listTeams(categoryId)
+  // A pair that pulled out before the schedule was made is out of the day:
+  // drawing them in gave them matches nobody would ever play.
+  const teamRows = (await listTeams(categoryId)).filter((t) => t.status !== 'withdrawn')
   if (teamRows.length < 2) throw new Error('Need at least two teams')
 
   const seedOrder = teamRows.map((t) => t.id)

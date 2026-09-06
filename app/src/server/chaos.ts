@@ -542,7 +542,9 @@ export async function shortenFormat(
   if (shape.bestOf !== 1 && shape.bestOf !== 3) {
     return { ok: false as const, error: 'A match is best of one or best of three.' }
   }
-  if (shape.pointsToWin < 7 || shape.pointsToWin > 21) {
+  // `Number(formValue)` can be NaN, which passes both range checks below and
+  // then fails as a raw database error on the write.
+  if (!Number.isInteger(shape.pointsToWin) || shape.pointsToWin < 7 || shape.pointsToWin > 21) {
     return { ok: false as const, error: 'Games run to between 7 and 21.' }
   }
 
