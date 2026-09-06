@@ -81,8 +81,14 @@ export function FixScore({ played }: { played: PlayedMatch[] }) {
                   </span>
                 </span>
                 <span className="num shrink-0 text-right">
-                  <span className="block text-row text-text">{m.games}</span>
-                  {m.scoreLine ? <span className="block text-meta text-text-3">{m.scoreLine}</span> : null}
+                  {m.walkover ? (
+                    <span className="block text-meta text-text-3">Walkover</span>
+                  ) : (
+                    <>
+                      <span className="block text-row text-text">{m.games}</span>
+                      {m.scoreLine ? <span className="block text-meta text-text-3">{m.scoreLine}</span> : null}
+                    </>
+                  )}
                 </span>
               </Link>
             </li>

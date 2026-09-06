@@ -289,18 +289,23 @@ function PointsField({
       </label>
       {/* A ring, not a heavier border: `ring` is box-shadow, so it cannot lose
           a specificity argument with the 1px `border` the shared Input already
-          carries. */}
-      <Input
-        id={id}
-        type="text"
-        inputMode="numeric"
-        pattern="[0-9]*"
-        maxLength={2}
-        autoComplete="off"
-        className="num h-14 w-20 shrink-0 text-center text-[26px] font-bold ring-2 ring-line-key"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
+          carries. The width is on a wrapper for the same reason: the shared
+          Input's `w-full` is generated after `w-20` and won, so the box took
+          the whole row and the pair's name beside it came out one letter per
+          line. */}
+      <span className="w-20 shrink-0">
+        <Input
+          id={id}
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          maxLength={2}
+          autoComplete="off"
+          className="num h-14 text-center text-[26px] font-bold ring-2 ring-line-key"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      </span>
     </div>
   )
 }
@@ -1272,7 +1277,12 @@ export function ScoreEntry(props: ScoreEntryProps) {
           <p className="num mt-1 text-[22px] font-bold text-text-2">{scoreLine}</p>
           {hornEnded ? (
             <p className="mt-1.5 text-meta text-text-2">
-              Stopped on time. The capped game keeps its points and sits out of point difference.
+              {/* "Win 1–1" needs the reason next to it, or the side with more
+                  points in the match asks why they lost. */}
+              {winnerName && outcome.gamesWonA === outcome.gamesWonB
+                ? 'Stopped on time, level on games — whoever was ahead when the horn went takes it. '
+                : 'Stopped on time. '}
+              The capped game keeps its points and sits out of point difference.
             </p>
           ) : null}
         </div>

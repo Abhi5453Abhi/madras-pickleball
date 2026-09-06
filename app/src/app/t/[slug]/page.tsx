@@ -43,6 +43,17 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
 
   const phase = t.status === 'completed' ? 'finished' : t.status === 'live' ? 'running' : 'setup'
   const unit = data.discipline === 'doubles' ? 'Pair' : 'Player'
+  // A pair who pulled out keeps its row for the record but takes no place in
+  // the knockout — the draw is built without them, so the cut line has to be
+  // drawn without them too, or the page promises a final to a pair who have
+  // gone home.
+  const goesThrough = new Set(
+    table
+      .filter((r) => !r.withdrawn)
+      .slice(0, cut)
+      .map((r) => r.teamId),
+  )
+  const lastThrough = [...goesThrough].pop() ?? null
   const signupsOpen = t.status === 'registration' && !t.registrationClosedAt
 
   const courtOrder = new Map(data.courts.map((c, i) => [c.id, i]))
@@ -224,9 +235,14 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
                 </thead>
                 <tbody>
                   {table.map((r, i) => {
-                    const through = cut > 0 && i < cut && phase !== 'finished'
+                    const through = goesThrough.has(r.teamId) && phase !== 'finished'
                     return (
-                      <RowWithCut key={r.teamId} index={i} cut={cut} finished={phase === 'finished'}>
+                      <RowWithCut
+                        key={r.teamId}
+                        through={through}
+                        divider={phase !== 'finished' && r.teamId === lastThrough}
+                        cut={cut}
+                      >
                         <td
                           className={clsx(
                             'num py-2.5 pl-4 text-meta',
@@ -313,21 +329,21 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
 }
 
 function RowWithCut({
-  index,
+  through,
+  divider,
   cut,
-  finished,
   children,
 }: {
-  index: number
+  through: boolean
+  /** The cut line sits under this row. */
+  divider: boolean
   cut: number
-  finished: boolean
   children: React.ReactNode
 }) {
-  const through = cut > 0 && index < cut
   return (
     <>
-      <tr className={clsx('border-t border-line', through && !finished && 'bg-accent-soft/60')}>{children}</tr>
-      {cut > 0 && !finished && index === cut - 1 ? (
+      <tr className={clsx('border-t border-line', through && 'bg-accent-soft/60')}>{children}</tr>
+      {divider ? (
         <tr>
           <td
             colSpan={4}

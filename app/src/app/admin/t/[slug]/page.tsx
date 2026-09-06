@@ -229,6 +229,17 @@ async function Running({
 
   const unit = discipline === 'doubles' ? 'Pair' : 'Player'
   const cut = finalsStage === 'none' ? 0 : advance
+  // A pair who pulled out keeps its row for the record but takes no place in
+  // the knockout, so the cut line is drawn around them — as the public page
+  // draws it, and as the draw is actually built.
+  const withdrawn = new Set(table.teams.filter((x) => x.status === 'withdrawn').map((x) => x.id))
+  const goesThrough = new Set(
+    table.rows
+      .filter((r) => !withdrawn.has(r.teamId))
+      .slice(0, finalMatchDecided(all) ? 0 : cut)
+      .map((r) => r.teamId),
+  )
+  const lastThrough = [...goesThrough].pop() ?? null
   const played = all
     .filter((m) => m.resultState === 'final' || m.resultState === 'reported')
     .sort((x, y) => {
@@ -322,11 +333,18 @@ async function Running({
               </thead>
               <tbody>
                 {table.rows.map((r, i) => (
-                  <RowWithCut key={r.teamId} index={i} cut={finalMatch ? 0 : cut} finished={phase === 'finished'}>
+                  <RowWithCut
+                    key={r.teamId}
+                    through={goesThrough.has(r.teamId) && phase !== 'finished'}
+                    divider={phase !== 'finished' && r.teamId === lastThrough}
+                    cut={cut}
+                  >
                     <td className="num py-2.5 pl-4 text-meta text-text-3">{i + 1}</td>
-                    <td className="py-2.5 text-row text-text">
+                    <td className={clsx('py-2.5 text-row', withdrawn.has(r.teamId) ? 'text-text-3' : 'text-text')}>
                       {names.get(r.teamId) ?? '—'}
-                      {tieNote(r.reason, leagueDone) ? (
+                      {withdrawn.has(r.teamId) ? (
+                        <span className="block text-meta font-normal text-text-3">pulled out</span>
+                      ) : tieNote(r.reason, leagueDone) ? (
                         <span className="block text-meta font-normal text-text-3">
                           {tieNote(r.reason, leagueDone)}
                         </span>
@@ -369,10 +387,19 @@ async function Running({
                         </span>
                       </span>
                       <span className="num shrink-0 text-right">
-                        <span className="block text-row text-text">
-                          {aWon ? m.gamesWonA : m.gamesWonB}–{aWon ? m.gamesWonB : m.gamesWonA}
-                        </span>
-                        {line ? <span className="block text-meta text-text-3">{line}</span> : null}
+                        {/* A walkover's 11–0, 11–0 is generated for the ledger, not
+                            played. The public page and the results list say the
+                            word; printing the numbers here read as a thrashing. */}
+                        {m.resultType === 'walkover' ? (
+                          <span className="block text-meta text-text-3">Walkover</span>
+                        ) : (
+                          <>
+                            <span className="block text-row text-text">
+                              {aWon ? m.gamesWonA : m.gamesWonB}–{aWon ? m.gamesWonB : m.gamesWonA}
+                            </span>
+                            {line ? <span className="block text-meta text-text-3">{line}</span> : null}
+                          </>
+                        )}
                       </span>
                     </Link>
                   </li>
@@ -389,22 +416,27 @@ async function Running({
   )
 }
 
+/** Once the final has been played the cut line has done its job. */
+function finalMatchDecided(all: Array<{ stage: string; winnerTeamId: string | null }>) {
+  return all.some((m) => m.stage === 'knockout' && !!m.winnerTeamId)
+}
+
 function RowWithCut({
-  index,
+  through,
+  divider,
   cut,
-  finished,
   children,
 }: {
-  index: number
+  through: boolean
+  /** The cut line sits under this row. */
+  divider: boolean
   cut: number
-  finished: boolean
   children: React.ReactNode
 }) {
-  const through = cut > 0 && index < cut
   return (
     <>
-      <tr className={clsx('border-t border-line', through && !finished && 'bg-accent-soft/60')}>{children}</tr>
-      {cut > 0 && !finished && index === cut - 1 ? (
+      <tr className={clsx('border-t border-line', through && 'bg-accent-soft/60')}>{children}</tr>
+      {divider ? (
         <tr>
           <td colSpan={4} className="border-t border-dashed border-line-key py-1.5 text-center font-score text-eyebrow text-accent uppercase">
             Top {cut} {cut === 2 ? 'play the final' : 'go through'}

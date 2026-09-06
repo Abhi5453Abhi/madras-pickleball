@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, asc, desc, eq, gte, inArray, isNull, ne, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm'
 import { db, transact } from '@/db'
 import {
   categories,
@@ -17,7 +17,7 @@ import { newId } from '@/lib/ids'
 import { bumpStreamVersion } from '@/lib/stream'
 import { venueDayKey } from '@/lib/time'
 import { flowTournament } from './board'
-import { createCategory, createTournament, getVenue } from './tournaments'
+import { createCategory, createTournament, getVenue, standingsFor } from './tournaments'
 
 /**
  * A tournament is one category — SPEC v4.
@@ -280,6 +280,29 @@ export async function assignCourts(tournamentId: string, courtIds: string[]) {
   await transact(async (tx) => {
     await tx.delete(tournamentCourts).where(eq(tournamentCourts.tournamentId, tournamentId))
     if (wanted.length) {
+      // `courtOptions` above says a finished tournament has let go of its
+      // courts, but its rows still sit under the one-court-per-day index.
+      // They are released here, at the moment somebody actually takes the
+      // court — otherwise the insert below was a raw constraint error on the
+      // afternoon Men's Doubles finished and the evening's tournament was made.
+      await tx.delete(tournamentCourts).where(
+        and(
+          eq(tournamentCourts.dayKey, dayKey),
+          inArray(tournamentCourts.courtId, wanted),
+          inArray(
+            tournamentCourts.tournamentId,
+            tx
+              .select({ id: tournaments.id })
+              .from(tournaments)
+              .where(
+                or(
+                  inArray(tournaments.status, ['completed', 'archived']),
+                  isNotNull(tournaments.deletedAt),
+                ),
+              ),
+          ),
+        ),
+      )
       await tx.insert(tournamentCourts).values(
         wanted.map((courtId) => ({ id: newId('tc'), tournamentId, courtId, dayKey })),
       )
@@ -440,6 +463,16 @@ export async function dashboard(): Promise<{
   for (const f of finals) {
     if (f.winnerTeamId && !finalWinner.has(f.tournamentId)) finalWinner.set(f.tournamentId, f.winnerTeamId)
   }
+  // "Everyone plays everyone" has no final: the table decides it, as the hub
+  // and the public page already say. The dashboard said nothing at all.
+  await Promise.all(
+    rows
+      .filter(({ t }) => t.status === 'completed' && !finalWinner.has(t.id))
+      .map(async ({ t, cat }) => {
+        const top = (await standingsFor(cat.id)).rows[0]
+        if (top) finalWinner.set(t.id, top.teamId)
+      }),
+  )
   const winnerIds = [...finalWinner.values()]
   const winnerNames = new Map(
     winnerIds.length
