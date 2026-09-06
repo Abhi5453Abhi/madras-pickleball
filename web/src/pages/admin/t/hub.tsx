@@ -62,6 +62,11 @@ export function HubPage() {
     e.preventDefault()
     const res = await run('events.finishEvent', { tournamentId: t.id })
     if (!res.ok) setErr(res.error)
+    // Finishing sends the organiser to this same page — the record of the day,
+    // winner on top. Nothing remounts on a redirect to where you already are,
+    // so the hub is read again by hand; the Next version re-rendered it from
+    // the database.
+    else void loaded.reload(true)
   }
 
   return (
