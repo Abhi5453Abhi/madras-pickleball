@@ -466,8 +466,8 @@ func TestCappedDiffMatchesTheRulesSide(t *testing.T) {
 	for _, tc := range []struct{ a, b, want int }{
 		{11, 0, 8}, {0, 11, -8}, {11, 9, 2}, {9, 11, -2}, {11, 3, 8}, {5, 5, 0},
 	} {
-		if got := cappedDiff(tc.a, tc.b); got != tc.want {
-			t.Fatalf("cappedDiff(%d, %d) = %d, want %d", tc.a, tc.b, got, tc.want)
+		if got := CappedDiff(tc.a, tc.b); got != tc.want {
+			t.Fatalf("CappedDiff(%d, %d) = %d, want %d", tc.a, tc.b, got, tc.want)
 		}
 	}
 }

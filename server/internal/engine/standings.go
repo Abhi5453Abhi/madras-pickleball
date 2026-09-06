@@ -58,20 +58,6 @@ const (
 	HeadToHeadFirst   TiebreakRule = "head_to_head_first"
 )
 
-// cappedDiff is CappedDiff from api_rules.go, duplicated here so the standings
-// port does not have to wait for the rules port to land. Both sides are the
-// same three lines; the integrator should keep one of them and delete this.
-func cappedDiff(scoreFor, scoreAgainst int) int {
-	d := scoreFor - scoreAgainst
-	if d > DiffCap {
-		return DiffCap
-	}
-	if d < -DiffCap {
-		return -DiffCap
-	}
-	return d
-}
-
 // contributesDiff — a walkover records a scoreline but contributes nothing to
 // any difference.
 func contributesDiff(m StandingsMatch) bool {
@@ -151,8 +137,8 @@ func TallyRows(teamIDs []string, matches []StandingsMatch) map[string]*TeamRow {
 			if g.ExcludeFromDiff {
 				continue
 			}
-			a.PointDiff += cappedDiff(g.ScoreA, g.ScoreB)
-			b.PointDiff += cappedDiff(g.ScoreB, g.ScoreA)
+			a.PointDiff += CappedDiff(g.ScoreA, g.ScoreB)
+			b.PointDiff += CappedDiff(g.ScoreB, g.ScoreA)
 		}
 	}
 
