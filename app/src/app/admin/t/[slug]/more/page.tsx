@@ -160,17 +160,20 @@ function MoreList({
 }) {
   const finished = phase === 'completed' || phase === 'archived'
   const running = phase === 'live'
-  // A finished tournament has nothing left to pause, shorten or reorder;
-  // one that has not started has no scores to fix.
+  // A finished tournament has nothing left to pause, shorten or reorder; one
+  // that has not started has no scores to fix, and a pair that pulls out
+  // before the start is simply taken off the list under Registration or
+  // re-made under Teams — walkovers are for a day that is already running.
   const rows: Array<{ label: string; href: string; when?: boolean }> = [
     { label: 'Fix a score that’s already in', href: `${more}?do=fix`, when: running || finished },
-    { label: `A ${unit} has pulled out`, href: `${more}?do=withdraw`, when: !finished },
-    { label: 'Swap a player', href: `${more}?do=swap`, when: !finished },
+    { label: `A ${unit} has pulled out`, href: `${more}?do=withdraw`, when: running },
+    { label: 'Swap a player', href: `${more}?do=swap`, when: running },
     { label: 'Change the courts', href: `${base}/schedule`, when: !finished },
     { label: 'Change the order of play', href: `${base}/schedule`, when: !finished },
     { label: 'Shorten what’s left', href: `${more}?do=shorten`, when: running },
     { label: paused ? 'Start again' : 'Pause the tournament', href: `${more}?do=pause`, when: running },
-    { label: 'Add or remove players', href: `${base}/registration`, when: !finished },
+    { label: unit === 'pair' && !running ? 'Change the pairs' : 'Add or remove players', href: unit === 'pair' && !running ? `${base}/teams` : `${base}/registration`, when: !finished },
+    { label: 'Add or remove players', href: `${base}/registration`, when: !finished && unit === 'pair' && !running },
   ].filter((r) => r.when !== false)
   return (
     <>

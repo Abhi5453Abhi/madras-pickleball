@@ -138,7 +138,7 @@ export async function withdrawTeam(teamId: string) {
     .from(categories)
     .where(eq(categories.id, team.categoryId))
     .limit(1)
-  if (!category) return { ok: false as const, error: 'That category is gone.' }
+  if (!category) return { ok: false as const, error: 'That tournament is gone.' }
   const rules = rulesFor(category)
 
   const remaining = await db
@@ -385,7 +385,7 @@ export async function substitutePlayer(input: {
     .from(categories)
     .where(eq(categories.id, team.categoryId))
     .limit(1)
-  if (!category) return { ok: false as const, error: 'That category is gone.' }
+  if (!category) return { ok: false as const, error: 'That tournament is gone.' }
 
   const members = await db
     .select({ playerId: teamPlayers.playerId, position: teamPlayers.position })
@@ -404,7 +404,7 @@ export async function substitutePlayer(input: {
     .limit(1)
   if (!incoming) return { ok: false as const, error: 'That player is not on the roster.' }
 
-  // Nobody plays for two pairs in the same category — that is the double-booking
+  // Nobody plays for two pairs in the same tournament — that is the double-booking
   // the board exists to prevent, arriving through a different door.
   const clash = await db
     .select({ teamId: teams.id, name: teams.name })
@@ -415,13 +415,15 @@ export async function substitutePlayer(input: {
         eq(teams.categoryId, team.categoryId),
         eq(teamPlayers.playerId, input.inPlayerId),
         ne(teams.id, input.teamId),
+        // A pair that pulled out has let its players go.
+        ne(teams.status, 'withdrawn'),
       ),
     )
     .limit(1)
   if (clash.length) {
     return {
       ok: false as const,
-      error: `${incoming.name} is already playing for ${clash[0].name} in this category.`,
+      error: `${incoming.name} is already playing for ${clash[0].name}.`,
     }
   }
 
@@ -538,7 +540,7 @@ export async function shortenFormat(
     .from(categories)
     .where(eq(categories.id, categoryId))
     .limit(1)
-  if (!category) return { ok: false as const, error: 'That category is gone.' }
+  if (!category) return { ok: false as const, error: 'That tournament is gone.' }
   if (shape.bestOf !== 1 && shape.bestOf !== 3) {
     return { ok: false as const, error: 'A match is best of one or best of three.' }
   }
@@ -556,7 +558,7 @@ export async function shortenFormat(
   if (live.length) {
     return {
       ok: false as const,
-      error: 'A match in this category is on court. Change it when that one finishes.',
+      error: 'A match is on court. Change it when that one finishes.',
     }
   }
 

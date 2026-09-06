@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
 import { newId } from '@/lib/ids'
 import { adminSetResult, getMatchForScoring, submitResult } from '@/server/scoring'
-import { flowTournament } from '@/server/board'
+import { flowVenue } from '@/server/board'
 import { voidMatch } from '@/server/chaos'
 import { recordAudit } from '@/lib/audit'
 import type { GameScore } from '@/lib/rules'
@@ -66,7 +66,7 @@ export async function saveResult(payload: SavePayload) {
       userId: user.id,
       actorLabel: user.name,
     })
-    if (res.ok) await flowTournament(loaded.match.tournamentId)
+    if (res.ok) await flowVenue({ first: loaded.match.tournamentId })
     revalidatePath('/admin', 'layout')
     return res.ok ? { ok: true as const } : { ok: false as const, error: res.error }
   }
@@ -89,64 +89,9 @@ export async function saveResult(payload: SavePayload) {
   })
   // The court this was on is free the moment the score is in. The next match
   // in order goes on before the organiser is back on the board.
-  if (res.ok) await flowTournament(loaded.match.tournamentId)
+  if (res.ok) await flowVenue({ first: loaded.match.tournamentId })
   revalidatePath('/admin', 'layout')
   return res.ok ? { ok: true as const } : { ok: false as const, error: res.error }
-}
-
-/**
- * Settling a disagreement — SPEC A5/A7.
- *
- * Two people entered two different scores. The organiser picks one, or enters
- * a third. Picking one is the common case and it must be one tap, with the
- * choice written to the log: "used the score from the side that lost" is
- * exactly the sentence someone will ask about later.
- */
-export async function useSubmission(formData: FormData) {
-  const user = await requireUser('admin')
-  const matchId = String(formData.get('matchId'))
-  const submissionId = String(formData.get('submissionId'))
-  const back = safeBack(formData.get('back'))
-
-  const loaded = await getMatchForScoring(matchId)
-  if (!loaded) return
-  const sub = loaded.submissions.find((s) => s.id === submissionId)
-  if (!sub) return
-
-  const res = await adminSetResult({
-    matchId,
-    games: sub.games as GameScore[],
-    resultType: sub.resultType as 'normal' | 'walkover' | 'retired',
-    winnerTeamId: sub.winnerTeamId,
-    retiredTeamId: sub.retiredTeamId,
-    // The stored games ARE the ledger, exclusions and all. Re-deriving them
-    // from an already-expanded list finds nothing left to expand and marks
-    // none of it excluded — so settling a disputed retirement used to hand the
-    // winner every point of the games nobody played.
-    expanded: true,
-    excludeFromDiff: sub.excludeFromDiff,
-    reason: `Settled the disagreement — used the score from ${
-      sub.submittingTeamId === loaded.match.teamAId
-        ? (loaded.nameA ?? 'side A')
-        : sub.submittingTeamId === loaded.match.teamBId
-          ? (loaded.nameB ?? 'side B')
-          : 'the court device'
-    }.`,
-    userId: user.id,
-    actorLabel: user.name,
-  })
-
-  revalidatePath('/admin', 'layout')
-  // The refusal is the one sentence written so the organiser is not stuck —
-  // "Semi-final has already started off this result. Void it first." Dropping
-  // it left them back on the board with the match still under review and
-  // nothing said about why.
-  if (!res.ok) {
-    redirect(
-      `${back}${back.includes('?') ? '&' : '?'}err=${encodeURIComponent(res.error)}` as never,
-    )
-  }
-  redirect(back as never)
 }
 
 /**

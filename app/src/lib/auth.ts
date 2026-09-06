@@ -16,11 +16,6 @@ export function atLeast(user: SessionUser | null, role: Role): boolean {
   return !!user && RANK[user.role] >= RANK[role]
 }
 
-/** Where a signed-in person belongs. There is one answer now. */
-export function homeFor(): string {
-  return '/admin'
-}
-
 export type GuardOptions = {
   /**
    * Only the page that replaces a temporary PIN may be reached while one is

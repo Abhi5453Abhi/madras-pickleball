@@ -104,6 +104,9 @@ export async function currentRegistrationToken(tournamentId: string) {
 export async function ensureRegistrationLink(tournamentId: string, expiresAt: Date) {
   const current = await currentRegistrationToken(tournamentId)
   if (current) return current.raw
+  // Once the day has gone there is nothing to sign up for: issuing a link
+  // that has already expired, on every render, is just churn.
+  if (expiresAt.getTime() <= Date.now()) return null
   return issueRegistrationLink(tournamentId, expiresAt)
 }
 
@@ -256,26 +259,6 @@ export async function listRoster(tournamentId: string): Promise<RosterEntry[]> {
   })
 }
 
-/**
- * Kept for the console under More, which counts the sign-ups that still need
- * a look. Since v4 that is only the possible duplicates.
- */
-export async function listPendingRegistrations(tournamentId: string) {
-  return db
-    .select({
-      id: pendingRegistrations.id,
-      name: pendingRegistrations.name,
-      status: pendingRegistrations.status,
-    })
-    .from(pendingRegistrations)
-    .where(
-      and(
-        eq(pendingRegistrations.tournamentId, tournamentId),
-        eq(pendingRegistrations.status, 'pending'),
-      ),
-    )
-}
-
 // ───────────────────────────── adding ─────────────────────────────
 
 type AddInput = {
@@ -321,6 +304,9 @@ export async function addPlayer(tournamentId: string, input: AddInput): Promise<
   const onList = new Set(roster.map((r) => r.playerId))
 
   let playerId: string | null = null
+  // A number already on someone else's record cannot be the new row's dedupe
+  // key too — the index is unique — so it is kept as text only.
+  let phoneTaken = false
   if (phoneKey) {
     const [byPhone] = await db
       .select({ id: players.id, name: players.name })
@@ -328,8 +314,17 @@ export async function addPlayer(tournamentId: string, input: AddInput): Promise<
       .where(and(eq(players.phoneKey, phoneKey), isNull(players.deletedAt)))
       .limit(1)
     if (byPhone) {
-      if (onList.has(byPhone.id)) return { ok: false, error: `${byPhone.name} is already on the list.` }
-      playerId = byPhone.id
+      // The same number under the same name is the same person, back for
+      // another Sunday. The same number under a different name is not
+      // silently turned into last month's name — anyone with the link could
+      // otherwise learn who a number belongs to. It becomes a new player,
+      // flagged if the names look alike; the organiser merges if it is them.
+      const sameName = normalizeName(byPhone.name) === nameKey
+      if (sameName && onList.has(byPhone.id)) {
+        return { ok: false, error: `${byPhone.name} is already on the list.` }
+      }
+      if (sameName) playerId = byPhone.id
+      else phoneTaken = true
     }
   }
   if (!playerId) {
@@ -351,8 +346,8 @@ export async function addPlayer(tournamentId: string, input: AddInput): Promise<
 
   await transact(async (tx) => {
     if (isNew) {
-      await tx.insert(players).values({ id, name, nameKey, phone, phoneKey })
-    } else if (phoneKey) {
+      await tx.insert(players).values({ id, name, nameKey, phone, phoneKey: phoneTaken ? null : phoneKey })
+    } else if (phoneKey && !phoneTaken) {
       // A number we did not have. Safe to set: nobody else carries it, or the
       // phone lookup above would have found them.
       await tx
@@ -484,7 +479,10 @@ export async function submitRegistration(input: SubmitRegistration): Promise<Reg
   const partnerWish = t.discipline === 'singles' ? null : input.partnerName?.trim() || null
 
   const roster = await rosterRows(input.tournamentId)
-  let mine = phoneKey ? roster.find((r) => r.phoneKey === phoneKey) : undefined
+  // "Already on the list" only for the same number under the same name —
+  // a number alone must not answer "is so-and-so playing", nor let a
+  // stranger with the number change their partner wish.
+  let mine = phoneKey ? roster.find((r) => r.phoneKey === phoneKey && r.nameKey === nameKey) : undefined
   if (!mine && input.deviceId) {
     const sameNameHere = roster.filter((r) => r.nameKey === nameKey)
     if (sameNameHere.length) {

@@ -9,61 +9,6 @@ import { newId } from './ids'
  * where every invocation may be a fresh instance (SPEC A9).
  */
 
-const WINDOW_MIN = 15
-const MAX_FAILURES = 8
-const LOCKOUT_MIN = 15
-
-/**
- * Lock the ACCOUNT, not the IP: every umpire is behind one venue NAT, so
- * IP-locking locks out the whole club on the busiest minute of the day.
- */
-export async function checkLoginAllowed(identifier: string) {
-  const rows = await db
-    .select({ lockedUntil: users.lockedUntil })
-    .from(users)
-    .where(eq(users.username, identifier))
-    .limit(1)
-  const lockedUntil = rows[0]?.lockedUntil
-  if (lockedUntil && lockedUntil > new Date()) {
-    const mins = Math.ceil((lockedUntil.getTime() - Date.now()) / 60000)
-    return { allowed: false as const, retryInMinutes: mins }
-  }
-  return { allowed: true as const }
-}
-
-export async function recordLoginAttempt(identifier: string, ipHash: string | null, ok: boolean) {
-  await db.insert(loginAttempts).values({ id: newId('la'), identifier, ipHash, succeeded: ok })
-
-  if (ok) {
-    await db
-      .update(users)
-      .set({ failedLoginCount: 0, lockedUntil: null, lastLoginAt: new Date() })
-      .where(eq(users.username, identifier))
-    return
-  }
-
-  const since = new Date(Date.now() - WINDOW_MIN * 60_000)
-  const [{ n }] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(loginAttempts)
-    .where(
-      and(
-        eq(loginAttempts.identifier, identifier),
-        eq(loginAttempts.succeeded, false),
-        gte(loginAttempts.at, since),
-      ),
-    )
-
-  if (n >= MAX_FAILURES) {
-    await db
-      .update(users)
-      .set({ lockedUntil: new Date(Date.now() + LOCKOUT_MIN * 60_000), failedLoginCount: n })
-      .where(eq(users.username, identifier))
-  } else {
-    await db.update(users).set({ failedLoginCount: n }).where(eq(users.username, identifier))
-  }
-}
-
 /**
  * PIN sign-in. There is no username to lock, so the count is per IP: five
  * wrong PINs in fifteen minutes from one address and that address waits.
@@ -101,6 +46,31 @@ export async function checkPinAllowed(ipHash: string | null) {
     }
   }
   return { allowed: true as const, triesLeft: PIN_MAX_FAILURES - rows.length }
+}
+
+/**
+ * The same five-in-fifteen rule for any other guess-able check, keyed by
+ * whatever names the actor — "pin-change:<userId>" for the change-PIN form,
+ * whose "another organiser already uses that PIN" answer would otherwise be
+ * a free oracle for the owner's PIN.
+ */
+export async function checkKeyAllowed(key: string) {
+  const since = new Date(Date.now() - PIN_WINDOW_MIN * 60_000)
+  const rows = await db
+    .select({ at: loginAttempts.at })
+    .from(loginAttempts)
+    .where(and(eq(loginAttempts.identifier, key), eq(loginAttempts.succeeded, false), gte(loginAttempts.at, since)))
+    .orderBy(desc(loginAttempts.at))
+    .limit(PIN_MAX_FAILURES)
+  if (rows.length >= PIN_MAX_FAILURES) {
+    const until = rows[rows.length - 1]!.at.getTime() + PIN_WINDOW_MIN * 60_000
+    return { allowed: false as const, retryInMinutes: Math.max(1, Math.ceil((until - Date.now()) / 60_000)) }
+  }
+  return { allowed: true as const }
+}
+
+export async function recordKeyAttempt(key: string, ok: boolean) {
+  await db.insert(loginAttempts).values({ id: newId('la'), identifier: key, ipHash: null, succeeded: ok })
 }
 
 export async function recordPinAttempt(ipHash: string | null, ok: boolean, userId?: string) {

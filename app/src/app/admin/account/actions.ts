@@ -1,6 +1,7 @@
 'use server'
 
 import { eq } from 'drizzle-orm'
+import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { db } from '@/db'
 import { users } from '@/db/schema'
@@ -8,6 +9,7 @@ import { verifyPin } from '@/lib/password'
 import { requireUser } from '@/lib/auth'
 import { revokeAllSessionsFor, createSession } from '@/lib/session'
 import { recordAudit } from '@/lib/audit'
+import { checkKeyAllowed, recordKeyAttempt } from '@/lib/rate-limit'
 import { addOrganiser, normalizePin, removeOrganiser, setPin } from '@/server/organisers'
 
 export type PinState = { error?: string; ok?: boolean }
@@ -31,13 +33,27 @@ export async function changePin(_prev: PinState, formData: FormData): Promise<Pi
   if (tooEasy(next)) return { error: 'Not that one — six of the same digit or a run like 123456 is the first thing anyone tries.' }
   if (next !== confirm) return { error: 'The two new PINs don’t match.' }
 
+  // Five wrong goes in fifteen minutes and this form waits, like sign-in:
+  // both "your current PIN is wrong" and "another organiser uses that one"
+  // are answers a patient guesser could learn from.
+  const key = `pin-change:${user.id}`
+  const gate = await checkKeyAllowed(key)
+  if (!gate.allowed) {
+    return { error: `Too many tries. Come back in ${gate.retryInMinutes} minute${gate.retryInMinutes === 1 ? '' : 's'}.` }
+  }
+
   const row = (await db.select().from(users).where(eq(users.id, user.id)).limit(1))[0]
   if (!row?.pinHash || !(await verifyPin(row.pinHash, current))) {
+    await recordKeyAttempt(key, false)
     return { error: 'Your current PIN is wrong.' }
   }
 
   const set = await setPin(user.id, next)
-  if (!set.ok) return { error: set.error }
+  if (!set.ok) {
+    await recordKeyAttempt(key, false)
+    return { error: set.error }
+  }
+  await recordKeyAttempt(key, true)
 
   await recordAudit({
     userId: user.id,
@@ -62,10 +78,19 @@ function back(note?: string, err?: string): never {
   redirect(`/admin/account${qs ? `?${qs}` : ''}` as never)
 }
 
-export async function addOrganiserAction(formData: FormData) {
+export type AddOrganiserState = { error?: string; name?: string; pin?: string; done: number }
+
+/**
+ * The new organiser's PIN comes back in the action's own response — never in
+ * a URL, which would put it in browser history and in the host's logs.
+ */
+export async function addOrganiserAction(
+  prev: AddOrganiserState,
+  formData: FormData,
+): Promise<AddOrganiserState> {
   const user = await requireUser('super_admin')
   const res = await addOrganiser(formData.get('name'))
-  if (!res.ok) return back(undefined, res.error)
+  if (!res.ok) return { error: res.error, done: prev.done }
   await recordAudit({
     userId: user.id,
     actorLabel: user.username,
@@ -74,8 +99,8 @@ export async function addOrganiserAction(formData: FormData) {
     entityId: res.id,
     after: { name: res.name },
   })
-  // The PIN is said once, here, and nowhere else.
-  back(`${res.name} is in. Their PIN is ${res.pin} — tell them, and they choose their own the first time they sign in.`)
+  revalidatePath('/admin/account')
+  return { name: res.name, pin: res.pin, done: prev.done + 1 }
 }
 
 export async function removeOrganiserAction(formData: FormData) {

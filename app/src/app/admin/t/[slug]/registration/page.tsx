@@ -3,7 +3,7 @@ import { headers } from 'next/headers'
 import { notFound } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
 import { Card, Chevron, Confirm, EmptyState, Notice, Panel, Tag } from '@/components/ui'
-import { endOfVenueDay } from '@/lib/time'
+import { endOfVenueDay, venueDate } from '@/lib/time'
 import { primaryCategory } from '@/server/events'
 import { ensureRegistrationLink, listRoster, signupsClosed } from '@/server/registration'
 import { getTournamentBySlug } from '@/server/tournaments'
@@ -93,6 +93,14 @@ export default async function RegistrationPage(props: PageProps<'/admin/t/[slug]
               <button className={SECONDARY_LINK}>Reopen sign-ups</button>
             </form>
           )}
+        </Card>
+      ) : !raw ? (
+        <Card className="border-line-key p-4">
+          <p className="font-score text-eyebrow text-text-2 uppercase">The day has passed</p>
+          <p className="mt-1 text-body text-text-2">
+            The sign-up link stopped working at the end of {venueDate(tournament.endDate)}. You can
+            still add or remove people here.
+          </p>
         </Card>
       ) : (
         <>

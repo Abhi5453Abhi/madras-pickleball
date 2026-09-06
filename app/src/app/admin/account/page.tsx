@@ -1,12 +1,13 @@
 import Link from 'next/link'
 import { requireUser } from '@/lib/auth'
-import { Card, Confirm, Input, Notice, Panel } from '@/components/ui'
+import { Card, Confirm, Notice, Panel } from '@/components/ui'
 import { venueDate } from '@/lib/time'
 import { listOrganisers } from '@/server/organisers'
-import { ROW_BUTTON, SECONDARY_LINK } from '../_ui'
+import { SECONDARY_LINK } from '../_ui'
 import { logout } from '../../login/actions'
 import { PinForm } from './pin-form'
-import { addOrganiserAction, removeOrganiserAction } from './actions'
+import { removeOrganiserAction } from './actions'
+import { AddOrganiserForm } from './add-organiser'
 
 export const metadata = { title: 'Your PIN · Madras Pickleball' }
 
@@ -88,18 +89,7 @@ export default async function AccountPage(props: PageProps<'/admin/account'>) {
               ))}
             </ul>
           </Panel>
-          <form action={addOrganiserAction} className="flex gap-2">
-            <Input
-              name="name"
-              placeholder="Add an organiser — their name"
-              aria-label="Add an organiser"
-              autoComplete="off"
-              maxLength={60}
-              required
-              className="h-14 min-w-0 flex-1 placeholder:text-[14px]"
-            />
-            <button className={`${ROW_BUTTON} shrink-0`}>Add</button>
-          </form>
+          <AddOrganiserForm />
           <p className="text-meta text-text-3">
             They get a PIN of their own, shown here once. Every organiser can do everything except
             this list.

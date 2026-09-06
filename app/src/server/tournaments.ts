@@ -1,10 +1,9 @@
 import 'server-only'
-import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { db, mapCase, transact } from '@/db'
 import {
   categories,
   categoryPlayers,
-  courts,
   groups,
   matches,
   matchSlots,
@@ -29,14 +28,6 @@ export async function getVenue() {
   const rows = await db.select().from(venues).where(eq(venues.slug, VENUE_SLUG)).limit(1)
   if (!rows[0]) throw new Error('Venue not seeded. Run npm run setup.')
   return rows[0]
-}
-
-export async function listCourts(venueId: string) {
-  return db
-    .select()
-    .from(courts)
-    .where(and(eq(courts.venueId, venueId), eq(courts.active, true)))
-    .orderBy(asc(courts.sortOrder))
 }
 
 function slugify(name: string) {
@@ -76,15 +67,6 @@ export async function getTournamentBySlug(slug: string) {
     .where(and(eq(tournaments.slug, slug), isNull(tournaments.deletedAt)))
     .limit(1)
   return rows[0] ?? null
-}
-
-export async function listTournaments() {
-  return db
-    .select()
-    .from(tournaments)
-    .where(isNull(tournaments.deletedAt))
-    .orderBy(desc(tournaments.startDate))
-    .limit(30)
 }
 
 // ───────────────────────────── roster ─────────────────────────────
@@ -224,20 +206,6 @@ export async function setCategoryPlayers(categoryId: string, playerIds: string[]
       )
     }
   })
-}
-
-export async function listCategoryPlayers(categoryId: string) {
-  return db
-    .select({
-      id: players.id,
-      name: players.name,
-      gender: players.gender,
-      substitute: categoryPlayers.substitute,
-    })
-    .from(categoryPlayers)
-    .innerJoin(players, eq(players.id, categoryPlayers.playerId))
-    .where(eq(categoryPlayers.categoryId, categoryId))
-    .orderBy(asc(players.name))
 }
 
 /** Team names are generated — "Ravi / Priya" — never asked for (SPEC A2). */

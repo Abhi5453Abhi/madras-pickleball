@@ -1,13 +1,13 @@
 import { notFound } from 'next/navigation'
 import { eq } from 'drizzle-orm'
 import { db } from '@/db'
-import { courts, tournaments } from '@/db/schema'
+import { courts } from '@/db/schema'
 import { requireUser } from '@/lib/auth'
 import { getMatchForScoring, projectedState } from '@/server/scoring'
 import { AdminEntry } from './entry'
-import { useSubmission, voidThisMatch } from './actions'
+import { voidThisMatch } from './actions'
 import Link from 'next/link'
-import { Chevron, Confirm, Notice, Panel, SectionHead } from '@/components/ui'
+import { Chevron, Confirm, Notice } from '@/components/ui'
 import { SECONDARY_LINK } from '../../_ui'
 
 export const metadata = { title: 'Enter a score · Madras Pickleball' }
@@ -28,12 +28,6 @@ export default async function AdminMatchPage(props: PageProps<'/admin/m/[matchId
 
   const loaded = await getMatchForScoring(matchId)
   if (!loaded || !loaded.match.teamAId || !loaded.match.teamBId) notFound()
-
-  const [tournament] = await db
-    .select({ slug: tournaments.slug })
-    .from(tournaments)
-    .where(eq(tournaments.id, loaded.match.tournamentId))
-    .limit(1)
 
   const court = loaded.match.courtId
     ? (await db.select().from(courts).where(eq(courts.id, loaded.match.courtId)).limit(1))[0]
@@ -58,58 +52,6 @@ export default async function AdminMatchPage(props: PageProps<'/admin/m/[matchId
       }
     : null
 
-  // Two people entered two different scores. Show both, name who gave each,
-  // and make picking one a single tap — SPEC A5.
-  const disputePanel =
-    state === 'disputed' && loaded.submissions.length > 1 ? (
-      <section className="flex flex-col gap-3">
-        <SectionHead
-          title="Two different scores came in"
-          meta="Pick the right one, or enter the real score below. Either way it goes in the log."
-        />
-        <Panel>
-          <ul className="divide-y divide-line">
-            {loaded.submissions.map((sub) => {
-              const who =
-                sub.submittingTeamId === loaded.match.teamAId
-                  ? (loaded.nameA ?? 'Side A')
-                  : sub.submittingTeamId === loaded.match.teamBId
-                    ? (loaded.nameB ?? 'Side B')
-                    : 'The court device'
-              const gs = (sub.games ?? []) as Array<{ scoreA: number; scoreB: number }>
-              const winner =
-                sub.winnerTeamId === loaded.match.teamAId
-                  ? loaded.nameA
-                  : sub.winnerTeamId === loaded.match.teamBId
-                    ? loaded.nameB
-                    : null
-              return (
-                <li key={sub.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-                  <div className="min-w-[9rem] flex-1">
-                    <p className="text-meta text-text-3">{who} says</p>
-                    <p className="text-row text-text">{winner ? `${winner} won` : 'No winner given'}</p>
-                    <p className="num text-meta text-text-2">
-                      {gs.map((g) => `${g.scoreA}–${g.scoreB}`).join(', ') || '—'}
-                    </p>
-                  </div>
-                  <form action={useSubmission} className="ml-auto shrink-0">
-                    <input type="hidden" name="matchId" value={matchId} />
-                    <input type="hidden" name="submissionId" value={sub.id} />
-                    <input type="hidden" name="back" value={`/admin/t/${tournament?.slug ?? ''}/results`} />
-                    <button className="tap rounded-control bg-ink px-4 text-[16px] font-bold text-white">
-                      Use this one
-                    </button>
-                  </form>
-                </li>
-              )
-            })}
-          </ul>
-        </Panel>
-      </section>
-    ) : null
-
-  // Saving sends you straight back to the venue-wide board — the one screen
-  // the organiser looks at while it is all happening.
   const back = '/admin/live'
 
   return (
@@ -130,7 +72,6 @@ export default async function AdminMatchPage(props: PageProps<'/admin/m/[matchId
           {String(err)}
         </Notice>
       ) : null}
-      {disputePanel}
       <AdminEntry
       matchId={matchId}
       // The court only matters while they are on it; a correction an hour

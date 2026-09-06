@@ -260,7 +260,7 @@ async function signup(link, name, partner, phone) {
 }
 async function addByHand(hub, text) {
   await goto(`${hub}/registration`)
-  await page.fill('input[name=text]', text)
+  await page.fill('[name=text]', text)
   await page.click('button:has-text("Add")')
   // The phone number, if any, is never printed on the row.
   const name = text.replace(/[\d\s]+$/, '').trim()
@@ -386,8 +386,8 @@ for (const [name, partner, phone] of MENS) {
   if (s.fresh) await s.fresh.close()
 }
 {
-  const s = await signup(MLINK, 'Karthik S', null, '9840011111')
-  ok('the same phone twice → already on the list, not a second row', /You’re already on the list\./.test(s.text), s.text.slice(0, 200))
+  const s = await signup(MLINK, 'Karthik Subramanian', null, '9840011111')
+  ok('the same phone and name twice → already on the list, not a second row', /You’re already on the list\./.test(s.text), s.text.slice(0, 200))
   await shot('signup-already-on-list', s.p)
   if (s.fresh) await s.fresh.close()
   const t = await goto(`${mens.hub}/registration`)

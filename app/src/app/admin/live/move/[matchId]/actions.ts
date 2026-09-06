@@ -7,7 +7,7 @@ import { db } from '@/db'
 import { matches } from '@/db/schema'
 import { requireUser } from '@/lib/auth'
 import { recordAudit } from '@/lib/audit'
-import { clearCourt, flowTournament, moveMatch } from '@/server/board'
+import { clearCourt, flowVenue, moveMatch } from '@/server/board'
 
 async function tournamentOf(matchId: string) {
   const [m] = await db
@@ -39,7 +39,7 @@ export async function moveMatchAction(formData: FormData) {
     after: { courtId },
   })
   // The court it left is free now: the next match in order goes on it.
-  await flowTournament(tournamentId)
+  await flowVenue({ first: tournamentId })
   revalidatePath('/admin', 'layout')
   redirect('/admin/live')
 }
@@ -66,7 +66,7 @@ export async function backToQueueAction(formData: FormData) {
     entity: 'match',
     entityId: matchId,
   })
-  await flowTournament(tournamentId, { skip: [matchId] })
+  await flowVenue({ first: tournamentId, skip: [matchId] })
   revalidatePath('/admin', 'layout')
   redirect('/admin/live')
 }

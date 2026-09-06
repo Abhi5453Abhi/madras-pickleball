@@ -618,6 +618,26 @@ export function offersForFreeCourts(data: BoardData): Map<string, BoardMatch> {
  * means not this second; it is back in its place in the order for the next
  * court that frees up.
  */
+/**
+ * Flow every tournament running today, this one first. A saved score frees a
+ * court in one tournament — and may free a PLAYER another tournament's court
+ * was waiting on, because one person can be in Men's and Mixed on the same
+ * Sunday. One tournament at a time, in order, so two flows never race.
+ */
+export async function flowVenue(opts?: { first?: string; skip?: string[] }) {
+  const running = await db
+    .select({ id: tournaments.id })
+    .from(tournaments)
+    .where(and(eq(tournaments.status, 'live'), isNull(tournaments.deletedAt)))
+  const ids = running.map((t) => t.id).sort((a, b) => (a === opts?.first ? -1 : b === opts?.first ? 1 : 0))
+  let placed = 0
+  for (const id of ids) {
+    const res = await flowTournament(id, id === opts?.first ? { skip: opts?.skip } : undefined)
+    placed += res.placed
+  }
+  return { placed }
+}
+
 export async function flowTournament(tournamentId: string, opts?: { skip?: string[] }) {
   const [t] = await db
     .select({ status: tournaments.status, breakStartsAt: tournaments.breakStartsAt })

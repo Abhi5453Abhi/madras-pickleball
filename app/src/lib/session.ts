@@ -1,6 +1,6 @@
 import 'server-only'
 import { cookies, headers } from 'next/headers'
-import { and, eq, gt, lt, sql } from 'drizzle-orm'
+import { and, eq, gt } from 'drizzle-orm'
 import { db } from '@/db'
 import { sessions, users } from '@/db/schema'
 import { newSessionToken, sha256Hex, hashIp } from './crypto'
@@ -109,8 +109,3 @@ export async function revokeAllSessionsFor(userId: string) {
   await db.delete(sessions).where(eq(sessions.userId, userId))
 }
 
-export async function purgeExpiredSessions() {
-  await db.delete(sessions).where(lt(sessions.expiresAt, new Date()))
-}
-
-export const sessionCount = () => db.select({ n: sql<number>`count(*)` }).from(sessions)
