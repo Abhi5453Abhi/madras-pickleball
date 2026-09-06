@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { homeFor, requireUser } from '@/lib/auth'
+import { requireUser } from '@/lib/auth'
 import { CourtMark, NetRule, Wordmark } from '@/components/ui'
 
 function initials(name: string) {
@@ -23,7 +23,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             the wordmark does. */}
         <div className="mx-auto flex min-h-14 w-full max-w-3xl items-center gap-3 px-4">
           <Link
-            href={homeFor(user) as never}
+            href="/admin"
             className="tap -ml-1 flex min-w-0 items-center overflow-hidden px-1"
           >
             {/* Below ~320px of layout viewport — a phone at 200% text — the

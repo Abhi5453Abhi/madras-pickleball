@@ -109,16 +109,6 @@ export default async function RegistrationsPage(props: PageProps<'/admin/t/[slug
               </ol>
             </Panel>
           </section>
-
-          <section className="flex flex-col gap-2">
-            <p className="text-body text-text-2">
-              In a hurry, or already holding the list? Quick Play takes a paste from the group chat
-              and skips all of this.
-            </p>
-            <Link href="/admin/new" className={SECONDARY_LINK}>
-              Paste a list instead
-            </Link>
-          </section>
         </>
       ) : null}
 

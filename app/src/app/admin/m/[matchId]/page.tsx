@@ -7,7 +7,7 @@ import { getMatchForScoring, projectedState } from '@/server/scoring'
 import { AdminEntry } from './entry'
 import { useSubmission, voidThisMatch } from './actions'
 import Link from 'next/link'
-import { Confirm, Notice, Panel, SectionHead, TeamName } from '@/components/ui'
+import { Confirm, Notice, Panel, SectionHead } from '@/components/ui'
 import { SECONDARY_LINK } from '../../_ui'
 
 export const metadata = { title: 'Enter a score · Madras Pickleball' }

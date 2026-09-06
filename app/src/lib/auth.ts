@@ -17,7 +17,7 @@ export function atLeast(user: SessionUser | null, role: Role): boolean {
 }
 
 /** Where a signed-in person belongs. There is one answer now. */
-export function homeFor(_user: SessionUser): string {
+export function homeFor(): string {
   return '/admin'
 }
 
