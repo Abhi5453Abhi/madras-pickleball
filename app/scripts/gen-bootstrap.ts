@@ -1,33 +1,40 @@
-/** Regenerates src/db/bootstrap-sql.ts from drizzle/*.sql. Run after db:generate. */
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
+/** Regenerates src/db/bootstrap-migrations.ts from drizzle/. Run after db:generate. */
+import { createHash } from 'node:crypto'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
 
-const files = readdirSync('drizzle')
-  .filter((f) => f.endsWith('.sql'))
-  .sort()
-// Joined with a breakpoint: the app runs this one statement at a time, and
-// the last statement of one migration glued to the first of the next is a
-// multi-statement query the embedded database refuses.
-const sql = files.map((f) => readFileSync(`drizzle/${f}`, 'utf8')).join('\n--> statement-breakpoint\n')
+const journal = JSON.parse(readFileSync('drizzle/meta/_journal.json', 'utf8')) as {
+  entries: Array<{ tag: string; when: number }>
+}
 
-const packed = gzipSync(Buffer.from(sql, 'utf8'), { level: 9 }).toString('base64')
+// The same record drizzle's own migrator keeps — tag, timestamp and hash —
+// so a database the app set itself up on and one migrated from a laptop are
+// indistinguishable, and either tool can take over from the other.
+const migrations = journal.entries.map((e) => {
+  const sql = readFileSync(`drizzle/${e.tag}.sql`, 'utf8')
+  return { tag: e.tag, when: e.when, hash: createHash('sha256').update(sql).digest('hex'), sql }
+})
+
+const packed = gzipSync(Buffer.from(JSON.stringify(migrations), 'utf8'), { level: 9 }).toString('base64')
 
 writeFileSync(
-  'src/db/bootstrap-sql.ts',
+  'src/db/bootstrap-migrations.ts',
   `/**
- * The schema as one string, generated from drizzle/*.sql by scripts/gen-bootstrap.ts.
+ * The migrations, packed, generated from drizzle/ by scripts/gen-bootstrap.ts.
  *
- * A serverless bundle does not carry the migrations folder, so the embedded
- * demo database applies this on first use. A real deployment sets DATABASE_URL
- * and uses drizzle-kit migrations instead.
+ * A serverless bundle does not carry the migrations folder, so the app brings
+ * them along and applies whatever a database is missing on first use — the
+ * embedded demo database and a freshly connected Postgres alike.
  */
 import { gunzipSync } from 'node:zlib'
 
+export type BootstrapMigration = { tag: string; when: number; hash: string; sql: string }
+
 const PACKED = '${packed}'
 
-export function bootstrapSql(): string {
-  return gunzipSync(Buffer.from(PACKED, 'base64')).toString('utf8')
+export function bootstrapMigrations(): BootstrapMigration[] {
+  return JSON.parse(gunzipSync(Buffer.from(PACKED, 'base64')).toString('utf8'))
 }
 `,
 )
-console.log(`bootstrap-sql.ts written from ${files.length} migration(s)`)
+console.log(`bootstrap-migrations.ts written from ${migrations.length} migration(s)`)

@@ -1,7 +1,7 @@
 import 'server-only'
 import { sql } from 'drizzle-orm'
-import { db, isDemoDeployment, isEmbeddedDb } from '@/db'
-import { bootstrapSql } from '@/db/bootstrap-sql'
+import { db, isDemoDeployment, transact, type Tx } from '@/db'
+import { bootstrapMigrations } from '@/db/bootstrap-migrations'
 import { courts, players, users, venues } from '@/db/schema'
 import { newId } from '@/lib/ids'
 import { hashPin } from '@/lib/password'
@@ -21,61 +21,69 @@ import { flowTournament } from './board'
 import { tournaments } from '@/db/schema'
 
 /**
- * Brings an empty embedded database up on first use.
+ * Brings a database up on first use — the embedded one, or a Postgres that
+ * was connected a minute ago and has nothing in it yet.
  *
- * A serverless bundle does not carry the migrations folder, and a demo instance
- * is discarded whenever the host recycles it, so this has to be idempotent and
- * cheap. A real deployment sets DATABASE_URL and never comes through here.
+ * A serverless bundle does not carry the migrations folder and there is
+ * nobody to run a setup command, so this has to be idempotent, cheap, and
+ * safe when two instances wake up at the same moment.
  */
 const globalForBoot = globalThis as unknown as { mpbBooted?: Promise<void> }
 
 const COURT_COLOURS = ['blue', 'orange', 'teal', 'violet']
 
+/** One key for the whole venue; two instances take turns rather than race. */
+const LOCK = 'select pg_advisory_xact_lock(7231001)'
+
+type Handle = Pick<Tx, 'select' | 'insert' | 'execute'>
+
+function rows<T>(res: unknown): T[] {
+  const r = res as { rows?: T[] } | T[]
+  return Array.isArray(r) ? r : (r.rows ?? [])
+}
+
 /**
- * Whether the LAST migration has landed — not just the first table. A schema
- * that got halfway (an instance recycled mid-bootstrap) would otherwise pass
- * as complete; re-applying is safe, every "already exists" is ignored below.
+ * The timestamp of the newest migration a database has — drizzle's own
+ * bookkeeping, so `npm run db:migrate` from a laptop and this agree on what
+ * has been done. Null when the table is not there yet.
  */
-async function schemaComplete() {
-  try {
-    const res = await db.execute(
-      sql`select count(*)::int as n from information_schema.columns
-          where table_name = 'tournament_players' and column_name = 'partner_wish'`,
-    )
-    const rows = (res as unknown as { rows?: Array<{ n: number }> }).rows ?? (res as unknown as Array<{ n: number }>)
-    return (rows?.[0]?.n ?? 0) > 0
-  } catch {
-    return false
-  }
+async function newestApplied(h: Handle): Promise<number | null> {
+  const res = await h.execute(
+    sql`select created_at from "drizzle"."__drizzle_migrations" order by created_at desc limit 1`,
+  )
+  const [row] = rows<{ created_at: number | string | null }>(res)
+  return row?.created_at == null ? null : Number(row.created_at)
 }
 
-async function applySchema() {
-  for (const statement of bootstrapSql().split('--> statement-breakpoint')) {
-    const trimmed = statement.trim()
-    if (!trimmed) continue
-    try {
-      await db.execute(sql.raw(trimmed))
-    } catch (err) {
-      // "already exists" is expected when two instances race each other.
-      const message = err instanceof Error ? err.message : String(err)
-      if (!/already exists/i.test(message)) throw err
+async function applyMissing(tx: Handle) {
+  await tx.execute(sql`create schema if not exists "drizzle"`)
+  await tx.execute(
+    sql`create table if not exists "drizzle"."__drizzle_migrations" (id serial primary key, hash text not null, created_at bigint)`,
+  )
+  const applied = await newestApplied(tx)
+  for (const m of bootstrapMigrations()) {
+    if (applied !== null && applied >= m.when) continue
+    for (const statement of m.sql.split('--> statement-breakpoint')) {
+      const trimmed = statement.trim()
+      if (trimmed) await tx.execute(sql.raw(trimmed))
     }
+    await tx.execute(
+      sql`insert into "drizzle"."__drizzle_migrations" ("hash", "created_at") values (${m.hash}, ${m.when})`,
+    )
   }
 }
 
-async function seedCore() {
-  const [venue] = await db.select().from(venues).limit(1)
+async function seedCore(h: Handle) {
+  const [venue] = await h.select().from(venues).limit(1)
   let venueId = venue?.id
   if (!venueId) {
     venueId = newId('ven')
-    await db
-      .insert(venues)
-      .values({ id: venueId, name: 'Madras Pickleball', slug: 'madras-pickleball' })
+    await h.insert(venues).values({ id: venueId, name: 'Madras Pickleball', slug: 'madras-pickleball' })
   }
 
-  const existingCourts = await db.select().from(courts).limit(1)
+  const existingCourts = await h.select().from(courts).limit(1)
   if (existingCourts.length === 0) {
-    await db.insert(courts).values(
+    await h.insert(courts).values(
       COURT_COLOURS.map((colorKey, i) => ({
         id: newId('crt'),
         venueId: venueId!,
@@ -86,14 +94,14 @@ async function seedCore() {
     )
   }
 
-  const existingUsers = await db.select().from(users).limit(1)
+  const existingUsers = await h.select().from(users).limit(1)
   if (existingUsers.length === 0) {
     // One organiser. The PIN is the whole credential (SPEC v4): a fixed
     // temporary one that must be replaced on first sign-in, or the one the
     // deployment sets.
     const pin = process.env.MPB_SEED_PIN ?? TEMP_PINS[0]
     const digest = await hashPin(pin)
-    await db.insert(users).values({
+    await h.insert(users).values({
       id: newId('usr'),
       name: 'Organiser',
       username: 'organiser',
@@ -105,9 +113,6 @@ async function seedCore() {
       mustChangePassword: !process.env.MPB_SEED_PIN && !isDemoDeployment,
     })
   }
-  // Accounts from before PIN sign-in get a temporary PIN; umpire accounts
-  // are switched off.
-  await ensureOrganiserPins()
 }
 
 const DEMO_PLAYERS = `1. Ravi Kumar
@@ -183,13 +188,40 @@ async function seedDemo() {
   }
 }
 
+/** True when nothing needs doing — the usual case, one cheap read. */
+async function upToDate() {
+  try {
+    const applied = await newestApplied(db as unknown as Handle)
+    const newest = bootstrapMigrations().at(-1)?.when ?? 0
+    if (applied === null || applied < newest) return false
+    const [anyone] = await db.select({ id: users.id }).from(users).limit(1)
+    return !!anyone
+  } catch {
+    // No migrations table: an empty database.
+    return false
+  }
+}
+
 async function run() {
-  if (!isEmbeddedDb) return
   // `next build` renders pages to collect their shells; a database opened
   // in the build worker would be thrown away — and the embedded one aborts.
   if (process.env.NEXT_PHASE === 'phase-production-build') return
-  if (!(await schemaComplete())) await applySchema()
-  await seedCore()
+
+  if (!(await upToDate())) {
+    // One transaction under one lock: whichever instance gets there first
+    // does the work, the other waits and then finds nothing left to do.
+    // Postgres rolls schema changes back with everything else, so a crash
+    // halfway leaves nothing half-made.
+    await transact(async (tx) => {
+      await tx.execute(sql.raw(LOCK))
+      await applyMissing(tx)
+      await seedCore(tx)
+    })
+  }
+  // Accounts from before PIN sign-in get a temporary PIN; umpire accounts
+  // are switched off.
+  await ensureOrganiserPins()
+
   // A deployment with no database of its own arrives looking like a real
   // Saturday, so there is something to look at; a laptop asks for it.
   if (process.env.MPB_DEMO === '1' || isDemoDeployment) {

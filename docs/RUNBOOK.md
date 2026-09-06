@@ -52,6 +52,12 @@ Every run prints which database it is using, so this is visible rather than myst
 (`...-pooler...`) with `connection_limit=1`, and `DIRECT_URL` the direct host for migrations.
 Get this wrong and connections exhaust under exactly the load that matters.
 
+**On the host** nothing is run by hand: the deployed app carries its migrations and, on the first
+visit, creates whatever the database is missing and seeds the venue, four courts and one organiser
+(temporary PIN `123456`). It keeps the same record drizzle's migrator keeps, so `npm run db:migrate`
+from a laptop and the app never disagree about what has been applied. On Vercel the quickest way to
+a database is *Storage → Create Database → Neon*, which sets `DATABASE_URL` for the project itself.
+
 Sign-in is a six-digit PIN — no username. A fresh install seeds one organiser with the temporary
 PIN **`123456`**, which must be replaced the first time it is used (set `MPB_SEED_PIN` to seed a
 real one instead). Accounts from before PIN sign-in are given temporary PINs in order —

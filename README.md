@@ -28,8 +28,13 @@ and this app will try to use that server. Force its own database with `MPB_DB=em
 ## Deploying
 
 Deployed with no `DATABASE_URL` it runs as a demo: an embedded database per instance that resets
-when the host recycles it, seeded with a sample Sunday, PIN `123456`. For real use set
-`DATABASE_URL` to a Postgres (Neon's pooled host) in the host's environment — see the runbook.
+when the host recycles it, seeded with a sample Sunday, PIN `123456`.
+
+For real use give it a Postgres: on Vercel, open the project → **Storage** → **Create Database** →
+**Neon**, and connect it to the project. That sets `DATABASE_URL` by itself; the next deployment
+creates the tables, the venue's four courts and one organiser (temporary PIN `123456`, replaced on
+first sign-in). Nothing to run from a laptop. Any other Postgres works the same way — set
+`DATABASE_URL` to its **pooled** connection string in the host's environment.
 
 ## The one-sentence version
 

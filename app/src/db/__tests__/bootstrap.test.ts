@@ -1,37 +1,42 @@
 import { describe, it, expect } from 'vitest'
+import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
-import { bootstrapSql } from '../bootstrap-sql'
+import { bootstrapMigrations } from '../bootstrap-migrations'
 
 /**
- * The embedded database applies `bootstrapSql()` because a serverless bundle
- * does not carry the migrations folder. A schema change that reaches
- * `drizzle/` but not this string is invisible: `npm run dev` on a clean laptop
- * comes up, looks fine, and then fails on the first score of the day with a
- * missing column. It happened. This is why it cannot happen twice.
+ * The app applies `bootstrapMigrations()` because a serverless bundle does not
+ * carry the migrations folder. A schema change that reaches `drizzle/` but not
+ * this list is invisible: the site comes up, looks fine, and then fails on the
+ * first score of the day with a missing column. It happened. This is why it
+ * cannot happen twice.
  */
-describe('the packed schema', () => {
-  it('is in step with the migrations', () => {
-    const files = readdirSync('drizzle')
-      .filter((f) => f.endsWith('.sql'))
-      .sort()
-    const fromDisk = files.map((f) => readFileSync(`drizzle/${f}`, 'utf8')).join('\n--> statement-breakpoint\n')
+describe('the packed migrations', () => {
+  const journal = JSON.parse(readFileSync('drizzle/meta/_journal.json', 'utf8')) as {
+    entries: Array<{ tag: string; when: number }>
+  }
 
-    expect(files.length).toBeGreaterThan(0)
-    expect(bootstrapSql()).toBe(fromDisk)
+  it('are the journal, in order, with drizzle’s own hashes', () => {
+    const fromDisk = journal.entries.map((e) => {
+      const sql = readFileSync(`drizzle/${e.tag}.sql`, 'utf8')
+      return { tag: e.tag, when: e.when, hash: createHash('sha256').update(sql).digest('hex'), sql }
+    })
+    expect(fromDisk.length).toBeGreaterThan(0)
+    expect(bootstrapMigrations()).toEqual(fromDisk)
   })
 
-  it('covers every migration in the journal, in order', () => {
-    const journal = JSON.parse(readFileSync('drizzle/meta/_journal.json', 'utf8')) as {
-      entries: Array<{ tag: string }>
-    }
+  it('cover every .sql file in the folder', () => {
     const onDisk = readdirSync('drizzle')
       .filter((f) => f.endsWith('.sql'))
       .map((f) => f.replace(/\.sql$/, ''))
       .sort()
-
-    // A hand-written .sql that never reached the journal is skipped by the
-    // migrator on a real Postgres while still applying to the embedded one —
-    // so the two databases quietly diverge.
+    // A hand-written .sql that never reached the journal is skipped by every
+    // migrator — the two ways of setting a database up would quietly diverge.
     expect(journal.entries.map((e) => e.tag).sort()).toEqual(onDisk)
+  })
+
+  it('are strictly ordered in time, as the migrator requires', () => {
+    const whens = bootstrapMigrations().map((m) => m.when)
+    expect([...whens].sort((a, b) => a - b)).toEqual(whens)
+    expect(new Set(whens).size).toBe(whens.length)
   })
 })
