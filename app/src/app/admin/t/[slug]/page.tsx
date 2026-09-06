@@ -4,12 +4,15 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
 import {
+  CourtSwatch,
   Disclosure,
   EmptyState,
   Meter,
   Notice,
   Panel,
+  SectionHead,
   StatusPill,
+  TeamName,
   statusWords,
   type Status,
 } from '@/components/ui'
@@ -126,6 +129,7 @@ export default async function TournamentPage(props: PageProps<'/admin/t/[slug]'>
   const disputed = allMatches.filter((m) => m.resultState === 'disputed')
   const overrun = board.courts.filter((c) => c.live && c.live.overrunMinutes !== null)
   const freeCourts = board.courts.filter((c) => !c.closed && !c.live)
+  const onCourt = board.courts.filter((c) => c.live)
   const offers = offersForFreeCourts(board)
   const waitingSignups = registrations.filter((r) => r.status === 'pending')
 
@@ -195,7 +199,7 @@ export default async function TournamentPage(props: PageProps<'/admin/t/[slug]'>
                   ? `${first.name} has been empty ${first.freeSinceMinutes} min`
                   : `${first.name} is free`
             }
-            where={`Next up: ${offer.nameA} v ${offer.nameB}`}
+            where={`${notStarted ? 'First on' : 'Next up'}: ${offer.nameA} v ${offer.nameB}`}
             action={
               <form action={placeMatch}>
                 <input type="hidden" name="matchId" value={offer.id} />
@@ -490,6 +494,48 @@ export default async function TournamentPage(props: PageProps<'/admin/t/[slug]'>
         <p className="-mt-4 text-meta text-text-2">
           {hidden} more waiting on the court board.
         </p>
+      ) : null}
+
+      {/* ── who is playing, right now ────────────────────────────────────
+          This page is where the organiser lands, and until now a live match
+          only appeared on it when something was WRONG with it. "Who is on
+          court" is the first question anyone asks and it was only answerable
+          from the board. */}
+      {onCourt.length ? (
+        <section className="flex flex-col gap-3">
+          <SectionHead title="On court now" meta="tap one to put the score in" />
+          <Panel>
+            <ul className="divide-y divide-line">
+              {onCourt.map((c) => (
+                <li key={c.id}>
+                  <Link
+                    href={`/admin/m/${c.live!.id}`}
+                    className="flex items-center gap-3 px-4"
+                  >
+                    <CourtSwatch colorKey={c.colorKey} size="md" />
+                    <span className="min-w-0 flex-1 py-3">
+                      {/* Stacked, not truncated: "Nithya Sundaram / Meera K…"
+                          is the half of the name you need to tell two pairs
+                          apart. */}
+                      <TeamName name={c.live!.nameA} />
+                      <span aria-hidden className="my-1 block h-px w-8 bg-line-strong" />
+                      <TeamName name={c.live!.nameB} />
+                      <span className="mt-1 block text-meta text-text-3">
+                        {c.name} · {c.live!.categoryName}
+                        {c.live!.roundName ? ` · ${c.live!.roundName}` : ''}
+                      </span>
+                    </span>
+                    {c.live!.overrunMinutes !== null ? (
+                      <StatusPill state="waiting">{c.live!.overrunMinutes} min</StatusPill>
+                    ) : (
+                      <StatusPill state="live">Live</StatusPill>
+                    )}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </Panel>
+        </section>
       ) : null}
 
       {/* ── will the day finish? ─────────────────────────────────────────── */}

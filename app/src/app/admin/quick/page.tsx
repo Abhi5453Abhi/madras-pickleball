@@ -1,4 +1,7 @@
 import Link from 'next/link'
+import { isNull } from 'drizzle-orm'
+import { db } from '@/db'
+import { tournaments } from '@/db/schema'
 import { requireUser } from '@/lib/auth'
 import { venueDate } from '@/lib/time'
 import { getVenue, listCourts } from '@/server/tournaments'
@@ -18,6 +21,12 @@ export default async function QuickPage() {
   // and that sentence is the whole reason the format picker exists (SPEC A3).
   const venue = await getVenue()
   const courts = await listCourts(venue.id)
+  const [existing] = await db
+    .select({ id: tournaments.id })
+    .from(tournaments)
+    .where(isNull(tournaments.deletedAt))
+    .limit(1)
+  const hasTournaments = !!existing
 
   return (
     <div className="flex flex-col gap-5">
@@ -35,9 +44,15 @@ export default async function QuickPage() {
         courts={Math.max(1, courts.length)}
       />
 
-      <Link href="/admin" className={SECONDARY_LINK}>
-        Not now
-      </Link>
+      {/* Only when there IS something to go back to. On a fresh install
+          /admin is one big "Start a tournament" button, so "Not now" led
+          straight back to the same offer and read as a control that did
+          nothing. */}
+      {hasTournaments ? (
+        <Link href="/admin" className={SECONDARY_LINK}>
+          Not now — back to your tournaments
+        </Link>
+      ) : null}
     </div>
   )
 }
