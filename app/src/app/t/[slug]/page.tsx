@@ -125,7 +125,7 @@ export default async function PublicTournament(props: PageProps<'/t/[slug]'>) {
         {/* Everybody's phone says this, so nobody is staring at a board that
             has not moved for twenty minutes wondering why. */}
         {t.pauseNote ? (
-          <Notice tone="waiting" title="The day is stopped">
+          <Notice tone="waiting" title="Paused">
             {t.pauseNote}
           </Notice>
         ) : null}

@@ -199,7 +199,7 @@ export async function pauseDayAction(formData: FormData) {
     entityId: tournament.id,
     reason: note || 'Paused',
   })
-  done(slug, 'The day is stopped. The public page says so.')
+  done(slug, 'Paused. The public page says so.')
 }
 
 export async function resumeDayAction(formData: FormData) {
@@ -219,7 +219,7 @@ export async function resumeDayAction(formData: FormData) {
   })
   // `resumeDay` already flows the next matches onto the courts that stood
   // empty through the stop.
-  done(slug, 'The day is going again.')
+  done(slug, 'Going again.')
 }
 
 /**

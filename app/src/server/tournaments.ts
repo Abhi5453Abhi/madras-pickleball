@@ -436,6 +436,20 @@ export async function persistDraw(categoryId: string, tournamentId: string, plan
   return keyToMatchId.size
 }
 
+/**
+ * Throw a schedule away. Only ever before the start, when no match has a
+ * result: a changed pair makes the order of play wrong, so it goes and the
+ * organiser makes it again in one tap.
+ */
+export async function clearDraw(categoryId: string) {
+  await transact(async (tx) => {
+    await tx.delete(matches).where(eq(matches.categoryId, categoryId))
+    // Teams point at their group; unhook them before the group goes.
+    await tx.update(teams).set({ groupId: null }).where(eq(teams.categoryId, categoryId))
+    await tx.delete(groups).where(eq(groups.categoryId, categoryId))
+  })
+}
+
 export async function generateDrawForCategory(categoryId: string) {
   const category = await getCategory(categoryId)
   if (!category) throw new Error('Category not found')

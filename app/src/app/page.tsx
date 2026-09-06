@@ -40,7 +40,7 @@ export default async function Home() {
 
       <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 pt-5">
         {paused.map((t) => (
-          <Notice key={t.slug} tone="waiting" title="The day is stopped">
+          <Notice key={t.slug} tone="waiting" title="Paused">
             {t.name} — {t.pauseNote}
           </Notice>
         ))}

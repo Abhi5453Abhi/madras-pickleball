@@ -119,13 +119,22 @@ export default async function TournamentHub(props: PageProps<'/admin/t/[slug]'>)
         <Link href={`/t/${slug}`} className="tap flex items-center justify-center px-3 text-[16px] font-semibold text-link">
           Public page — what players see
         </Link>
-        <Link href={`${base}/more` as never} className="tap flex items-center justify-center px-3 text-[16px] font-semibold text-link">
-          {h.phase === 'running'
-            ? 'More · pause, pull-outs, fix a score, delete'
-            : h.phase === 'finished'
-              ? 'More · fix a score, delete'
-              : 'More · delete this tournament'}
-        </Link>
+        {/* Before the start, More would be a whole screen for one row. */}
+        {h.phase === 'setup' ? (
+          <Link
+            href={`${base}/more?do=delete` as never}
+            className="tap flex items-center justify-center px-3 text-[16px] font-semibold text-link"
+          >
+            Delete this tournament
+          </Link>
+        ) : (
+          <Link
+            href={`${base}/more` as never}
+            className="tap flex items-center justify-center px-3 text-[16px] font-semibold text-link"
+          >
+            {h.phase === 'running' ? 'More · pause, pull-outs, fix a score, delete' : 'More · fix a score, delete'}
+          </Link>
+        )}
       </div>
     </div>
   )

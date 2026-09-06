@@ -97,15 +97,15 @@ export default async function LiveBoardPage(props: PageProps<'/admin/live'>) {
           <Notice
             key={t.id}
             tone="waiting"
-            title={`${t.name} is stopped`}
+            title={`${t.name} is paused`}
             action={
               <form action={resumeFromBoard}>
                 <input type="hidden" name="tournamentId" value={t.id} />
-                <button className={`${PRIMARY_LINK} w-full`}>Start it again</button>
+                <button className={`${PRIMARY_LINK} w-full`}>Start again</button>
               </form>
             }
           >
-            {t.paused}. Nothing goes on its courts until it starts again — the public page says so.
+            {t.paused}. Nothing goes on its courts until you start again — the public page says so.
           </Notice>
         ))}
 

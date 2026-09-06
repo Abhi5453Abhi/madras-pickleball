@@ -79,7 +79,7 @@ export default async function PairWithPage(props: PageProps<'/admin/t/[slug]/tea
         </Panel>
       )}
 
-      <p className="text-meta text-text-3">A pair can be split again any time before the schedule is made.</p>
+      <p className="text-meta text-text-3">A pair can be split again any time before the start.</p>
     </div>
   )
 }

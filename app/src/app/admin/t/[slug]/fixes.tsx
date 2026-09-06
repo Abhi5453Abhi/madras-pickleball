@@ -390,12 +390,12 @@ export function Pause({ slug, pauseNote }: { slug: string; pauseNote: string | n
     return (
       <Notice
         tone="waiting"
-        title="The day is stopped"
+        title="Paused"
         detail="The public page is showing this, so nobody is staring at a board that has not moved."
         action={
           <form action={resumeDayAction}>
             <input type="hidden" name="slug" value={slug} />
-            <button className={INK_BUTTON}>Start the day again</button>
+            <button className={INK_BUTTON}>Start again</button>
           </form>
         }
       >
@@ -415,7 +415,7 @@ export function Pause({ slug, pauseNote }: { slug: string; pauseNote: string | n
           What everybody is waiting for
         </label>
         <input id="pause-note" name="note" defaultValue="Rain — back shortly" className={FIELD} />
-        <button className={INK_BUTTON}>Stop the day</button>
+        <button className={INK_BUTTON}>Pause it</button>
       </form>
     </div>
   )

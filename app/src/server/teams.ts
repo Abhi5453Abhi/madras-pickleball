@@ -1,11 +1,11 @@
 import 'server-only'
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { db, transact, type Tx } from '@/db'
-import { matches, players, teamPlayers, teams, tournamentPlayers } from '@/db/schema'
+import { matches, players, teamPlayers, teams, tournamentPlayers, tournaments } from '@/db/schema'
 import { newId } from '@/lib/ids'
 import { bumpStreamVersion } from '@/lib/stream'
 import { primaryCategory } from './events'
-import { pairingSeedFor, pairRandomly } from './tournaments'
+import { clearDraw, pairingSeedFor, pairRandomly } from './tournaments'
 
 /**
  * Teams — SPEC v4.
@@ -57,7 +57,7 @@ export type TeamBoard = {
   locked: boolean
 }
 
-export const LOCKED_MESSAGE = 'The schedule is made. Changing pairs is under More.'
+export const LOCKED_MESSAGE = 'The tournament has started. Changing a pair is under More.'
 
 type RosterRow = {
   id: string
@@ -119,13 +119,30 @@ async function teamsIn(categoryId: string): Promise<TeamRow[]> {
 }
 
 /** The schedule is made once any match exists — played or not. */
+/**
+ * Pairs are the organiser's to change right up to the start. Once the day
+ * is running a changed pair is a swap or a pull-out, under More.
+ */
 async function isLocked(tournamentId: string) {
+  const [t] = await db
+    .select({ status: tournaments.status })
+    .from(tournaments)
+    .where(eq(tournaments.id, tournamentId))
+    .limit(1)
+  return !t || t.status === 'live' || t.status === 'completed' || t.status === 'archived'
+}
+
+/**
+ * A schedule made before the pairs changed is wrong from the first row. It
+ * goes, and the hub's Schedule step asks for it again.
+ */
+async function dropStaleDraw(tournamentId: string, categoryId: string) {
   const [m] = await db
     .select({ id: matches.id })
     .from(matches)
     .where(eq(matches.tournamentId, tournamentId))
     .limit(1)
-  return !!m
+  if (m) await clearDraw(categoryId)
 }
 
 /** Team names are generated — "Ravi / Priya" — never asked for (SPEC A2). */
@@ -417,6 +434,7 @@ export async function pairWith(
   })
   // Paired from another phone between the page rendering and the tap.
   if (!teamId) return { ok: false, error: 'One of them is in a pair already. Split it first.' }
+  await dropStaleDraw(tournamentId, gate.category.id)
   return { ok: true, teamId }
 }
 
@@ -431,6 +449,8 @@ export async function splitTeam(tournamentId: string, teamId: string): Promise<R
     .limit(1)
   if (!team) return { ok: false, error: 'That pair is already gone.' }
 
+  // The schedule points at the pair; it has to go first.
+  await dropStaleDraw(tournamentId, gate.category.id)
   await transact(async (tx) => {
     await tx.delete(teams).where(eq(teams.id, team.id))
     await bumpStreamVersion(tournamentId, tx)
@@ -482,5 +502,6 @@ export async function pairRestRandomly(
     }
     await bumpStreamVersion(tournamentId, tx)
   })
+  if (groups.length) await dropStaleDraw(tournamentId, gate.category.id)
   return { ok: true, made: groups.length, oddOut: left ? { id: left.id, name: left.name } : null }
 }
