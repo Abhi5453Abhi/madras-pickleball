@@ -33,9 +33,6 @@ export function NotFound({ message }: { message?: string }) {
           Go to today&rsquo;s tournament
         </Link>
 
-        <p className="mt-2 border-t border-line pt-4 text-meta text-text-3">
-          Scoring a match? The QR card on the net post is the way in — this page is not.
-        </p>
       </main>
     </div>
   )

@@ -44,10 +44,10 @@ export function CourtCard({
       )}
     >
       <div className="flex items-center justify-between gap-3 px-4 pt-2.5 pb-0.5">
-        <span className="font-score text-[17px] font-bold tracking-[0.06em] text-text uppercase">
+        <span className="min-w-0 truncate font-score text-[17px] font-bold tracking-[0.06em] text-text uppercase">
           {name}
         </span>
-        <span className="truncate text-meta text-text-3">{label || 'Free'}</span>
+        <span className="shrink-0 truncate text-meta text-text-3">{label || 'Free'}</span>
       </div>
       {live ? (
         <div className="px-4 pt-1 pb-3">

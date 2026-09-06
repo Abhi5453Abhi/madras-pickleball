@@ -1270,7 +1270,10 @@ export function ScoreEntry(props: ScoreEntryProps) {
           </p>
           <h2 ref={resultHeadRef} tabIndex={-1} className="mt-1 text-title text-text">
             {winnerName
-              ? `${winnerName} win ${outcome.gamesWonA}–${outcome.gamesWonB}`
+              ? `${winnerName} win ${Math.max(outcome.gamesWonA, outcome.gamesWonB)}–${Math.min(
+                  outcome.gamesWonA,
+                  outcome.gamesWonB,
+                )}`
               : `Level at ${outcome.gamesWonA}–${outcome.gamesWonB}`}
           </h2>
           <p className="num mt-1 text-[22px] font-bold text-text-2">{scoreLine}</p>
@@ -1297,7 +1300,7 @@ export function ScoreEntry(props: ScoreEntryProps) {
             placeholder="Wrong game 2 score — was 11–9, not 9–11"
           />
           <span className="mt-1 block text-meta text-text-2">
-            Saved with your name and the time. Players can see that a result was changed.
+            Saved with your name, the time and the reason, for the day it is argued about.
           </span>
         </label>
       ) : null}

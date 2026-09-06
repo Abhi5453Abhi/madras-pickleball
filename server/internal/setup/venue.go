@@ -97,7 +97,7 @@ func venueCourts(ctx context.Context, d *core.Deps) ([]venueCourtOut, error) {
 }
 
 func addCourt(ctx context.Context, d *core.Deps, in addCourtIn) (noteOut, error) {
-	name := cleanText(in.Name, 40)
+	name := cleanText(in.Name, 24)
 	if name == "" {
 		return refuse(`Give the court a name — "Court 5", or whatever it is called.`), nil
 	}
@@ -148,7 +148,7 @@ func addCourt(ctx context.Context, d *core.Deps, in addCourtIn) (noteOut, error)
 }
 
 func renameCourt(ctx context.Context, d *core.Deps, in renameCourtIn) (noteOut, error) {
-	name := cleanText(in.Name, 40)
+	name := cleanText(in.Name, 24)
 	if name == "" {
 		return refuse("A court needs a name."), nil
 	}

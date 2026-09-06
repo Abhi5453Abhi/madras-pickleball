@@ -1,5 +1,5 @@
 import { clsx } from 'clsx'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router'
 import type { Output } from '@/api/contract'
 import { useAction, useRpc } from '@/api/use-rpc'
@@ -37,7 +37,7 @@ function Schedule({ slug, h, reloadHub }: { slug: string; h: Hub; reloadHub: () 
   const options = useRpc('events.courtOptions', { tournamentId })
   const matches = useRpc('tournaments.listMatches', { tournamentId })
   const teamNames = useRpc('tournaments.teamNameMap', { tournamentId })
-  const { run } = useAction()
+  const { run, pending } = useAction()
   const [err, setErr] = useState<string | null>(null)
   const [picked, setPicked] = useState<string[] | null>(null)
 
@@ -78,7 +78,9 @@ function Schedule({ slug, h, reloadHub }: { slug: string; h: Hub; reloadHub: () 
     return `${upcoming.length} ${upcoming.length === 1 ? 'match' : 'matches'} on ${mine.length} ${
       mine.length === 1 ? 'court' : 'courts'
     } · about ${formatDuration(day.minutes)}${
-      day.finishAt ? ` · done by ${venueTime(day.finishAt)} if you start now` : ''
+      day.finishAt
+        ? ` · done by ${venueTime(day.finishAt)}${h.phase === 'setup' ? ' if you start now' : ' from here'}`
+        : ''
     }`
   })()
 
@@ -200,7 +202,7 @@ function Schedule({ slug, h, reloadHub }: { slug: string; h: Hub; reloadHub: () 
       {canStart ? (
         <form onSubmit={start}>
           <input type="hidden" name="slug" value={slug} />
-          <button className={PRIMARY_LINK}>Start the tournament</button>
+          <ArmedButton disabled={pending}>Start the tournament</ArmedButton>
           <p className="mt-2 text-center text-meta text-text-2">Closes sign-ups and opens the live board.</p>
         </form>
       ) : null}
@@ -218,7 +220,7 @@ function Schedule({ slug, h, reloadHub }: { slug: string; h: Hub; reloadHub: () 
           {all.length === 0 ? (
             <form onSubmit={makeSchedule} className="flex flex-col gap-2">
               <input type="hidden" name="slug" value={slug} />
-              <button className={PRIMARY_LINK} disabled={h.teamsMade < 2}>
+              <button className={PRIMARY_LINK} disabled={h.teamsMade < 2 || pending}>
                 Make the schedule
               </button>
               <p className="text-center text-meta text-text-2">
@@ -296,4 +298,24 @@ function slotWords(m: Pick<Match, 'roundName' | 'seq'>, side: 'A' | 'B', semis: 
     return side === 'A' ? '1st in table' : '2nd in table'
   }
   return 'To be decided'
+}
+
+/**
+ * A button that ignores its first moments on screen. "Start the tournament"
+ * appears exactly where "Make the schedule" was, a re-render after the
+ * schedule is made; the reference went through a redirect, which took long
+ * enough for the second tap of a double-tap to hit nothing. Here it would
+ * start the day. There is no way back from Start, so it earns a beat.
+ */
+function ArmedButton({ children, disabled }: { children: React.ReactNode; disabled?: boolean }) {
+  const [armed, setArmed] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setArmed(true), 700)
+    return () => clearTimeout(t)
+  }, [])
+  return (
+    <button className={PRIMARY_LINK} disabled={disabled || !armed} aria-disabled={!armed || undefined}>
+      {children}
+    </button>
+  )
 }

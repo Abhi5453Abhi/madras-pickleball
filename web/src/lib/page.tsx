@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect } from 'react'
+import { Link } from 'react-router'
 import { markPending } from '@/api/use-rpc'
 import { NetRule, Notice, Wordmark } from '@/components/ui'
 
@@ -105,6 +106,12 @@ export function NotFoundCard({ children }: { children?: React.ReactNode }) {
         {children ??
           'It is probably an older tournament that has since been taken down, or a link that lost a character being passed on.'}
       </p>
+      <Link
+        to="/admin"
+        className="tap-lg flex w-full items-center justify-center rounded-control bg-ink px-5 text-[19px] font-bold text-white"
+      >
+        Back to tournaments
+      </Link>
     </div>
   )
 }

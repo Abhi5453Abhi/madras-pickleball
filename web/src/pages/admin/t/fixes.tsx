@@ -493,7 +493,8 @@ export function DeleteTournament({
     >
       {name} comes off every list and its public page stops working.{' '}
       {players ? `Its ${players} ${players === 1 ? 'player' : 'players'}` : 'Its sign-up link'}
-      {matches ? ` and ${matches} ${matches === 1 ? 'match' : 'matches'}` : ''} go with it.
+      {matches ? ` and ${matches} ${matches === 1 ? 'match' : 'matches'}` : ''}{' '}
+      {matches || (players && players !== 1) ? 'go' : 'goes'} with it.
       {courts.length
         ? ` ${courts.join(', ')} ${courts.length === 1 ? 'comes' : 'come'} free for the day.`
         : ''}

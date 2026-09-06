@@ -41,7 +41,7 @@ function pairLine(m: BoardMatch) {
 
 const CARD = 'overflow-hidden rounded-card border border-line-strong bg-paper shadow-card'
 const HEAD = 'flex items-center gap-2 px-4 pt-3'
-const EYEBROW = 'font-score text-eyebrow text-text-2 uppercase'
+const EYEBROW = 'min-w-0 truncate font-score text-eyebrow text-text-2 uppercase'
 const QUIET_BUTTON =
   'tap flex items-center justify-center rounded-control border border-line-key bg-paper px-4 text-[16px] font-semibold text-text'
 
@@ -428,7 +428,7 @@ function MoreLinks({ tournaments }: { tournaments: VenueTournament[] }) {
               to={`/admin/t/${t.slug}/more`}
               className="tap flex items-center justify-center px-3 text-center text-[16px] font-semibold text-link"
             >
-              {t.categoryName}
+              {t.name}
             </Link>
           </li>
         ))}

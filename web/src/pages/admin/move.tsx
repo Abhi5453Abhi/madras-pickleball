@@ -1,8 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
+import { useState, type FormEvent } from 'react'
+import { Link, useParams } from 'react-router'
 import { useAction, useRpc } from '@/api/use-rpc'
 import { Chevron, CourtSwatch, Notice, Panel, splitTeam } from '@/components/ui'
-import { Loading, LoadError, useTitle } from '@/lib/page'
+import { Loading, LoadError, NotFoundCard, useTitle } from '@/lib/page'
 
 /**
  * From "Move" on any court card. Only this tournament's courts are offered,
@@ -17,19 +17,20 @@ function shortPair(name: string | null) {
 export function MovePage() {
   useTitle('Move this match · Madras Pickleball')
   const { matchId = '' } = useParams()
-  const navigate = useNavigate()
   const loaded = useRpc('board.moveOptions', { matchId })
   const { run } = useAction()
   const [err, setErr] = useState<string | null>(null)
 
+  if (loaded.state === 'loading') return <Loading />
   // A match that is not on a court has nothing to move; the board says where
   // it is.
-  const missing = loaded.state === 'missing'
-  useEffect(() => {
-    if (missing) navigate('/admin/live', { replace: true })
-  }, [missing, navigate])
-
-  if (loaded.state === 'loading' || missing) return <Loading />
+  if (loaded.state === 'missing') {
+    return (
+      <NotFoundCard>
+        That match is not on a court any more — the live board shows where it is now.
+      </NotFoundCard>
+    )
+  }
   if (loaded.state !== 'ready') return <LoadError error={loaded.error} retry={() => void loaded.reload(false)} />
 
   const opts = loaded.data
