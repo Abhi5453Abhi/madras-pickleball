@@ -32,6 +32,7 @@ production. Delete that folder to start clean.
 Other commands:
 
 ```bash
+npm run smoke:setup    # once: installs Playwright + a headless Chromium
 npm run smoke          # end-to-end check driving a real browser
 npm run test           # unit tests for the draw engine and scoring rules
 npm run typecheck

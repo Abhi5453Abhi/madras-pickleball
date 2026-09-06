@@ -16,7 +16,8 @@
     "db:reset-lockouts": "tsx scripts/reset-lockouts.ts",
     "smoke": "tsx scripts/reset-lockouts.ts && node scripts/smoke.mjs",
     "setup": "tsx scripts/setup.ts",
-    "predev": "tsx scripts/setup.ts"
+    "predev": "tsx scripts/setup.ts",
+    "smoke:setup": "npm i -D playwright && npx playwright install chromium"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
@@ -33,15 +34,13 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/pg": "^8.23.1",
+    "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",
     "eslint-config-next": "16.3.4",
-    "playwright": "^1.63.0",
     "tailwindcss": "^4",
     "tsx": "^4.23.13",
     "typescript": "^5",

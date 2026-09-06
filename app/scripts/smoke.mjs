@@ -3,12 +3,21 @@
  *   npm run dev            # in one shell
  *   node scripts/smoke.mjs # in another
  */
-import { chromium } from 'playwright'
+let chromium
+try {
+  ;({ chromium } = await import('playwright'))
+} catch {
+  console.error('Playwright is not installed. Run:  npm run smoke:setup')
+  process.exit(1)
+}
 
 const BASE = process.env.BASE ?? 'http://localhost:3100'
-const EXE = process.env.CHROME ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'
-
-const browser = await chromium.launch({ executablePath: EXE, args: ['--no-sandbox'] })
+// CHROME is only needed where a preinstalled browser must be pointed at explicitly.
+const EXE = process.env.CHROME
+const browser = await chromium.launch({
+  ...(EXE ? { executablePath: EXE } : {}),
+  args: ['--no-sandbox'],
+})
 const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } })
 const page = await ctx.newPage()
 
