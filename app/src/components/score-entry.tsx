@@ -438,6 +438,15 @@ export function ScoreEntry(props: ScoreEntryProps) {
       gameNo,
       scoreA: draft.winner === 'A' ? draft.winnerScore : loserScore,
       scoreB: draft.winner === 'B' ? draft.winnerScore : loserScore,
+      // A score the rules engine does not recognise, kept anyway: the pair
+      // agreed to stop there. That is what a capped game IS, so it is recorded
+      // as one — the leader wins it, the points count, and it sits out of point
+      // difference because it stopped early through nobody's doing. Without
+      // this, "Keep 11-10" produced a game that counted for neither side, the
+      // match could never complete, and the server refused every submit
+      // forever — so the escape hatch the spec calls "nothing is unrecordable"
+      // recorded nothing at all.
+      ...(force ? { timeCapped: true } : {}),
     }
     setTouched(true)
     setFinished([...finished, g])
@@ -486,11 +495,14 @@ export function ScoreEntry(props: ScoreEntryProps) {
       }
     }
     if (special?.kind === 'retired' && special.side) {
-      const partA = Number(stoppedAt.a)
-      const partB = Number(stoppedAt.b)
+      const partA = Number(stoppedAt.a || 0)
+      const partB = Number(stoppedAt.b || 0)
+      // One box filled and the other blank means the other side had none —
+      // exactly the case a scorer skips. Treating that as "no partial game"
+      // deleted the points the retiring pair had actually scored.
+      const anyTyped = stoppedAt.a !== '' || stoppedAt.b !== ''
       const hasPartial =
-        stoppedAt.a !== '' &&
-        stoppedAt.b !== '' &&
+        anyTyped &&
         Number.isFinite(partA) &&
         Number.isFinite(partB) &&
         partA >= 0 &&
@@ -1051,8 +1063,13 @@ export function ScoreEntry(props: ScoreEntryProps) {
           >
             <p className="text-section text-text">What happened instead?</p>
             <div className="mt-3 flex flex-col gap-3">
+              {/* Only before a ball is struck. Once a game is in, the payload
+                  sends a generated 11-0 and silently drops the game still
+                  showing on screen — and those points are this venue's headline
+                  tiebreak. After that it is a retirement, which keeps them. */}
               <button
                 type="button"
+                hidden={finished.length > 0}
                 onClick={() => {
                   setTouched(true)
                   setSpecial({ kind: 'walkover', side: null })

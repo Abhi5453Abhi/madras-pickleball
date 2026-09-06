@@ -3,7 +3,9 @@ import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
 import { db, transact } from '@/db'
 import {
   categories,
+  courts,
   games,
+  groups,
   matchSlots,
   matches,
   players,
@@ -33,6 +35,8 @@ export type WithdrawEffect = {
   played: number
   /** Matches not yet played, which become walkovers to the other side. */
   toWalkover: number
+  /** Matches they were pencilled into that simply lose their name again. */
+  vacates: number
   /** Downstream matches this cannot touch because they have started. */
   blocked: Array<{ id: string; roundName: string | null }>
   teamName: string
@@ -65,6 +69,8 @@ export async function withdrawalEffect(teamId: string): Promise<WithdrawEffect |
       resultState: matches.resultState,
       roundName: matches.roundName,
       stage: matches.stage,
+      teamAId: matches.teamAId,
+      teamBId: matches.teamBId,
     })
     .from(matches)
     .where(
@@ -82,9 +88,17 @@ export async function withdrawalEffect(teamId: string): Promise<WithdrawEffect |
     .filter((m) => m.status === 'live')
     .map((m) => ({ id: m.id, roundName: m.roundName }))
 
+  // A match still waiting on another result has nobody to give a walkover to —
+  // the pair just comes off the slot. Counting it as a walkover made the
+  // confirm promise something that would not happen.
+  const openSlot = remaining.filter(
+    (m) => m.status !== 'live' && !(m.teamAId && m.teamBId),
+  ).length
+
   return {
     played,
-    toWalkover: remaining.length - blocked.length,
+    toWalkover: remaining.length - blocked.length - openSlot,
+    vacates: openSlot,
     blocked,
     teamName: team.name,
     categoryName: team.categoryName,
@@ -146,18 +160,22 @@ export async function withdrawTeam(teamId: string) {
 
     for (const m of remaining) {
       const opponentId = m.teamAId === teamId ? m.teamBId : m.teamAId
-      await tx.delete(games).where(eq(games.matchId, m.id))
 
       if (!opponentId) {
-        // Nobody to give it to — the match simply stops existing as a fixture.
+        // A knockout match with one slot still unresolved — a final waiting on
+        // the other semi. Cancelling it was catastrophic: the category ended
+        // with no final and no champion, the other semi's winner was written
+        // into a match marked cancelled, and no screen could undo it. The
+        // withdrawing pair simply comes off the slot and it re-resolves.
+        await tx
+          .update(matchSlots)
+          .set({ resolvedTeamId: null, resolvedAt: null })
+          .where(and(eq(matchSlots.matchId, m.id), eq(matchSlots.resolvedTeamId, teamId)))
         await tx
           .update(matches)
           .set({
-            resultState: 'voided',
-            resultType: 'cancelled',
-            status: 'completed',
-            endedAt: new Date(),
-            courtId: null,
+            ...(m.teamAId === teamId ? { teamAId: null } : { teamBId: null }),
+            status: 'pending',
             version: sql`${matches.version} + 1`,
             updatedAt: new Date(),
           })
@@ -165,6 +183,7 @@ export async function withdrawTeam(teamId: string) {
         continue
       }
 
+      await tx.delete(games).where(eq(games.matchId, m.id))
       const winnerIsA = opponentId === m.teamAId
       const gs = walkoverGames(rules).map((g) =>
         winnerIsA ? g : { ...g, scoreA: g.scoreB, scoreB: g.scoreA },
@@ -201,7 +220,16 @@ export async function withdrawTeam(teamId: string) {
           version: sql`${matches.version} + 1`,
           updatedAt: new Date(),
         })
-        .where(eq(matches.id, m.id))
+        // The state was read before the transaction opened. Re-asserting it in
+        // the WHERE is what stops a score submitted from the court card in
+        // between being silently overwritten by a generated walkover.
+        .where(
+          and(
+            eq(matches.id, m.id),
+            eq(matches.resultState, 'none'),
+            ne(matches.status, 'live'),
+          ),
+        )
     }
   })
 
@@ -213,7 +241,12 @@ export async function withdrawTeam(teamId: string) {
 /** Put a withdrawn pair back. Their walkovers are undone, not left standing. */
 export async function reinstateTeam(teamId: string) {
   const [team] = await db
-    .select({ id: teams.id, categoryId: teams.categoryId, status: teams.status })
+    .select({
+      id: teams.id,
+      categoryId: teams.categoryId,
+      status: teams.status,
+      withdrawnAt: teams.withdrawnAt,
+    })
     .from(teams)
     .where(eq(teams.id, teamId))
     .limit(1)
@@ -221,6 +254,7 @@ export async function reinstateTeam(teamId: string) {
   if (team.status !== 'withdrawn') {
     return { ok: false as const, error: 'They are not marked as withdrawn.' }
   }
+  const withdrawnAt = team.withdrawnAt
 
   const [category] = await db
     .select({ tournamentId: categories.tournamentId })
@@ -228,19 +262,24 @@ export async function reinstateTeam(teamId: string) {
     .where(eq(categories.id, team.categoryId))
     .limit(1)
 
-  // Only the walkovers this withdrawal created come back — a match they
-  // genuinely failed to turn up for earlier is a different fact.
-  const created = await db
-    .select({ id: matches.id })
-    .from(matches)
-    .where(
-      and(
-        eq(matches.categoryId, team.categoryId),
-        eq(matches.resultType, 'walkover'),
-        sql`(${matches.teamAId} = ${teamId} or ${matches.teamBId} = ${teamId})`,
-        ne(matches.winnerTeamId, teamId),
-      ),
-    )
+  // Only the walkovers THIS withdrawal created come back. A match they
+  // genuinely failed to turn up for at half nine is a different fact, and
+  // undoing it takes a win off the pair who did turn up.
+  const since = withdrawnAt
+  const created = since
+    ? await db
+        .select({ id: matches.id })
+        .from(matches)
+        .where(
+          and(
+            eq(matches.categoryId, team.categoryId),
+            eq(matches.resultType, 'walkover'),
+            sql`(${matches.teamAId} = ${teamId} or ${matches.teamBId} = ${teamId})`,
+            ne(matches.winnerTeamId, teamId),
+            sql`${matches.updatedAt} >= ${since}`,
+          ),
+        )
+    : []
 
   await transact(async (tx) => {
     await tx
@@ -381,6 +420,51 @@ export async function substitutePlayer(input: {
     }
   }
 
+  // And not onto a court they are already standing on. `livePlayerConflict`
+  // only runs when a match is SENT to a court; a substitution reaches the same
+  // state through a different door, and the unique index guards courts, not
+  // people.
+  const onCourt = await db
+    .select({ courtName: courts.name })
+    .from(matches)
+    .innerJoin(teams, sql`${teams.id} = ${matches.teamAId} or ${teams.id} = ${matches.teamBId}`)
+    .innerJoin(teamPlayers, eq(teamPlayers.teamId, teams.id))
+    .leftJoin(courts, eq(courts.id, matches.courtId))
+    .where(
+      and(
+        eq(matches.tournamentId, category.tournamentId),
+        eq(matches.status, 'live'),
+        eq(teamPlayers.playerId, input.inPlayerId),
+      ),
+    )
+    .limit(1)
+  if (onCourt.length) {
+    return {
+      ok: false as const,
+      error: `${incoming.name} is on ${onCourt[0].courtName ?? 'a court'} right now.`,
+    }
+  }
+
+  // Nor into a pair that is mid-match: renaming a side while it is being
+  // played is how the board and the public page end up disagreeing.
+  const theirsLive = await db
+    .select({ courtName: courts.name })
+    .from(matches)
+    .leftJoin(courts, eq(courts.id, matches.courtId))
+    .where(
+      and(
+        eq(matches.status, 'live'),
+        sql`(${matches.teamAId} = ${input.teamId} or ${matches.teamBId} = ${input.teamId})`,
+      ),
+    )
+    .limit(1)
+  if (theirsLive.length) {
+    return {
+      ok: false as const,
+      error: `That pair is on ${theirsLive[0].courtName ?? 'a court'}. Swap them when the match finishes.`,
+    }
+  }
+
   const roster = await db
     .select({ playerId: teamPlayers.playerId, name: players.name, position: teamPlayers.position })
     .from(teamPlayers)
@@ -497,12 +581,13 @@ export async function voidMatch(matchId: string) {
     return { ok: false as const, error: 'That match is on court. Take it off court first.' }
   }
 
-  const dependents = await db
-    .select({ matchId: matchSlots.matchId, status: matches.status, roundName: matches.roundName })
-    .from(matchSlots)
-    .innerJoin(matches, eq(matches.id, matchSlots.matchId))
-    .where(eq(matchSlots.sourceMatchId, matchId))
-  const started = dependents.filter((d) => d.status === 'live' || d.status === 'completed')
+  // Anything fed by this match — including, for a group match, everything fed
+  // by the TABLE it sits in. A league builds its semis and final from
+  // `group_rank` slots with a null source_match_id, so looking only at
+  // source_match_id let a group match feeding a live semi-final be cancelled
+  // with no refusal at all. This is the same hole `correctionBlockers` was
+  // fixed for; it had not been closed here.
+  const { started } = await dependentsOf(matchId, match.categoryId)
   if (started.length) {
     const names = started.map((d) => d.roundName ?? 'a later match').join(', ')
     return {
@@ -528,10 +613,61 @@ export async function voidMatch(matchId: string) {
         version: sql`${matches.version} + 1`,
         updatedAt: new Date(),
       })
-      .where(eq(matches.id, matchId))
+      // Re-asserted here: the status was read before the transaction opened,
+      // and a match sent to a court in between must not be ended from the desk.
+      .where(and(eq(matches.id, matchId), ne(matches.status, 'live')))
   })
 
   await resolveSlotsFor(match.categoryId)
   await bumpStreamVersion(match.tournamentId)
   return { ok: true as const }
+}
+
+/** Matches downstream of this one that have already started. */
+async function dependentsOf(matchId: string, categoryId: string) {
+  const [self] = await db
+    .select({ stage: matches.stage, groupId: matches.groupId })
+    .from(matches)
+    .where(eq(matches.id, matchId))
+    .limit(1)
+
+  const ids = new Set<string>()
+  for (const d of await db
+    .select({ matchId: matchSlots.matchId })
+    .from(matchSlots)
+    .where(eq(matchSlots.sourceMatchId, matchId))) {
+    ids.add(d.matchId)
+  }
+
+  if (self?.stage === 'group') {
+    const groupIds = self.groupId
+      ? [self.groupId]
+      : (
+          await db
+            .select({ id: groups.id })
+            .from(groups)
+            .where(eq(groups.categoryId, categoryId))
+        ).map((g) => g.id)
+    if (groupIds.length) {
+      for (const d of await db
+        .select({ matchId: matchSlots.matchId })
+        .from(matchSlots)
+        .where(
+          and(
+            eq(matchSlots.sourceType, 'group_rank'),
+            inArray(matchSlots.sourceGroupId, groupIds),
+          ),
+        )) {
+        ids.add(d.matchId)
+      }
+    }
+  }
+  ids.delete(matchId)
+  if (ids.size === 0) return { started: [] as Array<{ roundName: string | null }> }
+
+  const rows = await db
+    .select({ id: matches.id, roundName: matches.roundName, status: matches.status })
+    .from(matches)
+    .where(inArray(matches.id, [...ids]))
+  return { started: rows.filter((r) => r.status === 'live' || r.status === 'completed') }
 }

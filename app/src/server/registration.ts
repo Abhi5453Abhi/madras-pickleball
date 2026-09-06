@@ -370,8 +370,19 @@ export async function approveRegistration(
 
   const wanted = opts?.categoryIds ?? reg.categoryIds
 
-  let playerId = opts?.linkPlayerId ?? null
+  // The caller may propose an existing player to merge into, but only one this
+  // registration actually looks like. A player id from another tournament,
+  // arriving from a stale form, would otherwise be merged in silently.
+  let playerId: string | null = null
   let isNewPlayer = false
+  if (opts?.linkPlayerId) {
+    const [proposed] = await db
+      .select({ id: players.id })
+      .from(players)
+      .where(and(eq(players.id, opts.linkPlayerId), eq(players.nameKey, reg.nameKey)))
+      .limit(1)
+    playerId = proposed?.id ?? null
+  }
   if (!playerId) {
     const [match] = await db
       .select({ id: players.id })

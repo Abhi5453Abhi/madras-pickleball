@@ -451,6 +451,10 @@ export default async function CourtPage(props: PageProps<'/court'>) {
           </p>
         ) : null}
         <CourtEntry
+          /* Without a key, navigating to another match on this court re-renders
+             the same component: the names change and the games entered do not,
+             so a score can be sent against a match it never belonged to. */
+          key={target.id}
           matchId={target.id}
           courtName={null}
           courtColor={ctx.colorKey}

@@ -126,7 +126,7 @@ export async function useSubmission(formData: FormData) {
   const sub = loaded.submissions.find((s) => s.id === submissionId)
   if (!sub) return
 
-  await adminSetResult({
+  const res = await adminSetResult({
     matchId,
     games: sub.games as GameScore[],
     resultType: sub.resultType as 'normal' | 'walkover' | 'retired',
@@ -150,6 +150,15 @@ export async function useSubmission(formData: FormData) {
   })
 
   revalidatePath('/admin', 'layout')
+  // The refusal is the one sentence written so the organiser is not stuck —
+  // "Semi-final has already started off this result. Void it first." Dropping
+  // it left them back on the board with the match still under review and
+  // nothing said about why.
+  if (!res.ok) {
+    redirect(
+      `${back}${back.includes('?') ? '&' : '?'}err=${encodeURIComponent(res.error)}` as never,
+    )
+  }
   redirect(back as never)
 }
 

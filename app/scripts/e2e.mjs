@@ -119,6 +119,13 @@ ok('a code per court', codes.length === 4, `got ${codes.length}`)
 console.log('\n5. score from the court QR, with no account')
 const anon = await browser.newContext({ viewport: { width: 390, height: 844 } })
 const court = await anon.newPage()
+// A thrown server action shows as a 500 on the wire and a friendly-looking
+// message on screen. Watch the wire.
+const errors = []
+court.on('pageerror', (e) => errors.push(`pageerror: ${e.message.slice(0, 120)}`))
+court.on('response', (r) => {
+  if (r.status() >= 500) errors.push(`${r.status()} ${r.url().slice(0, 80)}`)
+})
 // Find which code belongs to the live court by trying each.
 let scored = false
 // The winning score is pre-selected once a side is picked, so the middle tap
@@ -180,9 +187,16 @@ if (scored) {
   const after = await court.innerText('body')
   ok(
     'the score lands and asks the other pair',
-    /Hand the phone|That’s right|That's right|already in/i.test(after),
+    /Hand the phone|That’s right|That's right/i.test(after),
     after.slice(0, 400),
   )
+  // Assert the RESULT, not the wording. A server action that throws renders a
+  // plausible-looking screen; the only proof a score was recorded is that the
+  // public page is showing it.
+  await page.goto(`${BASE}/t/${slug}`, { waitUntil: 'networkidle' })
+  const published = await page.evaluate(() => document.body.textContent ?? '')
+  ok('and the score is actually recorded', /11–7|11-7/.test(published), published.slice(0, 400))
+  ok('with no server error on the court screen', errors.length === 0, errors.join(' | '))
 }
 
 console.log('\n6. it reaches the table and the public page')

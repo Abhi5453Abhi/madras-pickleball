@@ -803,7 +803,7 @@ export async function resolveSlotsFor(categoryId: string) {
     db.select({ id: groups.id }).from(groups).where(eq(groups.categoryId, categoryId)),
 
     db
-      .select({ id: teams.id, groupId: teams.groupId })
+      .select({ id: teams.id, groupId: teams.groupId, status: teams.status })
       .from(teams)
       .where(eq(teams.categoryId, categoryId)),
 
@@ -832,12 +832,25 @@ export async function resolveSlotsFor(categoryId: string) {
 
   const rankedByGroup = new Map<string, string[]>()
   for (const group of groupRows) {
-    const groupTeams = teamRows.filter((t) => t.groupId === group.id).map((t) => t.id)
+    // A pair who have gone home do not take a place in the knockout. Their
+    // played matches still stand in the table everyone reads — that is the
+    // public page's business — but the draw is not built on them.
+    const groupTeams = teamRows
+      .filter((t) => t.groupId === group.id && t.status === 'active')
+      .map((t) => t.id)
     const groupMatches = catMatches.filter(
       (m) => m.stage === 'group' && m.groupId === group.id,
     )
+    // A voided match is settled — it counts for nobody, which is a result of a
+    // kind. Requiring `final` or `reported` meant cancelling one group match
+    // froze that group's ranking for good: no slot ever resolved again, while
+    // the public table happily recomputed without it. The two then disagreed
+    // permanently, and the knockout stage silently stalled.
     const allIn = groupMatches.every(
-      (m) => m.resultState === 'final' || m.resultState === 'reported',
+      (m) =>
+        m.resultState === 'final' ||
+        m.resultState === 'reported' ||
+        m.resultState === 'voided',
     )
     if (!allIn || groupTeams.length === 0) continue
 

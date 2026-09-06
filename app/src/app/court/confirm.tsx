@@ -1,7 +1,7 @@
 'use client'
 
 import { useActionState } from 'react'
-import { courtAgree, courtDispute, NO_ERROR } from './actions'
+import { courtAgree, courtDispute, type ConfirmState } from './actions'
 
 /**
  * The two taps the whole integrity story rests on.
@@ -26,8 +26,13 @@ export function ConfirmButtons({
   agreeingTeamId: string
   agreeingName: string | null
 }) {
-  const [agreeState, agree, agreeing] = useActionState(courtAgree, NO_ERROR)
-  const [disputeState, dispute, disputing] = useActionState(courtDispute, NO_ERROR)
+  // The initial state is built here, not imported. A 'use server' module may
+  // export nothing but async functions — a single exported constant makes the
+  // whole module throw at evaluation, which took every court action down with
+  // it and turned every score submitted from the net post into a 500.
+  const empty: ConfirmState = { error: null }
+  const [agreeState, agree, agreeing] = useActionState(courtAgree, empty)
+  const [disputeState, dispute, disputing] = useActionState(courtDispute, empty)
   const problem = agreeState.error ?? disputeState.error
 
   return (

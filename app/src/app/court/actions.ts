@@ -159,7 +159,6 @@ async function scopedMatch(matchId: string) {
  * swallowing the failure the way a void action did.
  */
 export type ConfirmState = { error: string | null }
-export const NO_ERROR: ConfirmState = { error: null }
 
 const GONE: ConfirmState = {
   error:
@@ -186,7 +185,7 @@ export async function courtAgree(_prev: ConfirmState, formData: FormData): Promi
   // tapping at once, or the ten minutes running out mid-tap. Saying so would
   // contradict the page that is about to render, which will show the result as
   // in. The re-rendered state is the answer.
-  return NO_ERROR
+  return { error: null }
 }
 
 export async function courtDispute(_prev: ConfirmState, formData: FormData): Promise<ConfirmState> {
@@ -196,5 +195,5 @@ export async function courtDispute(_prev: ConfirmState, formData: FormData): Pro
 
   const res = await raiseDispute(matchId, 'the other side disagreed at the net')
   revalidatePath('/court')
-  return res.ok ? NO_ERROR : { error: res.error }
+  return res.ok ? { error: null } : { error: res.error }
 }

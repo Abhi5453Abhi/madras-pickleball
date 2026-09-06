@@ -7,6 +7,7 @@ import { recordAudit } from '@/lib/audit'
 import { endOfVenueDay } from '@/lib/time'
 import {
   approveRegistration,
+  listPendingRegistrations,
   issueRegistrationLink,
   pairApproved,
   rejectRegistration,
@@ -61,6 +62,13 @@ export async function approve(formData: FormData) {
   const id = String(formData.get('id'))
   const linkPlayerId = String(formData.get('linkPlayerId') ?? '') || null
 
+  // The id comes off a form. Like every other action here, it has to resolve
+  // back to the tournament named in the URL.
+  const t = await getTournamentBySlug(slug)
+  if (!t) return
+  const rows = await listPendingRegistrations(t.id)
+  if (!rows.some((r) => r.id === id)) return
+
   const res = await approveRegistration(id, { linkPlayerId })
   if (res.ok) {
     await recordAudit({
@@ -74,12 +82,21 @@ export async function approve(formData: FormData) {
   }
   revalidatePath(`/admin/t/${slug}/registrations`)
   revalidatePath(`/admin/t/${slug}`)
+  if (!res.ok) {
+    redirect(`/admin/t/${slug}/registrations?err=${encodeURIComponent(res.error)}` as never)
+  }
 }
 
 export async function reject(formData: FormData) {
   const user = await requireUser('admin')
   const slug = String(formData.get('slug'))
   const id = String(formData.get('id'))
+
+  const t = await getTournamentBySlug(slug)
+  if (!t) return
+  const rows = await listPendingRegistrations(t.id)
+  if (!rows.some((r) => r.id === id)) return
+
   await rejectRegistration(id, 'not going ahead')
   await recordAudit({
     userId: user.id,
