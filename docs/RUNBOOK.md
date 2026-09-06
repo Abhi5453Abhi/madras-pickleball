@@ -16,7 +16,8 @@ six months from now — that is the single most common way a project like this d
 
 ## Running it on a laptop
 
-Node 20+ is the only requirement. **No database to install.**
+**Node 22 or 24** (24 LTS preferred) and nothing else. **No database to install.**
+Odd-numbered releases such as Node 23 are not supported by several dependencies.
 
 ```bash
 cd app
@@ -40,7 +41,14 @@ npm run db:generate    # after editing src/db/schema.ts
 ```
 
 **Against a real Postgres** (staging or production) set `DATABASE_URL` and `DIRECT_URL` in
-`app/.env` and the app switches automatically. On Neon, `DATABASE_URL` must be the **pooled** host
+`app/.env` and the app switches automatically. If `DATABASE_URL` is already exported in your shell
+for some *other* project, it will hijack this app — force the embedded one with:
+
+```bash
+MPB_DB=embedded npm run dev
+```
+
+Every run prints which database it is using, so this is visible rather than mysterious. On Neon, `DATABASE_URL` must be the **pooled** host
 (`...-pooler...`) with `connection_limit=1`, and `DIRECT_URL` the direct host for migrations.
 Get this wrong and connections exhaust under exactly the load that matters.
 

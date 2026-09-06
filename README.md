@@ -17,8 +17,11 @@ npm install
 npm run dev     # http://localhost:3000
 ```
 
-Node 20+ and nothing else — it brings up its own embedded Postgres on first run and seeds a venue,
+Node 22 or 24 and nothing else — it brings up its own embedded Postgres on first run and seeds a venue,
 four courts and three accounts. Sign in as `saurabh` / `change-me-now`.
+
+If you already have `DATABASE_URL` exported in your shell for another project, it takes precedence
+and this app will try to use that server. Force its own database with `MPB_DB=embedded npm run dev`.
 
 ## The one-sentence version
 

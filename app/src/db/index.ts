@@ -6,6 +6,10 @@ import * as schema from './schema'
 /**
  * Two ways to run.
  *
+ * MPB_DB=embedded forces the embedded database even when DATABASE_URL is set,
+ * which matters because DATABASE_URL is often exported globally in a shell for
+ * some other project and would otherwise silently hijack this app.
+ *
  * With DATABASE_URL set — a real Postgres (Neon in production). One connection
  * per serverless instance: on Neon this must be the POOLED host with a
  * connection limit of 1, or connections exhaust under exactly the load that
@@ -24,8 +28,28 @@ const req = createRequire(import.meta.url)
 
 type DbHandle = ReturnType<typeof drizzlePg<typeof schema>> | ReturnType<typeof drizzlePglite<typeof schema>>
 
-function build(): DbHandle {
+/** Which database this process is talking to, and why. */
+export function dbTarget(): { kind: 'postgres'; url: string } | { kind: 'embedded' } {
+  if (process.env.MPB_DB === 'embedded') return { kind: 'embedded' }
   const url = process.env.DATABASE_URL
+  return url ? { kind: 'postgres', url } : { kind: 'embedded' }
+}
+
+/** Host and database name only — never the password. */
+export function describeTarget(): string {
+  const t = dbTarget()
+  if (t.kind === 'embedded') return 'embedded database (app/.pglite)'
+  try {
+    const u = new URL(t.url)
+    return `postgres at ${u.host}${u.pathname}`
+  } catch {
+    return 'postgres (DATABASE_URL)'
+  }
+}
+
+function build(): DbHandle {
+  const target = dbTarget()
+  const url = target.kind === 'postgres' ? target.url : undefined
 
   if (url) {
     const postgres = req('postgres') as typeof import('postgres')
@@ -45,6 +69,6 @@ function build(): DbHandle {
 export const db: DbHandle = globalForDb.db ?? build()
 if (process.env.NODE_ENV !== 'production') globalForDb.db = db
 
-export const isEmbeddedDb = !process.env.DATABASE_URL
+export const isEmbeddedDb = dbTarget().kind === 'embedded'
 export { schema }
 export type Db = typeof db
