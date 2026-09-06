@@ -1,0 +1,67 @@
+{
+  "discipline": "doubles",
+  "pairs": [
+    {
+      "teamId": "tm_x1",
+      "name": "Priya Raman / Ganesh Iyer",
+      "players": [
+        {
+          "id": "ply_m1",
+          "name": "Priya Raman"
+        },
+        {
+          "id": "ply_m2",
+          "name": "Ganesh Iyer"
+        }
+      ],
+      "how": "mutual"
+    },
+    {
+      "teamId": "tm_x2",
+      "name": "Meera Nair / Suresh Babu",
+      "players": [
+        {
+          "id": "ply_m3",
+          "name": "Meera Nair"
+        },
+        {
+          "id": "ply_m4",
+          "name": "Suresh Babu"
+        }
+      ],
+      "how": "organiser"
+    }
+  ],
+  "unpaired": [
+    {
+      "id": "ply_m5",
+      "name": "Anita Rao",
+      "wishText": "Vikram Sethu",
+      "wishPlayerName": "Vikram Sethu",
+      "note": null
+    },
+    {
+      "id": "ply_m6",
+      "name": "Vikram Sethu",
+      "wishText": "Anita Rao",
+      "wishPlayerName": "Anita Rao",
+      "note": "not mutual"
+    },
+    {
+      "id": "ply_m7",
+      "name": "Lakshmi Iyer",
+      "wishText": "Sundar",
+      "wishPlayerName": null,
+      "note": null
+    },
+    {
+      "id": "ply_m8",
+      "name": "Rahul Menon",
+      "wishText": null,
+      "wishPlayerName": null,
+      "note": null
+    }
+  ],
+  "needed": 4,
+  "locked": false
+}

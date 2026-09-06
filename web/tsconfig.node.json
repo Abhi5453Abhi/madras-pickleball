@@ -12,6 +12,8 @@
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,
+    /* The mock server's fixtures are JSON files, checked against the contract. */
+    "resolveJsonModule": true,
 
     /* Linting */
     "noUnusedLocals": true,
@@ -19,5 +21,5 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["vite.config.ts"]
+  "include": ["vite.config.ts", "mock"]
 }

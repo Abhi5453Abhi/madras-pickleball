@@ -1,0 +1,98 @@
+{
+  "discipline": "doubles",
+  "pairs": [
+    {
+      "teamId": "tm_1",
+      "name": "Karthik Subramanian / Sathish Kumar",
+      "players": [
+        {
+          "id": "ply_1",
+          "name": "Karthik Subramanian"
+        },
+        {
+          "id": "ply_2",
+          "name": "Sathish Kumar"
+        }
+      ],
+      "how": "mutual"
+    },
+    {
+      "teamId": "tm_2",
+      "name": "Hari Venkatesh / Naveen Krishnan",
+      "players": [
+        {
+          "id": "ply_3",
+          "name": "Hari Venkatesh"
+        },
+        {
+          "id": "ply_4",
+          "name": "Naveen Krishnan"
+        }
+      ],
+      "how": "mutual"
+    },
+    {
+      "teamId": "tm_3",
+      "name": "Arun Prakash / Ganesh Iyer",
+      "players": [
+        {
+          "id": "ply_5",
+          "name": "Arun Prakash"
+        },
+        {
+          "id": "ply_6",
+          "name": "Ganesh Iyer"
+        }
+      ],
+      "how": "organiser"
+    },
+    {
+      "teamId": "tm_4",
+      "name": "Deepak Raj / Bala Murugan",
+      "players": [
+        {
+          "id": "ply_7",
+          "name": "Deepak Raj"
+        },
+        {
+          "id": "ply_8",
+          "name": "Bala Murugan"
+        }
+      ],
+      "how": "organiser"
+    },
+    {
+      "teamId": "tm_5",
+      "name": "Suresh Babu / Manoj Pillai",
+      "players": [
+        {
+          "id": "ply_9",
+          "name": "Suresh Babu"
+        },
+        {
+          "id": "ply_10",
+          "name": "Manoj Pillai"
+        }
+      ],
+      "how": "organiser"
+    },
+    {
+      "teamId": "tm_6",
+      "name": "Ravi Shankar / Meera Nair",
+      "players": [
+        {
+          "id": "ply_11",
+          "name": "Ravi Shankar"
+        },
+        {
+          "id": "ply_12",
+          "name": "Meera Nair"
+        }
+      ],
+      "how": "organiser"
+    }
+  ],
+  "unpaired": [],
+  "needed": 6,
+  "locked": true
+}

@@ -1,0 +1,86 @@
+[
+  {
+    "teamId": "tm_1",
+    "teamName": "Karthik Subramanian / Sathish Kumar",
+    "members": [
+      {
+        "id": "ply_1",
+        "name": "Karthik Subramanian"
+      },
+      {
+        "id": "ply_2",
+        "name": "Sathish Kumar"
+      }
+    ]
+  },
+  {
+    "teamId": "tm_2",
+    "teamName": "Hari Venkatesh / Naveen Krishnan",
+    "members": [
+      {
+        "id": "ply_3",
+        "name": "Hari Venkatesh"
+      },
+      {
+        "id": "ply_4",
+        "name": "Naveen Krishnan"
+      }
+    ]
+  },
+  {
+    "teamId": "tm_3",
+    "teamName": "Arun Prakash / Ganesh Iyer",
+    "members": [
+      {
+        "id": "ply_5",
+        "name": "Arun Prakash"
+      },
+      {
+        "id": "ply_6",
+        "name": "Ganesh Iyer"
+      }
+    ]
+  },
+  {
+    "teamId": "tm_4",
+    "teamName": "Deepak Raj / Bala Murugan",
+    "members": [
+      {
+        "id": "ply_7",
+        "name": "Deepak Raj"
+      },
+      {
+        "id": "ply_8",
+        "name": "Bala Murugan"
+      }
+    ]
+  },
+  {
+    "teamId": "tm_5",
+    "teamName": "Suresh Babu / Manoj Pillai",
+    "members": [
+      {
+        "id": "ply_9",
+        "name": "Suresh Babu"
+      },
+      {
+        "id": "ply_10",
+        "name": "Manoj Pillai"
+      }
+    ]
+  },
+  {
+    "teamId": "tm_6",
+    "teamName": "Ravi Shankar / Meera Nair",
+    "members": [
+      {
+        "id": "ply_11",
+        "name": "Ravi Shankar"
+      },
+      {
+        "id": "ply_12",
+        "name": "Meera Nair"
+      }
+    ]
+  }
+]

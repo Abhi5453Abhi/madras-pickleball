@@ -1,0 +1,17 @@
+{
+  "id": "tr_mixed",
+  "slug": "mixed-doubles-september",
+  "name": "Mixed Doubles — September",
+  "day": "2026-09-06",
+  "status": "setup",
+  "gender": "mixed",
+  "discipline": "doubles",
+  "finalsStage": "final_only",
+  "advancePerGroup": 0,
+  "bestOf": 3,
+  "pointsToWin": 11,
+  "registrationClosedAt": null,
+  "pausedAt": null,
+  "pauseNote": null,
+  "updatedAt": "2026-09-06T06:12:00.000Z"
+}

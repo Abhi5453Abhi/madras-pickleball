@@ -1,0 +1,61 @@
+[
+  {
+    "playerId": "ply_m1",
+    "name": "Priya Raman",
+    "source": "link",
+    "partner": "Ganesh Iyer",
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_m2",
+    "name": "Ganesh Iyer",
+    "source": "link",
+    "partner": "Priya Raman",
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_m3",
+    "name": "Meera Nair",
+    "source": "link",
+    "partner": null,
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_m4",
+    "name": "Suresh Babu",
+    "source": "hand",
+    "partner": null,
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_m5",
+    "name": "Anita Rao",
+    "source": "link",
+    "partner": "Vikram Sethu",
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_m6",
+    "name": "Vikram Sethu",
+    "source": "link",
+    "partner": "Anita Rao",
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_m7",
+    "name": "Lakshmi Iyer",
+    "source": "link",
+    "partner": "Sundar",
+    "duplicateOf": null
+  },
+  {
+    "playerId": "ply_m8",
+    "name": "Rahul Menon",
+    "source": "link",
+    "partner": null,
+    "duplicateOf": {
+      "playerId": "ply_m3",
+      "name": "Meera Nair"
+    }
+  }
+]

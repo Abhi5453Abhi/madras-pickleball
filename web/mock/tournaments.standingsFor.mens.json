@@ -1,0 +1,66 @@
+{
+  "rows": [
+    {
+      "teamId": "tm_1",
+      "won": 3,
+      "pointsFor": 64,
+      "reason": null
+    },
+    {
+      "teamId": "tm_4",
+      "won": 2,
+      "pointsFor": 61,
+      "reason": "2nd on head-to-head vs Suresh Babu / Manoj Pillai"
+    },
+    {
+      "teamId": "tm_5",
+      "won": 2,
+      "pointsFor": 61,
+      "reason": "3rd on head-to-head vs Deepak Raj / Bala Murugan"
+    },
+    {
+      "teamId": "tm_2",
+      "won": 2,
+      "pointsFor": 55,
+      "reason": null
+    },
+    {
+      "teamId": "tm_3",
+      "won": 1,
+      "pointsFor": 48,
+      "reason": null
+    },
+    {
+      "teamId": "tm_6",
+      "won": 0,
+      "pointsFor": 33,
+      "reason": "drawn on everything so far"
+    }
+  ],
+  "teams": [
+    {
+      "id": "tm_1",
+      "status": "active"
+    },
+    {
+      "id": "tm_2",
+      "status": "active"
+    },
+    {
+      "id": "tm_3",
+      "status": "active"
+    },
+    {
+      "id": "tm_4",
+      "status": "active"
+    },
+    {
+      "id": "tm_5",
+      "status": "active"
+    },
+    {
+      "id": "tm_6",
+      "status": "active"
+    }
+  ]
+}

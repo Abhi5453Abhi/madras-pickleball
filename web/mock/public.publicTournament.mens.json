@@ -1,0 +1,573 @@
+{
+  "tournament": {
+    "name": "Men's Doubles — September",
+    "day": "2026-09-06",
+    "status": "live",
+    "pauseNote": null,
+    "registrationClosedAt": "2026-09-06T02:55:00.000Z",
+    "updatedAt": "2026-09-06T06:12:00.000Z"
+  },
+  "discipline": "doubles",
+  "finalsStage": "final_only",
+  "cut": 2,
+  "courts": [
+    {
+      "id": "crt_1",
+      "name": "Court 1"
+    },
+    {
+      "id": "crt_2",
+      "name": "Court 2"
+    }
+  ],
+  "players": [
+    "Karthik Subramanian",
+    "Sathish Kumar",
+    "Hari Venkatesh",
+    "Naveen Krishnan",
+    "Arun Prakash",
+    "Ganesh Iyer",
+    "Deepak Raj",
+    "Bala Murugan",
+    "Suresh Babu",
+    "Manoj Pillai",
+    "Ravi Shankar",
+    "Meera Nair",
+    "Vignesh Kumar"
+  ],
+  "matches": [
+    {
+      "id": "mt_1",
+      "stage": "group",
+      "roundName": "Round 1",
+      "teamAId": "tm_1",
+      "teamBId": "tm_6",
+      "nameA": "Karthik Subramanian / Sathish Kumar",
+      "nameB": "Ravi Shankar / Meera Nair",
+      "playersA": [
+        "Karthik Subramanian",
+        "Sathish Kumar"
+      ],
+      "playersB": [
+        "Ravi Shankar",
+        "Meera Nair"
+      ],
+      "courtId": "crt_1",
+      "courtName": "Court 1",
+      "courtColor": "blue",
+      "status": "completed",
+      "state": "final",
+      "gamesWonA": 2,
+      "gamesWonB": 0,
+      "winnerSide": "A",
+      "scoreLine": "11–7, 11–9",
+      "startedAt": "2026-09-06T03:00:00.000Z",
+      "endedAt": "2026-09-06T03:00:00.000Z",
+      "resultType": "normal"
+    },
+    {
+      "id": "mt_2",
+      "stage": "group",
+      "roundName": "Round 1",
+      "teamAId": "tm_2",
+      "teamBId": "tm_5",
+      "nameA": "Hari Venkatesh / Naveen Krishnan",
+      "nameB": "Suresh Babu / Manoj Pillai",
+      "playersA": [
+        "Hari Venkatesh",
+        "Naveen Krishnan"
+      ],
+      "playersB": [
+        "Suresh Babu",
+        "Manoj Pillai"
+      ],
+      "courtId": "crt_2",
+      "courtName": "Court 2",
+      "courtColor": "orange",
+      "status": "completed",
+      "state": "final",
+      "gamesWonA": 2,
+      "gamesWonB": 1,
+      "winnerSide": "A",
+      "scoreLine": "11–5, 9–11, 11–8",
+      "startedAt": "2026-09-06T03:30:00.000Z",
+      "endedAt": "2026-09-06T03:30:00.000Z",
+      "resultType": "normal"
+    },
+    {
+      "id": "mt_3",
+      "stage": "group",
+      "roundName": "Round 1",
+      "teamAId": "tm_3",
+      "teamBId": "tm_4",
+      "nameA": "Arun Prakash / Ganesh Iyer",
+      "nameB": "Deepak Raj / Bala Murugan",
+      "playersA": [
+        "Arun Prakash",
+        "Ganesh Iyer"
+      ],
+      "playersB": [
+        "Deepak Raj",
+        "Bala Murugan"
+      ],
+      "courtId": "crt_1",
+      "courtName": "Court 1",
+      "courtColor": "blue",
+      "status": "completed",
+      "state": "final",
+      "gamesWonA": 2,
+      "gamesWonB": 0,
+      "winnerSide": "A",
+      "scoreLine": "11–9, 11–6",
+      "startedAt": "2026-09-06T04:00:00.000Z",
+      "endedAt": "2026-09-06T04:00:00.000Z",
+      "resultType": "normal"
+    },
+    {
+      "id": "mt_4",
+      "stage": "group",
+      "roundName": "Round 2",
+      "teamAId": "tm_1",
+      "teamBId": "tm_5",
+      "nameA": "Karthik Subramanian / Sathish Kumar",
+      "nameB": "Suresh Babu / Manoj Pillai",
+      "playersA": [
+        "Karthik Subramanian",
+        "Sathish Kumar"
+      ],
+      "playersB": [
+        "Suresh Babu",
+        "Manoj Pillai"
+      ],
+      "courtId": "crt_2",
+      "courtName": "Court 2",
+      "courtColor": "orange",
+      "status": "completed",
+      "state": "final",
+      "gamesWonA": 2,
+      "gamesWonB": 1,
+      "winnerSide": "A",
+      "scoreLine": "8–11, 11–7, 11–9",
+      "startedAt": "2026-09-06T04:30:00.000Z",
+      "endedAt": "2026-09-06T04:30:00.000Z",
+      "resultType": "normal"
+    },
+    {
+      "id": "mt_5",
+      "stage": "group",
+      "roundName": "Round 2",
+      "teamAId": "tm_6",
+      "teamBId": "tm_4",
+      "nameA": "Ravi Shankar / Meera Nair",
+      "nameB": "Deepak Raj / Bala Murugan",
+      "playersA": [
+        "Ravi Shankar",
+        "Meera Nair"
+      ],
+      "playersB": [
+        "Deepak Raj",
+        "Bala Murugan"
+      ],
+      "courtId": "crt_1",
+      "courtName": "Court 1",
+      "courtColor": "blue",
+      "status": "completed",
+      "state": "final",
+      "gamesWonA": 2,
+      "gamesWonB": 0,
+      "winnerSide": "A",
+      "scoreLine": "11–4, 11–8",
+      "startedAt": "2026-09-06T05:00:00.000Z",
+      "endedAt": "2026-09-06T05:00:00.000Z",
+      "resultType": "normal"
+    },
+    {
+      "id": "mt_6",
+      "stage": "group",
+      "roundName": "Round 2",
+      "teamAId": "tm_2",
+      "teamBId": "tm_3",
+      "nameA": "Hari Venkatesh / Naveen Krishnan",
+      "nameB": "Arun Prakash / Ganesh Iyer",
+      "playersA": [
+        "Hari Venkatesh",
+        "Naveen Krishnan"
+      ],
+      "playersB": [
+        "Arun Prakash",
+        "Ganesh Iyer"
+      ],
+      "courtId": "crt_2",
+      "courtName": "Court 2",
+      "courtColor": "orange",
+      "status": "completed",
+      "state": "final",
+      "gamesWonA": 2,
+      "gamesWonB": 0,
+      "winnerSide": "A",
+      "scoreLine": null,
+      "startedAt": "2026-09-06T05:30:00.000Z",
+      "endedAt": "2026-09-06T05:30:00.000Z",
+      "resultType": "walkover"
+    },
+    {
+      "id": "mt_7",
+      "stage": "group",
+      "roundName": "Round 3",
+      "teamAId": "tm_1",
+      "teamBId": "tm_4",
+      "nameA": "Karthik Subramanian / Sathish Kumar",
+      "nameB": "Deepak Raj / Bala Murugan",
+      "playersA": [
+        "Karthik Subramanian",
+        "Sathish Kumar"
+      ],
+      "playersB": [
+        "Deepak Raj",
+        "Bala Murugan"
+      ],
+      "courtId": "crt_1",
+      "courtName": "Court 1",
+      "courtColor": "blue",
+      "status": "completed",
+      "state": "final",
+      "gamesWonA": 2,
+      "gamesWonB": 1,
+      "winnerSide": "A",
+      "scoreLine": "11–9, 7–11, 11–7",
+      "startedAt": "2026-09-06T06:00:00.000Z",
+      "endedAt": "2026-09-06T06:00:00.000Z",
+      "resultType": "normal"
+    },
+    {
+      "id": "mt_8",
+      "stage": "group",
+      "roundName": "Round 3",
+      "teamAId": "tm_5",
+      "teamBId": "tm_3",
+      "nameA": "Suresh Babu / Manoj Pillai",
+      "nameB": "Arun Prakash / Ganesh Iyer",
+      "playersA": [
+        "Suresh Babu",
+        "Manoj Pillai"
+      ],
+      "playersB": [
+        "Arun Prakash",
+        "Ganesh Iyer"
+      ],
+      "courtId": "crt_1",
+      "courtName": "Court 1",
+      "courtColor": "blue",
+      "status": "live",
+      "state": "none",
+      "gamesWonA": 0,
+      "gamesWonB": 0,
+      "winnerSide": null,
+      "scoreLine": null,
+      "startedAt": "2026-09-06T05:18:00.000Z",
+      "endedAt": "2026-09-06T05:18:00.000Z",
+      "resultType": "normal"
+    },
+    {
+      "id": "mt_9",
+      "stage": "group",
+      "roundName": "Round 3",
+      "teamAId": "tm_6",
+      "teamBId": "tm_2",
+      "nameA": "Ravi Shankar / Meera Nair",
+      "nameB": "Hari Venkatesh / Naveen Krishnan",
+      "playersA": [
+        "Ravi Shankar",
+        "Meera Nair"
+      ],
+      "playersB": [
+        "Hari Venkatesh",
+        "Naveen Krishnan"
+      ],
+      "courtId": "crt_2",
+      "courtName": "Court 2",
+      "courtColor": "orange",
+      "status": "live",
+      "state": "none",
+      "gamesWonA": 0,
+      "gamesWonB": 0,
+      "winnerSide": null,
+      "scoreLine": null,
+      "startedAt": "2026-09-06T05:15:00.000Z",
+      "endedAt": "2026-09-06T05:15:00.000Z",
+      "resultType": "normal"
+    },
+    {
+      "id": "mt_10",
+      "stage": "group",
+      "roundName": "Round 4",
+      "teamAId": "tm_1",
+      "teamBId": "tm_3",
+      "nameA": "Karthik Subramanian / Sathish Kumar",
+      "nameB": "Arun Prakash / Ganesh Iyer",
+      "playersA": [
+        "Karthik Subramanian",
+        "Sathish Kumar"
+      ],
+      "playersB": [
+        "Arun Prakash",
+        "Ganesh Iyer"
+      ],
+      "courtId": null,
+      "courtName": null,
+      "courtColor": null,
+      "status": "ready",
+      "state": "none",
+      "gamesWonA": 0,
+      "gamesWonB": 0,
+      "winnerSide": null,
+      "scoreLine": null,
+      "startedAt": null,
+      "endedAt": null,
+      "resultType": "normal"
+    },
+    {
+      "id": "mt_11",
+      "stage": "group",
+      "roundName": "Round 4",
+      "teamAId": "tm_4",
+      "teamBId": "tm_2",
+      "nameA": "Deepak Raj / Bala Murugan",
+      "nameB": "Hari Venkatesh / Naveen Krishnan",
+      "playersA": [
+        "Deepak Raj",
+        "Bala Murugan"
+      ],
+      "playersB": [
+        "Hari Venkatesh",
+        "Naveen Krishnan"
+      ],
+      "courtId": null,
+      "courtName": null,
+      "courtColor": null,
+      "status": "ready",
+      "state": "none",
+      "gamesWonA": 0,
+      "gamesWonB": 0,
+      "winnerSide": null,
+      "scoreLine": null,
+      "startedAt": null,
+      "endedAt": null,
+      "resultType": "normal"
+    },
+    {
+      "id": "mt_12",
+      "stage": "group",
+      "roundName": "Round 4",
+      "teamAId": "tm_5",
+      "teamBId": "tm_6",
+      "nameA": "Suresh Babu / Manoj Pillai",
+      "nameB": "Ravi Shankar / Meera Nair",
+      "playersA": [
+        "Suresh Babu",
+        "Manoj Pillai"
+      ],
+      "playersB": [
+        "Ravi Shankar",
+        "Meera Nair"
+      ],
+      "courtId": null,
+      "courtName": null,
+      "courtColor": null,
+      "status": "ready",
+      "state": "none",
+      "gamesWonA": 0,
+      "gamesWonB": 0,
+      "winnerSide": null,
+      "scoreLine": null,
+      "startedAt": null,
+      "endedAt": null,
+      "resultType": "normal"
+    },
+    {
+      "id": "mt_13",
+      "stage": "group",
+      "roundName": "Round 5",
+      "teamAId": "tm_1",
+      "teamBId": "tm_2",
+      "nameA": "Karthik Subramanian / Sathish Kumar",
+      "nameB": "Hari Venkatesh / Naveen Krishnan",
+      "playersA": [
+        "Karthik Subramanian",
+        "Sathish Kumar"
+      ],
+      "playersB": [
+        "Hari Venkatesh",
+        "Naveen Krishnan"
+      ],
+      "courtId": null,
+      "courtName": null,
+      "courtColor": null,
+      "status": "ready",
+      "state": "none",
+      "gamesWonA": 0,
+      "gamesWonB": 0,
+      "winnerSide": null,
+      "scoreLine": null,
+      "startedAt": null,
+      "endedAt": null,
+      "resultType": "normal"
+    },
+    {
+      "id": "mt_14",
+      "stage": "group",
+      "roundName": "Round 5",
+      "teamAId": "tm_3",
+      "teamBId": "tm_6",
+      "nameA": "Arun Prakash / Ganesh Iyer",
+      "nameB": "Ravi Shankar / Meera Nair",
+      "playersA": [
+        "Arun Prakash",
+        "Ganesh Iyer"
+      ],
+      "playersB": [
+        "Ravi Shankar",
+        "Meera Nair"
+      ],
+      "courtId": null,
+      "courtName": null,
+      "courtColor": null,
+      "status": "ready",
+      "state": "none",
+      "gamesWonA": 0,
+      "gamesWonB": 0,
+      "winnerSide": null,
+      "scoreLine": null,
+      "startedAt": null,
+      "endedAt": null,
+      "resultType": "normal"
+    },
+    {
+      "id": "mt_15",
+      "stage": "group",
+      "roundName": "Round 5",
+      "teamAId": "tm_4",
+      "teamBId": "tm_5",
+      "nameA": "Deepak Raj / Bala Murugan",
+      "nameB": "Suresh Babu / Manoj Pillai",
+      "playersA": [
+        "Deepak Raj",
+        "Bala Murugan"
+      ],
+      "playersB": [
+        "Suresh Babu",
+        "Manoj Pillai"
+      ],
+      "courtId": null,
+      "courtName": null,
+      "courtColor": null,
+      "status": "ready",
+      "state": "none",
+      "gamesWonA": 0,
+      "gamesWonB": 0,
+      "winnerSide": null,
+      "scoreLine": null,
+      "startedAt": null,
+      "endedAt": null,
+      "resultType": "normal"
+    },
+    {
+      "id": "mt_16",
+      "stage": "knockout",
+      "roundName": "Final",
+      "teamAId": null,
+      "teamBId": null,
+      "nameA": null,
+      "nameB": null,
+      "playersA": [],
+      "playersB": [],
+      "courtId": null,
+      "courtName": null,
+      "courtColor": null,
+      "status": "pending",
+      "state": "none",
+      "gamesWonA": 0,
+      "gamesWonB": 0,
+      "winnerSide": null,
+      "scoreLine": null,
+      "startedAt": null,
+      "endedAt": null,
+      "resultType": "normal"
+    }
+  ],
+  "table": [
+    {
+      "teamId": "tm_1",
+      "name": "Karthik Subramanian / Sathish Kumar",
+      "players": [
+        "Karthik Subramanian",
+        "Sathish Kumar"
+      ],
+      "won": 3,
+      "pointsFor": 64,
+      "withdrawn": false,
+      "note": null
+    },
+    {
+      "teamId": "tm_4",
+      "name": "Deepak Raj / Bala Murugan",
+      "players": [
+        "Deepak Raj",
+        "Bala Murugan"
+      ],
+      "won": 2,
+      "pointsFor": 61,
+      "withdrawn": false,
+      "note": "2nd on head-to-head vs Suresh Babu / Manoj Pillai"
+    },
+    {
+      "teamId": "tm_5",
+      "name": "Suresh Babu / Manoj Pillai",
+      "players": [
+        "Suresh Babu",
+        "Manoj Pillai"
+      ],
+      "won": 2,
+      "pointsFor": 61,
+      "withdrawn": false,
+      "note": "3rd on head-to-head vs Deepak Raj / Bala Murugan"
+    },
+    {
+      "teamId": "tm_2",
+      "name": "Hari Venkatesh / Naveen Krishnan",
+      "players": [
+        "Hari Venkatesh",
+        "Naveen Krishnan"
+      ],
+      "won": 2,
+      "pointsFor": 55,
+      "withdrawn": false,
+      "note": null
+    },
+    {
+      "teamId": "tm_3",
+      "name": "Arun Prakash / Ganesh Iyer",
+      "players": [
+        "Arun Prakash",
+        "Ganesh Iyer"
+      ],
+      "won": 1,
+      "pointsFor": 48,
+      "withdrawn": false,
+      "note": null
+    },
+    {
+      "teamId": "tm_6",
+      "name": "Ravi Shankar / Meera Nair",
+      "players": [
+        "Ravi Shankar",
+        "Meera Nair"
+      ],
+      "won": 0,
+      "pointsFor": 33,
+      "withdrawn": false,
+      "note": "level so far"
+    }
+  ],
+  "version": "v-mens-1"
+}

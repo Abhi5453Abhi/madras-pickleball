@@ -43,8 +43,19 @@ export async function rpc<N extends RpcName>(name: N, input: Input<N>): Promise<
       /* not JSON */
     }
     if (res.status === 401) {
-      const next = location.pathname + location.search
-      throw new RpcError(401, body.error ?? 'Sign in first.', `/login?next=${encodeURIComponent(next)}`)
+      // `next` is only ever an organiser path — the same rule `auth.login`
+      // applies to it. And a 401 that arrives once the browser is already at
+      // the door carries no redirect at all: a screen loads several RPCs at
+      // once, and without this the second one wrapped the sign-in URL inside
+      // itself (/login?next=%2Flogin%3Fnext%3D%252Fadmin) and threw away the
+      // path the first one had saved.
+      const here = location.pathname + location.search
+      const redirect = location.pathname.startsWith('/admin')
+        ? `/login?next=${encodeURIComponent(here)}`
+        : location.pathname === '/login'
+          ? undefined
+          : '/login'
+      throw new RpcError(401, body.error ?? 'Sign in first.', redirect)
     }
     throw new RpcError(res.status, body.error ?? 'Something went wrong on our side. Try again in a moment.', body.redirect)
   }
