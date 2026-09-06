@@ -1,0 +1,15 @@
+{
+  "name": "madras-pickleball",
+  "private": true,
+  "description": "Root shortcuts — the app itself lives in app/",
+  "scripts": {
+    "dev": "npm --prefix app run dev",
+    "build": "npm --prefix app run build",
+    "start": "npm --prefix app run start",
+    "setup": "npm --prefix app run setup",
+    "test": "npm --prefix app run test",
+    "typecheck": "npm --prefix app run typecheck",
+    "smoke": "npm --prefix app run smoke",
+    "install:app": "npm --prefix app install"
+  }
+}

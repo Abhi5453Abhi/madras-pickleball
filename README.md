@@ -14,7 +14,8 @@ logging in.
 ```bash
 cd app
 npm install
-npm run dev     # http://localhost:3000
+cd ..
+npm run dev     # http://localhost:3000 — works from the repo root too
 ```
 
 Node 22 or 24 and nothing else — it brings up its own embedded Postgres on first run and seeds a venue,
