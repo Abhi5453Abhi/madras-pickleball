@@ -186,7 +186,7 @@ function CategoryBody({ cat, slug }: { cat: CategoryView; slug: string }) {
     return (
       <EmptyState title={`Nobody is in ${cat.name} yet`}>
         <p>Add pairs from the sign-ups screen, then make the draw.</p>
-        <Link href={`/admin/t/${slug}/registrations`} className={clsx(SECONDARY_LINK, 'mt-3 max-w-[16rem]')}>
+        <Link href={`/admin/t/${slug}/registration`} className={clsx(SECONDARY_LINK, 'mt-3 max-w-[16rem]')}>
           Open sign-ups
         </Link>
       </EmptyState>

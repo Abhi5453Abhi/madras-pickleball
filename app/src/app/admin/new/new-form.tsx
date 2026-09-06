@@ -1,0 +1,252 @@
+'use client'
+
+import { clsx } from 'clsx'
+import { useActionState, useMemo, useState } from 'react'
+import { createTournamentAction, type NewState } from './actions'
+import { CourtSwatch, Input, Label, Notice } from '@/components/ui'
+import type { CourtCalendar } from '@/server/events'
+
+const GENDERS = [
+  { key: 'mens', label: "Men's" },
+  { key: 'womens', label: "Women's" },
+  { key: 'mixed', label: 'Mixed' },
+  { key: 'any', label: 'Open' },
+] as const
+
+const DISCIPLINES = [
+  { key: 'singles', label: 'Singles' },
+  { key: 'doubles', label: 'Doubles' },
+] as const
+
+const FORMATS = [
+  { key: 'none', label: 'Everyone plays everyone' },
+  { key: 'final_only', label: '…then the top 2 play a final' },
+  { key: 'semis_and_final', label: '…then the top 4 play semis and a final' },
+] as const
+
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
+function categoryName(gender: string, discipline: string) {
+  const g = GENDERS.find((x) => x.key === gender)?.label ?? ''
+  return `${g} ${discipline === 'singles' ? 'Singles' : 'Doubles'}`
+}
+
+/**
+ * Everything the schedule needs, nothing else. Courts are picked here but can
+ * be changed right up to the start; a court another tournament holds that day
+ * is shown, named, and not pickable.
+ */
+export function NewForm({
+  calendar,
+  todayKey,
+}: {
+  calendar: CourtCalendar
+  todayKey: string
+}) {
+  const [state, action, pending] = useActionState(createTournamentAction, {} as NewState)
+  const [gender, setGender] = useState<string>('mens')
+  const [discipline, setDiscipline] = useState<string>('doubles')
+  const [format, setFormat] = useState<string>('final_only')
+  const [date, setDate] = useState<string>(todayKey)
+  const [name, setName] = useState<string>('')
+  const [nameTouched, setNameTouched] = useState(false)
+  const [picked, setPicked] = useState<string[]>([])
+
+  // The name writes itself from the category and the month until the
+  // organiser types their own; then it is theirs.
+  const suggested = useMemo(() => {
+    const m = Number(date.slice(5, 7))
+    const month = MONTHS[m - 1] ?? ''
+    return `${categoryName(gender, discipline)}${month ? ` — ${month}` : ''}`
+  }, [gender, discipline, date])
+  const shownName = nameTouched ? name : suggested
+
+  const heldToday = useMemo(() => {
+    const map = new Map<string, { name: string; slug: string }>()
+    for (const h of calendar.held) if (h.dayKey === date) map.set(h.courtId, h)
+    return map
+  }, [calendar.held, date])
+
+  const takenNote = calendar.courts
+    .filter((c) => heldToday.has(c.id))
+    .map((c) => `${c.name} belongs to ${heldToday.get(c.id)!.name} that day`)
+
+  function toggleCourt(id: string) {
+    setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]))
+  }
+
+  return (
+    <form action={action} className="flex flex-col gap-6">
+      {state.error ? <Notice>{state.error}</Notice> : null}
+
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="name">Name</Label>
+        <Input
+          id="name"
+          name="name"
+          value={shownName}
+          onChange={(e) => {
+            setNameTouched(true)
+            setName(e.target.value)
+          }}
+          required
+        />
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="date">Date</Label>
+        <Input
+          id="date"
+          name="date"
+          type="date"
+          value={date}
+          min={todayKey}
+          onChange={(e) => {
+            setDate(e.target.value)
+            // A court held on the new day cannot stay picked.
+            setPicked([])
+          }}
+          required
+        />
+      </div>
+
+      <Chips
+        legend="Category"
+        name="gender"
+        value={gender}
+        onChange={setGender}
+        options={GENDERS}
+        cols={4}
+      />
+
+      <Chips
+        legend="Singles or doubles"
+        name="discipline"
+        value={discipline}
+        onChange={setDiscipline}
+        options={DISCIPLINES}
+        cols={2}
+      />
+
+      <div className="flex flex-col gap-2">
+        <Chips
+          legend="Format"
+          name="format"
+          value={format}
+          onChange={setFormat}
+          options={FORMATS}
+          cols={1}
+        />
+        <p className="text-meta text-text-3">
+          Level on wins? Most points scored goes through. Best of 3 games to 11.
+        </p>
+      </div>
+
+      <fieldset className="flex flex-col gap-2">
+        <legend className="mb-2 text-row text-text">Courts</legend>
+        {picked.map((id) => (
+          <input key={id} type="hidden" name="courts" value={id} />
+        ))}
+        <div className="flex flex-wrap gap-2">
+          {calendar.courts.map((c) => {
+            const held = heldToday.get(c.id)
+            const on = picked.includes(c.id)
+            return (
+              <button
+                key={c.id}
+                type="button"
+                disabled={!!held}
+                onClick={() => toggleCourt(c.id)}
+                aria-pressed={on}
+                className={clsx(
+                  'tap inline-flex items-center gap-2 rounded-full border px-3.5 text-[16px] font-semibold transition-colors',
+                  held
+                    ? 'cursor-not-allowed border-line bg-sunken text-text-3'
+                    : on
+                      ? 'border-ink bg-ink text-white'
+                      : 'border-line-key bg-paper text-text hover:bg-ground',
+                )}
+              >
+                <CourtSwatch colorKey={c.colorKey} size="md" onInk={on} />
+                {c.name}
+                {held ? <span className="font-normal">· {held.name}</span> : null}
+              </button>
+            )
+          })}
+        </div>
+        <p className="text-meta text-text-3">
+          {takenNote.length
+            ? `${takenNote.join('. ')}. To use one here, take it off there first.`
+            : picked.length
+              ? `${picked.length} court${picked.length === 1 ? '' : 's'} picked. You can change this right up to the start.`
+              : 'Pick the courts this tournament plays on. You can change this right up to the start.'}
+        </p>
+      </fieldset>
+
+      <div className="flex flex-col gap-2">
+        <button
+          type="submit"
+          disabled={pending}
+          className="tap-xl w-full rounded-control bg-ink px-5 text-[20px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {pending ? 'Making it…' : 'Create · opens sign-ups'}
+        </button>
+        <p className="text-center text-meta text-text-2">
+          You get a sign-up link straight away. Nothing else happens until you say so.
+        </p>
+      </div>
+    </form>
+  )
+}
+
+function Chips<T extends string>({
+  legend,
+  name,
+  value,
+  onChange,
+  options,
+  cols,
+}: {
+  legend: string
+  name: string
+  value: string
+  onChange: (v: T) => void
+  options: ReadonlyArray<{ key: T; label: string }>
+  cols: 1 | 2 | 4
+}) {
+  return (
+    <fieldset className="flex flex-col gap-2">
+      <legend className="mb-2 text-row text-text">{legend}</legend>
+      <input type="hidden" name={name} value={value} />
+      <div
+        className={clsx(
+          'grid gap-2',
+          cols === 4 && 'grid-cols-2 sm:grid-cols-4',
+          cols === 2 && 'grid-cols-2',
+          cols === 1 && 'grid-cols-1',
+        )}
+      >
+        {options.map((o) => {
+          const on = o.key === value
+          return (
+            <button
+              key={o.key}
+              type="button"
+              onClick={() => onChange(o.key)}
+              aria-pressed={on}
+              className={clsx(
+                'tap rounded-control border px-3.5 text-left text-[16px] font-semibold transition-colors',
+                on ? 'border-ink bg-ink text-white' : 'border-line-key bg-paper text-text hover:bg-ground',
+              )}
+            >
+              {o.label}
+            </button>
+          )
+        })}
+      </div>
+    </fieldset>
+  )
+}

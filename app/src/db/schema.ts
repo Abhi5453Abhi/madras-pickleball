@@ -349,6 +349,11 @@ export const tournaments = pgTable(
     /** Feeds the finish-vs-sunset line in the format picker (SPEC A3). */
     sunsetAt: timestamp('sunset_at', { withTimezone: true }),
     publishedAt: timestamp('published_at', { withTimezone: true }),
+    /**
+     * Set when the organiser closes sign-ups. The public link stops taking
+     * names; the organiser can still add and remove people by hand.
+     */
+    registrationClosedAt: timestamp('registration_closed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
@@ -356,6 +361,34 @@ export const tournaments = pgTable(
   (t) => [
     uniqueIndex('tournaments_slug_key').on(t.slug),
     index('tournaments_status_idx').on(t.status, t.startDate),
+  ],
+)
+
+/**
+ * Which courts a tournament runs on. A court belongs to one tournament at a
+ * time: two tournaments on the same day cannot share one, and a match only ever
+ * goes onto one of its own tournament's courts. Changing this table is how the
+ * organiser gives a tournament another court — there is no lending.
+ */
+export const tournamentCourts = pgTable(
+  'tournament_courts',
+  {
+    id: text('id').primaryKey(),
+    tournamentId: text('tournament_id')
+      .notNull()
+      .references(() => tournaments.id, { onDelete: 'cascade' }),
+    courtId: text('court_id')
+      .notNull()
+      .references(() => courts.id, { onDelete: 'cascade' }),
+    /** Day-level key, venue time, so the uniqueness below means "that day". */
+    dayKey: text('day_key').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('tournament_courts_uq').on(t.tournamentId, t.courtId),
+    /** One tournament per court per day — the rule the whole product rests on. */
+    uniqueIndex('tournament_courts_day_uq').on(t.courtId, t.dayKey),
+    index('tournament_courts_tournament_idx').on(t.tournamentId),
   ],
 )
 

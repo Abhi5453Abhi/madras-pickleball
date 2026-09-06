@@ -52,42 +52,35 @@ Every run prints which database it is using, so this is visible rather than myst
 (`...-pooler...`) with `connection_limit=1`, and `DIRECT_URL` the direct host for migrations.
 Get this wrong and connections exhaust under exactly the load that matters.
 
-Seeded accounts (all forced to change their password at first login):
-
-| Username | Role | Temporary password |
-|---|---|---|
-| `saurabh` | super admin | `change-me-now` |
-| `admin2` | admin | `change-me-too` |
-| `umpire1` | umpire | `change-me-also`, PIN `4821` |
+Sign-in is a six-digit PIN — no username. A fresh install seeds one organiser with the temporary
+PIN **`123456`**, which must be replaced the first time it is used (set `MPB_SEED_PIN` to seed a
+real one instead). Accounts from before PIN sign-in are given temporary PINs in order —
+`123456`, `234567`, … — and `npm run dev` prints which account got which.
 
 ## Someone is locked out
 
-There is no email service, so there is no self-serve password reset — deliberately.
+Five wrong PINs from one phone and that phone waits fifteen minutes. There is no email service,
+so there is no self-serve reset — deliberately.
 
-1. **An admin or umpire is locked out** → the super admin opens *People*, clicks **Reset password**,
-   and reads out the 8-character code shown once on screen. It is single-use and expires in 15
-   minutes; the user is forced to pick a new password at login.
-2. **The super admin is locked out** → use the printed one-time recovery code.
-3. **Both are gone** → connect to the database and reset the hash directly:
+1. **An organiser has forgotten their PIN** → another organiser cannot see it either. Connect to
+   the database and set a temporary one; they are forced to pick their own at sign-in:
 
 ```sql
--- generate the hash first:  node -e "require('@node-rs/argon2').hash('new-password').then(console.log)"
-update users set password_hash = '<paste>', must_change_password = true,
-                 locked_until = null, failed_login_count = 0
-where username = 'saurabh';
+-- generate the hash first:  node -e "require('@node-rs/argon2').hash('482913').then(console.log)"
+update users set pin_hash = '<paste>', password_hash = '<paste>', must_change_password = true
+where username = 'organiser';
 ```
 
-Account lockout is on the **account**, not the IP — everyone at the venue shares one NAT, so
-IP-based locking would lock out the whole club at once.
+2. **Locked out by wrong tries** → wait fifteen minutes, or `npm run db:reset-lockouts`.
 
 ## Tournament morning
 
 - **Ping the site about 10 minutes before the first match.** Neon autosuspends after a few minutes
   idle and the host has no warm instances, so the first login of the morning otherwise feels broken.
-- Print the **court cards** (one per court, A5, laminated, cable-tied to the net post) and the
-  **A4 QR poster** for the entrance. Cards carry a fresh token per tournament — reprint them.
+- Open each tournament and check its checklist is all ticks: players in, pairs made, courts
+  picked, schedule made. Then **Start** — the first matches go straight onto the free courts.
 - Print the **per-court paper score sheets**. When the wifi dies, the paper is the tournament.
-- Check the finish estimate on the court board against sunset before the first serve.
+- Keep the **live board** open. It shows every court at the venue, whichever tournament is on it.
 
 ## Something went wrong mid-day
 
@@ -95,7 +88,6 @@ IP-based locking would lock out the whole club at once.
 |---|---|
 | Wrong score published | **Edit this match** on the court board — teams, court, scores, status, result type, with a reason. Everything downstream recomputes. |
 | A correction is refused | It says which match is blocking it. Void that match first, or use *apply when Court 3 finishes*. |
-| A court QR got posted in a big WhatsApp group | **Revoke all court tokens** on the tournament page, then reprint that court's card. |
 | Running late | **Shorten the remaining format** — it rewrites un-started matches only and can drop a stage. Never do this on paper; every phone in the venue would then be wrong. |
 | A court is unusable | **Court out of action**. The queue and the finish estimate recompute. |
 | Someone didn't show | **No-show** → walkover. Never type 11-0 by hand; a typed score corrupts the point-difference tiebreak. |

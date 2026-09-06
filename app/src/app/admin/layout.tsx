@@ -11,7 +11,7 @@ function initials(name: string) {
 }
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  const user = await requireUser('umpire', { allowPasswordChange: true })
+  const user = await requireUser('admin', { allowPasswordChange: true })
 
   return (
     <div className="flex min-h-dvh flex-col">

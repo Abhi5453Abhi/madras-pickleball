@@ -8,14 +8,14 @@ import { ensureReady } from '@/server/bootstrap'
 export const metadata = { title: 'Sign in · Madras Pickleball' }
 
 /**
- * The only screen in the product that a person reaches without knowing what
- * this is. It carries the brand band because it is the front door — and it says
- * plainly that scorers do not belong here, because the most common way to end
- * up on this page is scanning a court card that has expired.
+ * The front door for the one person who has a key. Players never see it —
+ * the sign-up link and the results page are open — so it does not explain
+ * itself beyond saying so.
  */
-export default async function LoginPage() {
+export default async function LoginPage(props: PageProps<'/login'>) {
   await ensureReady()
   if (await currentUser()) redirect('/admin')
+  const { next } = await props.searchParams
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-sm flex-col justify-center gap-6 p-6">
@@ -27,19 +27,18 @@ export default async function LoginPage() {
           </span>
         </div>
         <NetRule className="mt-3 mb-4" />
-        <h1 className="text-title text-text">Organiser sign in</h1>
+        <h1 className="text-title text-text">Organiser</h1>
         <p className="mt-1.5 text-body text-text-2">
-          Scorers don&rsquo;t need an account — scan the QR taped to the net post and the score goes
-          in from there.
+          Your six-digit PIN. This phone stays signed in for two weeks.
         </p>
       </div>
 
       <Card className="p-4">
-        <LoginForm />
+        <LoginForm next={typeof next === 'string' ? next : undefined} />
       </Card>
 
       <div className="text-center text-meta text-text-2">
-        <p>Forgotten it? The venue owner can reset it for you.</p>
+        <p>Forgotten it? Whoever set the app up can give you a new one.</p>
         <Link href="/" className="tap mt-1 inline-flex items-center px-2 font-semibold text-link">
           Back to the scores
         </Link>

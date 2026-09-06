@@ -18,7 +18,7 @@ import { LinkPanel } from './link-panel'
  */
 
 /** The screen's own word first: a tab label truncates from the right. */
-export async function generateMetadata(props: PageProps<'/admin/t/[slug]/registrations'>) {
+export async function generateMetadata(props: PageProps<'/admin/t/[slug]/registration'>) {
   const { slug } = await props.params
   const tournament = await getTournamentBySlug(slug)
   return { title: tournament ? `Sign-ups · ${tournament.name}` : 'Sign-ups · Madras Pickleball' }
@@ -26,7 +26,7 @@ export async function generateMetadata(props: PageProps<'/admin/t/[slug]/registr
 
 export const dynamic = 'force-dynamic'
 
-export default async function RegistrationsPage(props: PageProps<'/admin/t/[slug]/registrations'>) {
+export default async function RegistrationsPage(props: PageProps<'/admin/t/[slug]/registration'>) {
   await requireUser('admin')
   const { slug } = await props.params
   const tournament = await getTournamentBySlug(slug)
@@ -115,7 +115,7 @@ export default async function RegistrationsPage(props: PageProps<'/admin/t/[slug
               In a hurry, or already holding the list? Quick Play takes a paste from the group chat
               and skips all of this.
             </p>
-            <Link href="/admin/quick" className={SECONDARY_LINK}>
+            <Link href="/admin/new" className={SECONDARY_LINK}>
               Paste a list instead
             </Link>
           </section>

@@ -16,8 +16,8 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Only the admin area. Public pages, court pages and the registration form are
-  // reachable without any cookie, and public routes must stay cookie-free so the
-  // CDN keeps caching them (SPEC A9).
-  matcher: ['/admin/:path*', '/umpire/:path*'],
+  // Only the organiser area. Public pages and the sign-up form are reachable
+  // without any cookie, and public routes must stay cookie-free so the CDN
+  // keeps caching them (SPEC A9).
+  matcher: ['/admin/:path*'],
 }

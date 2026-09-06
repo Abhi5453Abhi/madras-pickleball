@@ -36,7 +36,7 @@ export async function makeLink(_prev: LinkState, formData: FormData): Promise<Li
     entity: 'tournament',
     entityId: t.id,
   })
-  revalidatePath(`/admin/t/${slug}/registrations`)
+  revalidatePath(`/admin/t/${slug}/registration`)
   return { link: `/r/${raw}` }
 }
 
@@ -53,7 +53,7 @@ export async function closeLink(formData: FormData) {
     entity: 'tournament',
     entityId: t.id,
   })
-  revalidatePath(`/admin/t/${slug}/registrations`)
+  revalidatePath(`/admin/t/${slug}/registration`)
 }
 
 export async function approve(formData: FormData) {
@@ -80,10 +80,10 @@ export async function approve(formData: FormData) {
       after: { playerId: res.playerId, mergedWithExisting: !!linkPlayerId },
     })
   }
-  revalidatePath(`/admin/t/${slug}/registrations`)
+  revalidatePath(`/admin/t/${slug}/registration`)
   revalidatePath(`/admin/t/${slug}`)
   if (!res.ok) {
-    redirect(`/admin/t/${slug}/registrations?err=${encodeURIComponent(res.error)}` as never)
+    redirect(`/admin/t/${slug}/registration?err=${encodeURIComponent(res.error)}` as never)
   }
 }
 
@@ -105,7 +105,7 @@ export async function reject(formData: FormData) {
     entity: 'registration',
     entityId: id,
   })
-  revalidatePath(`/admin/t/${slug}/registrations`)
+  revalidatePath(`/admin/t/${slug}/registration`)
 }
 
 /** Both of them named each other and both are on the roster — make the team. */
@@ -130,9 +130,9 @@ export async function makePair(formData: FormData) {
       after: { name: res.name },
     })
   }
-  revalidatePath(`/admin/t/${slug}/registrations`)
+  revalidatePath(`/admin/t/${slug}/registration`)
   revalidatePath(`/admin/t/${slug}`)
   if (!res.ok) {
-    redirect(`/admin/t/${slug}/registrations?err=${encodeURIComponent(res.error)}` as never)
+    redirect(`/admin/t/${slug}/registration?err=${encodeURIComponent(res.error)}` as never)
   }
 }

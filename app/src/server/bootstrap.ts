@@ -4,7 +4,9 @@ import { db, isEmbeddedDb } from '@/db'
 import { bootstrapSql } from '@/db/bootstrap-sql'
 import { courts, players, users, venues } from '@/db/schema'
 import { newId } from '@/lib/ids'
-import { hashPassword, hashPin } from '@/lib/password'
+import { hashPin } from '@/lib/password'
+import { ensureOrganiserPins, TEMP_PINS } from './organisers'
+import { assignCourts } from './events'
 import { parsePlayerList } from '@/lib/parse-players'
 import {
   createCategory,
@@ -83,34 +85,24 @@ async function seedCore() {
 
   const existingUsers = await db.select().from(users).limit(1)
   if (existingUsers.length === 0) {
-    await db.insert(users).values([
-      {
-        id: newId('usr'),
-        name: 'Saurabh',
-        username: 'saurabh',
-        role: 'super_admin' as const,
-        passwordHash: await hashPassword(process.env.MPB_SEED_PASSWORD ?? 'change-me-now'),
-        mustChangePassword: !process.env.MPB_SEED_PASSWORD,
-      },
-      {
-        id: newId('usr'),
-        name: 'Second Organiser',
-        username: 'admin2',
-        role: 'admin' as const,
-        passwordHash: await hashPassword(process.env.MPB_SEED_PASSWORD ?? 'change-me-too'),
-        mustChangePassword: !process.env.MPB_SEED_PASSWORD,
-      },
-      {
-        id: newId('usr'),
-        name: 'Umpire One',
-        username: 'umpire1',
-        role: 'umpire' as const,
-        passwordHash: await hashPassword(process.env.MPB_SEED_PASSWORD ?? 'change-me-also'),
-        pinHash: await hashPin('4821'),
-        mustChangePassword: !process.env.MPB_SEED_PASSWORD,
-      },
-    ])
+    // One organiser. The PIN is the whole credential (SPEC v4): a fixed
+    // temporary one that must be replaced on first sign-in, or the one the
+    // deployment sets.
+    const pin = process.env.MPB_SEED_PIN ?? TEMP_PINS[0]
+    const digest = await hashPin(pin)
+    await db.insert(users).values({
+      id: newId('usr'),
+      name: 'Organiser',
+      username: 'organiser',
+      role: 'super_admin' as const,
+      passwordHash: digest,
+      pinHash: digest,
+      mustChangePassword: !process.env.MPB_SEED_PIN,
+    })
   }
+  // Accounts from before PIN sign-in get a temporary PIN; umpire accounts
+  // are switched off.
+  await ensureOrganiserPins()
 }
 
 const DEMO_PLAYERS = `1. Ravi Kumar
@@ -193,6 +185,7 @@ async function seedDemo() {
   }
 
   const [court] = await db.select().from(courts).limit(1)
+  if (court) await assignCourts(tournament.id, [court.id])
   const next = (await listMatches(tournament.id)).find(
     (m) => m.status === 'ready' && m.teamAId && m.teamBId,
   )

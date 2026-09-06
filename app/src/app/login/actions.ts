@@ -1,62 +1,61 @@
 'use server'
 
-import { eq } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
-import { db } from '@/db'
-import { users } from '@/db/schema'
-import { verifyPassword } from '@/lib/password'
 import { createSession, destroySession } from '@/lib/session'
-import { checkLoginAllowed, recordLoginAttempt } from '@/lib/rate-limit'
+import { checkPinAllowed, recordPinAttempt } from '@/lib/rate-limit'
 import { hashIp } from '@/lib/crypto'
+import { normalizePin, organiserForPin } from '@/server/organisers'
 
 export type LoginState = { error?: string }
 
+function safeNext(raw: unknown): string {
+  const s = String(raw ?? '')
+  // Only somewhere inside the organiser area, on this site.
+  return s.startsWith('/admin') && !s.startsWith('//') ? s : '/admin'
+}
+
 export async function login(_prev: LoginState, formData: FormData): Promise<LoginState> {
-  const username = String(formData.get('username') ?? '')
-    .trim()
-    .toLowerCase()
-  const password = String(formData.get('password') ?? '')
-
-  if (!username || !password) return { error: 'Enter your username and password.' }
-
-  const gate = await checkLoginAllowed(username)
-  if (!gate.allowed) {
-    return {
-      error: `Too many attempts. Try again in ${gate.retryInMinutes} minute${gate.retryInMinutes === 1 ? '' : 's'}, or ask the organiser to reset it.`,
-    }
-  }
+  const pin = normalizePin(formData.get('pin'))
+  const next = safeNext(formData.get('next'))
 
   const h = await headers()
   const ipHash = hashIp(h.get('x-forwarded-for')?.split(',')[0]?.trim())
 
-  const row = (await db.select().from(users).where(eq(users.username, username)).limit(1))[0]
+  const gate = await checkPinAllowed(ipHash)
+  if (!gate.allowed) {
+    return {
+      error: `Too many wrong PINs. Try again in ${gate.retryInMinutes} minute${
+        gate.retryInMinutes === 1 ? '' : 's'
+      }.`,
+    }
+  }
 
-  // Same message and roughly the same work either way, so login is not a
-  // user-enumeration oracle (SPEC A9).
-  const ok = row && row.active && !row.deletedAt && (await verifyPassword(row.passwordHash, password))
+  // A PIN that is not six digits is wrong before it is checked — and it still
+  // counts, or the shape of the input becomes a free oracle.
+  const user = pin ? await organiserForPin(pin) : null
+  await recordPinAttempt(ipHash, !!user, user?.id)
 
-  await recordLoginAttempt(username, ipHash, !!ok)
-  if (!ok || !row) return { error: 'That username and password don’t match.' }
+  if (!user) {
+    const left = gate.triesLeft - 1
+    return {
+      error:
+        left > 0
+          ? `That's not it. ${left} ${left === 1 ? 'try' : 'tries'} left before a fifteen-minute wait.`
+          : 'That’s not it. Wait fifteen minutes before trying again.',
+    }
+  }
 
   await createSession({
-    id: row.id,
-    name: row.name,
-    username: row.username,
-    role: row.role,
-    mustChangePassword: row.mustChangePassword,
+    id: user.id,
+    name: user.name,
+    username: user.username,
+    role: user.role,
+    mustChangePassword: user.mustChangePassword,
   })
 
   // redirect() throws, so it must be the last thing and outside any try block.
-  // An umpire has no admin area to land in; sending them there and bouncing
-  // them straight back reads as a broken login.
-  redirect(
-    row.mustChangePassword
-      ? '/admin/account?first=1'
-      : row.role === 'umpire'
-        ? '/umpire'
-        : '/admin',
-  )
+  redirect((user.mustChangePassword ? '/admin/account?first=1' : next) as never)
 }
 
 export async function logout() {

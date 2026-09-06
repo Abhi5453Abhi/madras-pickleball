@@ -14,11 +14,10 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "db:reset-lockouts": "tsx scripts/reset-lockouts.ts",
-    "smoke": "tsx scripts/reset-lockouts.ts && node scripts/smoke.mjs",
     "setup": "tsx scripts/setup.ts",
     "predev": "tsx scripts/setup.ts",
     "db:bootstrap": "tsx scripts/gen-bootstrap.ts",
-    "e2e": "node scripts/e2e.mjs"
+    "e2e": "node scripts/stage1.mjs"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

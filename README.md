@@ -1,8 +1,8 @@
 # Madras Pickleball
 
-Tournament site for a single pickleball venue: an organiser sets up and runs the day, anyone
-sitting out can score a match from the QR on the net post, and everyone else watches live without
-logging in.
+Tournament site for a single pickleball venue: an organiser runs several tournaments at once, each
+on its own courts, and enters every score; players sign up from a link and follow the results
+without logging in.
 
 - **`docs/SPEC.md`** — the build spec. Read this first; it explains why things are the way they are.
 - `docs/SPEC-v1.md`, `-v2.md`, `-v3.md` — the reasoning trail through three review rounds.

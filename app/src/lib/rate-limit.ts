@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, eq, gte, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, isNull, sql } from 'drizzle-orm'
 import { db } from '@/db'
 import { loginAttempts, users, tokenAttempts } from '@/db/schema'
 import { newId } from './ids'
@@ -61,6 +61,54 @@ export async function recordLoginAttempt(identifier: string, ipHash: string | nu
       .where(eq(users.username, identifier))
   } else {
     await db.update(users).set({ failedLoginCount: n }).where(eq(users.username, identifier))
+  }
+}
+
+/**
+ * PIN sign-in. There is no username to lock, so the count is per IP: five
+ * wrong PINs in fifteen minutes from one address and that address waits.
+ * A per-IP count and not a global one, because a global count is a switch
+ * anyone on the internet can flip to lock the organiser out mid-tournament.
+ */
+const PIN_WINDOW_MIN = 15
+const PIN_MAX_FAILURES = 5
+const PIN_IDENTIFIER = 'pin'
+
+export async function checkPinAllowed(ipHash: string | null) {
+  const since = new Date(Date.now() - PIN_WINDOW_MIN * 60_000)
+  const rows = await db
+    .select({ at: loginAttempts.at })
+    .from(loginAttempts)
+    .where(
+      and(
+        eq(loginAttempts.identifier, PIN_IDENTIFIER),
+        ipHash ? eq(loginAttempts.ipHash, ipHash) : isNull(loginAttempts.ipHash),
+        eq(loginAttempts.succeeded, false),
+        gte(loginAttempts.at, since),
+      ),
+    )
+    .orderBy(desc(loginAttempts.at))
+    .limit(PIN_MAX_FAILURES)
+
+  if (rows.length >= PIN_MAX_FAILURES) {
+    // The wait ends when the oldest of the last five falls out of the window.
+    const oldest = rows[rows.length - 1]!.at
+    const until = oldest.getTime() + PIN_WINDOW_MIN * 60_000
+    return {
+      allowed: false as const,
+      retryInMinutes: Math.max(1, Math.ceil((until - Date.now()) / 60_000)),
+      triesLeft: 0,
+    }
+  }
+  return { allowed: true as const, triesLeft: PIN_MAX_FAILURES - rows.length }
+}
+
+export async function recordPinAttempt(ipHash: string | null, ok: boolean, userId?: string) {
+  await db
+    .insert(loginAttempts)
+    .values({ id: newId('la'), identifier: PIN_IDENTIFIER, ipHash, succeeded: ok })
+  if (ok && userId) {
+    await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, userId))
   }
 }
 

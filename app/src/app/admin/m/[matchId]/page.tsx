@@ -2,9 +2,8 @@ import { notFound } from 'next/navigation'
 import { eq } from 'drizzle-orm'
 import { db } from '@/db'
 import { courts, tournaments } from '@/db/schema'
-import { atLeast, requireUser } from '@/lib/auth'
+import { requireUser } from '@/lib/auth'
 import { getMatchForScoring, projectedState } from '@/server/scoring'
-import { umpireMayScore } from '@/server/umpire'
 import { AdminEntry } from './entry'
 import { useSubmission, voidThisMatch } from './actions'
 import Link from 'next/link'
@@ -23,7 +22,7 @@ const STATE_WORDS: Record<string, string> = {
 }
 
 export default async function AdminMatchPage(props: PageProps<'/admin/m/[matchId]'>) {
-  const user = await requireUser('umpire')
+  await requireUser('admin')
   const { matchId } = await props.params
   const { err } = await props.searchParams
 
@@ -42,45 +41,6 @@ export default async function AdminMatchPage(props: PageProps<'/admin/m/[matchId
 
   const state = projectedState(loaded.match)
   const hasResult = loaded.match.resultState !== 'none'
-
-  // Showing an umpire a form the action will refuse is worse than not showing
-  // it. The action is still the boundary; this is so the screen agrees with it.
-  if (!atLeast(user, 'admin') && !(await umpireMayScore(matchId))) {
-    return (
-      <div className="flex flex-col gap-4">
-        <h1 className="text-title text-text">
-          {loaded.nameA} v {loaded.nameB}
-        </h1>
-        <Notice tone="info">
-          This isn’t one for you to score — it isn’t on a court, or the result is already in.
-        </Notice>
-      </div>
-    )
-  }
-
-  // An umpire scores; an organiser corrects. Showing an umpire a form that will
-  // be refused on submit is worse than not showing it.
-  if (hasResult && !atLeast(user, 'admin')) {
-    return (
-      <div className="flex flex-col gap-4">
-        <p className="font-score text-eyebrow text-accent uppercase">
-          {loaded.category.name}
-          {loaded.match.roundName ? ` · ${loaded.match.roundName}` : ''}
-        </p>
-        <h1>
-          <TeamName name={loaded.nameA} size="section" />
-          <span className="block text-meta text-text-3">v</span>
-          <TeamName name={loaded.nameB} size="section" />
-        </h1>
-        <Notice tone="info">
-          {STATE_WORDS[state] ?? 'A result is already in'}. Ask the organiser if it needs changing.
-        </Notice>
-        <Link href="/umpire" className={SECONDARY_LINK}>
-          Back to your matches
-        </Link>
-      </div>
-    )
-  }
 
   const existing = hasResult
     ? {
@@ -148,9 +108,7 @@ export default async function AdminMatchPage(props: PageProps<'/admin/m/[matchId
       </section>
     ) : null
 
-  const back = atLeast(user, 'admin') ? `/admin/t/${tournament?.slug ?? ''}/board` : '/umpire'
-
-  const isAdmin = atLeast(user, 'admin')
+  const back = `/admin/t/${tournament?.slug ?? ''}/board`
 
   return (
     <div className="flex flex-col gap-7">
@@ -183,13 +141,13 @@ export default async function AdminMatchPage(props: PageProps<'/admin/m/[matchId
           often as to change one, and leaving with the browser button loses the
           scroll position on the page they came from. */}
       <Link href={back as never} className={SECONDARY_LINK}>
-        {isAdmin ? 'Back to the court board' : 'Back to your matches'}
+        Back to the live board
       </Link>
 
       {/* Cancelling is not correcting: the match counts for nobody afterwards,
           in no table and no difference column. Organiser only, never while it
           is on court, and never silently — the reason is required. */}
-      {isAdmin && loaded.match.status !== 'live' ? (
+      {loaded.match.status !== 'live' ? (
         <Confirm
           label="Cancel this match"
           question={`${loaded.nameA} v ${loaded.nameB} stops counting for anybody — no winner, no points, and it leaves both pairs' tables.`}

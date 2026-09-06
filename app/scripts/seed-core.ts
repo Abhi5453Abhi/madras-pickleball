@@ -7,10 +7,12 @@ import { eq } from 'drizzle-orm'
 import { db } from '../src/db'
 import { venues, courts, users } from '../src/db/schema'
 import { newId } from '../src/lib/ids'
-import { hashPassword, hashPin } from '../src/lib/password'
+import { hashPin } from '../src/lib/password'
+import { ensureOrganiserPins, TEMP_PINS } from '../src/server/organisers'
 
 const VENUE_SLUG = 'madras-pickleball'
-const COURT_COLOURS = ['blue', 'orange', 'green', 'purple', 'red', 'teal']
+// The keys the swatches know — see COURT_COLORS in components/ui.tsx.
+const COURT_COLOURS = ['blue', 'orange', 'teal', 'violet', 'clay', 'indigo']
 
 export async function seed() {
   let venue = (await db.select().from(venues).where(eq(venues.slug, VENUE_SLUG)).limit(1))[0]
@@ -36,28 +38,26 @@ export async function seed() {
     console.log('courts     created  Court 1-4')
   }
 
-  const accounts = [
-    { username: 'saurabh', name: 'Saurabh', role: 'super_admin' as const, pw: 'change-me-now' },
-    { username: 'admin2', name: 'Second Organiser', role: 'admin' as const, pw: 'change-me-too' },
-    { username: 'umpire1', name: 'Umpire One', role: 'umpire' as const, pw: 'change-me-also', pin: '4821' },
-  ]
-
-  for (const a of accounts) {
-    const found = (await db.select().from(users).where(eq(users.username, a.username)).limit(1))[0]
-    if (found) continue
+  const existingUsers = await db.select().from(users).limit(1)
+  if (existingUsers.length === 0) {
+    const pin = process.env.MPB_SEED_PIN ?? TEMP_PINS[0]
+    const digest = await hashPin(pin)
     await db.insert(users).values({
       id: newId('usr'),
-      name: a.name,
-      username: a.username,
-      role: a.role,
-      passwordHash: await hashPassword(a.pw),
-      pinHash: a.pin ? await hashPin(a.pin) : null,
-      // Every seeded account must change its password on first login (SPEC A9).
-      mustChangePassword: true,
+      name: 'Organiser',
+      username: 'organiser',
+      role: 'super_admin',
+      passwordHash: digest,
+      pinHash: digest,
+      // A seeded PIN must be replaced on first sign-in (SPEC A9).
+      mustChangePassword: !process.env.MPB_SEED_PIN,
     })
-    console.log(
-      `account    created  ${a.username.padEnd(9)} ${a.role.padEnd(12)} password: ${a.pw}${a.pin ? `  pin: ${a.pin}` : ''}`,
-    )
+    console.log(`account    created  organiser    PIN: ${pin}  (change it on first sign-in)`)
   }
 
+  // Accounts from before PIN sign-in get a temporary PIN; umpire accounts
+  // are switched off.
+  for (const issued of await ensureOrganiserPins()) {
+    console.log(`account    pin set  ${issued.username.padEnd(12)} PIN: ${issued.pin}  (temporary — change it on first sign-in)`)
+  }
 }
