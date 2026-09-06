@@ -15,9 +15,11 @@ import (
 )
 
 // playerRef is who is in a match, in the order the pair was entered.
+// The tags are not decoration: this shape goes out on the wire as the members
+// of a pair in chaos.substitutionOptions, and the contract is camelCase.
 type playerRef struct {
-	ID   string
-	Name string
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // rosterOrder is side A first, then B, each in the order the pair was entered.

@@ -58,6 +58,25 @@ func TestWireShapes(t *testing.T) {
 		}
 	}
 
+	// The swap screen reads each member by name; a Go-shaped "Name" leaves the
+	// select full of blank options and nothing to pick.
+	var subs []map[string]any
+	c.call(t, "chaos.substitutionOptions", map[string]any{"tournamentId": f.ID}, &subs)
+	if len(subs) == 0 {
+		t.Fatal("no pairs to swap from")
+	}
+	for _, key := range []string{"teamId", "teamName", "members"} {
+		if _, ok := subs[0][key]; !ok {
+			t.Errorf("chaos.substitutionOptions has no %q", key)
+		}
+	}
+	member := subs[0]["members"].([]any)[0].(map[string]any)
+	for _, key := range []string{"id", "name"} {
+		if _, ok := member[key]; !ok {
+			t.Errorf("a pair member has no %q", key)
+		}
+	}
+
 	var paused map[string]any
 	c.call(t, "chaos.pauseDay", map[string]any{"tournamentId": f.ID, "note": ""}, &paused)
 	if paused["ok"] != true || paused["note"] != "Paused. The public page says so." {

@@ -8,10 +8,9 @@
  *
  *   BASE=http://localhost:3200 node scripts/e2e-exceptions.mjs
  *
- * Expects a fresh database (scripts/setup.ts) with the organiser on the
- * temporary PIN 123456; signs in with 482913 when the PIN is already set.
- * `reset-lockouts` is run through `npx tsx` with DATABASE_URL from the
- * environment.
+ * Expects a fresh database with the organiser on the temporary PIN 123456;
+ * signs in with 482913 when the PIN is already set. The lockout is cleared
+ * with psql against DATABASE_URL from the environment.
  */
 import { chromium } from 'playwright-core'
 import { existsSync, mkdirSync } from 'node:fs'
@@ -907,7 +906,10 @@ console.log('\n   PIN lockout from another phone (item 12)')
   const other = await signedInContext('organiser fresh')
   ok('  a fresh sign-in from a different address still works', other.p.url().endsWith('/admin'), other.p.url())
   await other.c.close()
-  execSync('npx tsx scripts/reset-lockouts.ts', { cwd: process.cwd(), stdio: 'pipe' })
+  // scripts/reset-lockouts.ts cleared the old schema's two attempt tables and
+  // the counters on the user row; the Go schema keeps every guarded try in
+  // `attempts`, and nothing else.
+  execSync(`psql "${process.env.DATABASE_URL}" -c "delete from attempts"`, { stdio: 'pipe' })
   await ap.goto(`${BASE}/login`, { waitUntil: 'networkidle' })
   await ap.fill('#pin', '111111')
   await ap.click('button[type=submit]')
