@@ -6,7 +6,7 @@ import { Button, Card, Confirm, Input, Label, Notice, Panel } from '@/components
 import { SECONDARY_LINK, ROW_BUTTON } from '@/components/admin-ui'
 import { venueDate } from '@/lib/time'
 import { Loading, useTitle } from '@/lib/page'
-import { useMe } from './layout'
+import { useMe, usePatchMe } from './layout'
 
 export function AccountPage() {
   useTitle('Your PIN · Madras Pickleball')
@@ -218,6 +218,7 @@ function PinField({
 
 function PinForm({ forced }: { forced?: boolean }) {
   const { run, pending } = useAction()
+  const patchMe = usePatchMe()
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -225,8 +226,9 @@ function PinForm({ forced }: { forced?: boolean }) {
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    const res = await run('organisers.changePin', { current, next, confirm })
-    // On success `useAction` follows the redirect the server hands back.
+    // The layout must learn the PIN is no longer temporary before the
+    // redirect lands, or its guard bounces the dashboard straight back here.
+    const res = await run('organisers.changePin', { current, next, confirm }, () => patchMe({ mustChangePin: false }))
     if (!res.ok) setError(res.error)
   }
 

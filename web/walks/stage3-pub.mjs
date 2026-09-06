@@ -95,8 +95,10 @@ ok('every court is on it', /Court 1[\s\S]*Court 2[\s\S]*Court 3[\s\S]*Court 4/i.
 ok('courts 1 and 2 have matches, 3 and 4 are free', /Court 1[\s\S]*against[\s\S]*Court 2[\s\S]*against[\s\S]*Court 3\s*Free[\s\S]*Court 4\s*Free/i.test(t))
 ok('links to both tournaments', /Men's Doubles — table & results/i.test(t) && /Mixed Doubles — final table & results/i.test(t))
 await shot(page, 'today')
-const versionRes = await page.request.get(`${BASE}/api/public/today/version`)
-ok('today version endpoint answers a number', /"v":\d+/i.test(await versionRes.text()))
+// /api/public/today/version in the Next app; the poller is /api/version/today
+// now, and the version it answers with is an opaque string (docs/GO-API.ts).
+const versionRes = await page.request.get(`${BASE}/api/version/today`)
+ok('today version endpoint answers a version', /"version":"[^"]+"/.test(await versionRes.text()))
 
 // ── organiser ────────────────────────────────────────────────────────────────
 const adm = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 })

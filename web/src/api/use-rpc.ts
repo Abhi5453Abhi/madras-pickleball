@@ -2,6 +2,17 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { rpc, RpcError, type Input, type Output, type RpcName } from './rpc'
 
+/**
+ * How many screen loads are in flight, written onto <html data-pending>.
+ * The browser walks wait for it to read "0" before reading a page: a
+ * server-rendered page arrived complete, this one fetches after it paints.
+ */
+let pending = 0
+export function markPending(delta: number) {
+  pending += delta
+  if (typeof document !== 'undefined') document.documentElement.dataset.pending = String(pending)
+}
+
 export type Loaded<T> =
   | { state: 'loading'; data?: undefined; error?: undefined }
   | { state: 'ready'; data: T; error?: undefined }
@@ -21,6 +32,7 @@ export function useRpc<N extends RpcName>(name: N, input: Input<N>, deps: unknow
   const load = useCallback(
     async (quiet = false) => {
       if (!quiet) setResult({ state: 'loading' })
+      markPending(1)
       try {
         const data = await rpc(name, JSON.parse(key) as Input<N>)
         setResult({ state: 'ready', data })
@@ -38,6 +50,8 @@ export function useRpc<N extends RpcName>(name: N, input: Input<N>, deps: unknow
           return
         }
         setResult({ state: 'error', error: 'Something went wrong. Try again in a moment.' })
+      } finally {
+        markPending(-1)
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -59,12 +73,19 @@ export function useAction() {
   const navigate = useNavigate()
   const [pending, setPending] = useState(false)
   const run = useCallback(
-    async <N extends RpcName>(name: N, input: Input<N>): Promise<Output<N> | { ok: false; error: string }> => {
+    async <N extends RpcName>(
+      name: N,
+      input: Input<N>,
+      beforeRedirect?: () => void,
+    ): Promise<Output<N> | { ok: false; error: string }> => {
       setPending(true)
       try {
         const out = await rpc(name, input)
         const r = out as unknown as { ok?: boolean; redirect?: string }
-        if (r && r.ok && r.redirect) navigate(r.redirect)
+        if (r && r.ok && r.redirect) {
+          beforeRedirect?.()
+          navigate(r.redirect)
+        }
         return out
       } catch (e) {
         if (e instanceof RpcError && e.redirect) {

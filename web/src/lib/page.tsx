@@ -1,4 +1,5 @@
-import { useEffect } from 'react'
+import { useEffect, useLayoutEffect } from 'react'
+import { markPending } from '@/api/use-rpc'
 import { NetRule, Notice, Wordmark } from '@/components/ui'
 
 /**
@@ -20,6 +21,13 @@ export function useTitle(title: string) {
  * normal and shows the shape of what is coming.
  */
 export function Loading({ lines = 3 }: { lines?: number }) {
+  // A placeholder on screen counts as a load in flight (see markPending),
+  // and it is counted before paint so nothing can read the page between
+  // one screen's data arriving and the next screen's request leaving.
+  useLayoutEffect(() => {
+    markPending(1)
+    return () => markPending(-1)
+  }, [])
   return (
     <div className="flex flex-col gap-4">
       <p role="status" className="text-body text-text-2">
@@ -36,6 +44,10 @@ export function Loading({ lines = 3 }: { lines?: number }) {
 
 /** The public shell's version of the same thing, ink band and all. */
 export function PublicLoading() {
+  useLayoutEffect(() => {
+    markPending(1)
+    return () => markPending(-1)
+  }, [])
   return (
     <div className="min-h-dvh bg-ground">
       <header className="masthead relative overflow-hidden bg-ink px-4 pt-6 pb-6 text-white">

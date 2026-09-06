@@ -61,10 +61,10 @@ export function MorePage() {
   if (loaded.state === 'loading') return <Loading />
   if (loaded.state === 'missing') return <NotFoundCard />
   if (loaded.state !== 'ready') return <LoadError error={loaded.error} retry={() => void loaded.reload(false)} />
-  return <More slug={slug} t={loaded.data} />
+  return <More slug={slug} t={loaded.data} reload={() => void loaded.reload(true)} />
 }
 
-function More({ slug, t }: { slug: string; t: Tournament }) {
+function More({ slug, t, reload }: { slug: string; t: Tournament; reload: () => void }) {
   const [params] = useSearchParams()
   const navigate = useNavigate()
   const raw = params.get('do')
@@ -84,8 +84,17 @@ function More({ slug, t }: { slug: string; t: Tournament }) {
     if (fix) q.set('fix', fix)
     navigate(`${more}?${q}`)
   }
-  /** Back to the list, with one sentence saying what just happened. */
-  const done = (message: string) => navigate(`${more}?${new URLSearchParams({ done: message })}`)
+  /**
+   * Back to the list, with one sentence saying what just happened — and with
+   * the tournament read again. The list is drawn from that row (a pause turns
+   * "Pause the tournament" into "Start again", shortening changes the shape
+   * offered), and going back to the same route keeps the copy this screen
+   * loaded. Quietly: the list stays on screen while it refetches.
+   */
+  const done = (message: string) => {
+    reload()
+    navigate(`${more}?${new URLSearchParams({ done: message })}`)
+  }
 
   return (
     <div className="flex flex-col gap-6">

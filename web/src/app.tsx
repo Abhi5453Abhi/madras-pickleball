@@ -1,3 +1,5 @@
+import { useEffect } from 'react'
+import { markPending } from './api/use-rpc'
 import { Route, Routes } from 'react-router'
 import { NotFound } from './pages/not-found'
 import { TodayPage } from './pages/today'
@@ -31,6 +33,8 @@ import { TournamentBoardPage } from './pages/admin/t/board'
  * /login and an organiser on a temporary PIN to /admin/account.
  */
 export function App() {
+  // Mounted: from here on data-pending counts the loads in flight.
+  useEffect(() => markPending(0), [])
   return (
     <Routes>
       <Route path="/" element={<TodayPage />} />

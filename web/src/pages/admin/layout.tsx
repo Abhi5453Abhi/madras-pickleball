@@ -1,4 +1,4 @@
-import { createContext, use } from 'react'
+import { createContext, use, useCallback, useState } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router'
 import type { Output } from '@/api/rpc'
 import { useRpc } from '@/api/use-rpc'
@@ -9,12 +9,22 @@ import { useEffect } from 'react'
 export type Me = Output<'auth.me'>
 
 const MeContext = createContext<Me | null>(null)
+const PatchMeContext = createContext<(patch: Partial<Me>) => void>(() => {})
 
 /** Who is signed in, for the screens under the layout that need more than initials. */
 export function useMe(): Me {
   const me = use(MeContext)
   if (!me) throw new Error('useMe outside the admin layout')
   return me
+}
+
+/**
+ * Lets a screen tell the layout that the signed-in organiser changed — a
+ * PIN chosen, a name — without a round trip, so the layout's own guard
+ * does not bounce the next navigation on stale data.
+ */
+export function usePatchMe() {
+  return use(PatchMeContext)
 }
 
 function initials(name: string) {
@@ -28,7 +38,10 @@ function initials(name: string) {
 export function AdminLayout() {
   const navigate = useNavigate()
   const location = useLocation()
-  const me = useRpc('auth.me', {})
+  const loaded = useRpc('auth.me', {})
+  const [patch, setPatch] = useState<Partial<Me>>({})
+  const me = loaded.state === 'ready' ? { ...loaded, data: { ...loaded.data, ...patch } } : loaded
+  const patchMe = useCallback((p: Partial<Me>) => setPatch((prev) => ({ ...prev, ...p })), [])
 
   // A temporary PIN closes every screen but this one. The server enforces it
   // too; this is so the organiser lands on the form rather than on a refusal.
@@ -78,7 +91,9 @@ export function AdminLayout() {
             <Loading lines={1} />
           ) : (
             <MeContext value={me.data}>
-              <Outlet />
+              <PatchMeContext value={patchMe}>
+                <Outlet />
+              </PatchMeContext>
             </MeContext>
           )
         ) : me.state === 'loading' ? (
