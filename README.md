@@ -18,14 +18,20 @@ cd ..
 npm run dev     # http://localhost:3000 — works from the repo root too
 ```
 
-Node 22 or 24 and nothing else — it brings up its own embedded Postgres on first run and seeds a venue,
-four courts and three accounts. Sign in as `saurabh` / `change-me-now`.
+Node 22 or 24 and nothing else — it brings up its own embedded Postgres on first run and seeds a venue
+with four courts and one organiser. Sign in at `/login` with the temporary PIN `123456` and choose
+your own.
 
 If you already have `DATABASE_URL` exported in your shell for another project, it takes precedence
 and this app will try to use that server. Force its own database with `MPB_DB=embedded npm run dev`.
 
+## Deploying
+
+Deployed with no `DATABASE_URL` it runs as a demo: an embedded database per instance that resets
+when the host recycles it, seeded with a sample Sunday, PIN `123456`. For real use set
+`DATABASE_URL` to a Postgres (Neon's pooled host) in the host's environment — see the runbook.
+
 ## The one-sentence version
 
-The only thing that knows four categories are sharing four courts: a live court board that answers
-*what's on each court, who's next, and is anyone double-booked*, wrapped in the smallest tournament
-manager that can feed it.
+A court owner runs several tournaments at once, each on its own courts; matches flow onto free
+courts by themselves, the organiser only enters scores, and everyone else watches a public page.
