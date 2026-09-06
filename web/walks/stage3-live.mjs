@@ -34,9 +34,16 @@ const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, de
 const page = await ctx.newPage()
 
 // The page fetches its data after it paints; wait until nothing is in flight
-// (the app writes the count onto <html data-pending>) before reading it.
-const settle = (p = page) =>
-  p.waitForFunction(() => document.documentElement.dataset.pending === '0', null, { timeout: 20000 }).catch(() => {})
+// (the app writes the count onto <html data-pending>) before reading it. Look
+// after a frame, never at once: a client-side navigation changes the URL
+// before React has rendered the screen it leads to, so data-pending still
+// reads "0" from the screen being left.
+const settle = async (p = page) => {
+  await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))).catch(() => {})
+  await p
+    .waitForFunction(() => document.documentElement.dataset.pending === '0', null, { timeout: 20000 })
+    .catch(() => {})
+}
 page.on('pageerror', (e) => console.log('   pageerror:', e.message.slice(0, 160)))
 const bad = []
 page.on('response', (r) => {
@@ -57,6 +64,10 @@ const shot = async (name, p = page) => {
 
 /** The text of each court card, keyed by court name. */
 async function cards(p = page) {
+  // Settle first: a click that lands back on the board is a client-side
+  // navigation, so `networkidle` is already true before the new screen has
+  // asked for its data.
+  await settle(p)
   return p.evaluate(() => {
     const out = {}
     for (const el of document.querySelectorAll('[data-court]')) {
@@ -69,6 +80,7 @@ async function cards(p = page) {
 
 /** The two team names on a court card, or null when nothing is on it. */
 async function onCourt(courtName, p = page) {
+  await settle(p)
   return p.evaluate((courtName) => {
     for (const el of document.querySelectorAll('[data-court]')) {
       const name = el.querySelector('.text-eyebrow')?.textContent?.trim()
@@ -259,7 +271,8 @@ await shot('board-overrun')
 psql(`update matches set started_at = now() where id = '${staleId}'`)
 
 console.log('\n12. a paused tournament says so on its court, with the way out')
-psql(`update tournaments set pause_note = 'rain', break_starts_at = now() where slug = '${mixed}'`)
+// paused_at is what the old schema called break_starts_at.
+psql(`update tournaments set pause_note = 'rain', paused_at = now() where slug = '${mixed}'`)
 // Take the Mixed match off court so the paused card is the empty one from the mockup.
 const mixedLive = await onCourt('Court 3')
 await page.goto(`${BASE}/admin/live/move/${mixedLive.href.split('/admin/m/')[1]}`, { waitUntil: 'networkidle' })
