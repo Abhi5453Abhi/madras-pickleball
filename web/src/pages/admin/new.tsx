@@ -23,8 +23,8 @@ const DISCIPLINES = [
 
 const FORMATS = [
   { key: 'none', label: 'Everyone plays everyone' },
-  { key: 'final_only', label: '…then the top 2 play a final' },
-  { key: 'semis_and_final', label: '…then the top 4 play semis and a final' },
+  { key: 'final_only', label: 'League, then top 2 play a final' },
+  { key: 'semis_and_final', label: 'League, then top 4 play semis and final' },
 ] as const
 
 const MONTHS = [
