@@ -165,7 +165,7 @@ function NewForm({ calendar, todayKey }: { calendar: Calendar; todayKey: string 
       <div className="flex flex-col gap-2">
         <Chips legend="Format" name="format" value={format} onChange={setFormat} options={FORMATS} cols={1} />
         <p className="text-meta text-text-3">
-          Level on wins? Most points scored goes through. Best of 3 games to 11.
+          If two teams tie on wins, whoever scored more points goes through. Matches are best of 3 games to 11.
         </p>
       </div>
 
