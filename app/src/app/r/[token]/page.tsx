@@ -52,7 +52,7 @@ export default async function SignupPage(props: PageProps<'/r/[token]'>) {
           </div>
         ) : (
           <>
-            <SignupForm token={token} doubles={view.discipline === 'doubles'} />
+            <SignupForm token={token} doubles={view.discipline === 'doubles'} tournamentName={view.tournament.name} />
             <NetRule className="mt-8" />
             <p className="mt-3 text-meta text-text-3">
               Your name goes on the public page. Your phone number never does.
