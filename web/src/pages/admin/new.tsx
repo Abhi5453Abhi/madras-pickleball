@@ -3,7 +3,7 @@ import { useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
 import type { Discipline, FinalsStage, Gender, Output } from '@/api/contract'
 import { useAction, useRpc } from '@/api/use-rpc'
-import { Chevron, CourtSwatch, Input, Label, Notice } from '@/components/ui'
+import { Chevron, Input, Label, Notice } from '@/components/ui'
 import { venueDayKey } from '@/lib/time'
 import { Loading, LoadError, useTitle } from '@/lib/page'
 
@@ -191,7 +191,6 @@ function NewForm({ calendar, todayKey }: { calendar: Calendar; todayKey: string 
                       : 'border-line-key bg-paper text-text hover:bg-ground',
                 )}
               >
-                <CourtSwatch colorKey={c.colorKey} size="md" onInk={on} />
                 {c.name}
                 {held ? <span className="font-normal">· {held.name}</span> : null}
               </button>
@@ -212,7 +211,7 @@ function NewForm({ calendar, todayKey }: { calendar: Calendar; todayKey: string 
           disabled={pending}
           className="tap-xl w-full rounded-control bg-ink px-5 text-[20px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {pending ? 'Making it…' : 'Create · opens sign-ups'}
+          {pending ? 'Making it…' : 'Create'}
         </button>
       </div>
     </form>

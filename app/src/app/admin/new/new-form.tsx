@@ -3,7 +3,7 @@
 import { clsx } from 'clsx'
 import { useActionState, useMemo, useState } from 'react'
 import { createTournamentAction, type NewState } from './actions'
-import { CourtSwatch, Input, Label, Notice } from '@/components/ui'
+import { Input, Label, Notice } from '@/components/ui'
 import type { CourtCalendar } from '@/server/events'
 
 const GENDERS = [
@@ -169,7 +169,6 @@ export function NewForm({
                       : 'border-line-key bg-paper text-text hover:bg-ground',
                 )}
               >
-                <CourtSwatch colorKey={c.colorKey} size="md" onInk={on} />
                 {c.name}
                 {held ? <span className="font-normal">· {held.name}</span> : null}
               </button>
@@ -192,7 +191,7 @@ export function NewForm({
           disabled={pending}
           className="tap-xl w-full rounded-control bg-ink px-5 text-[20px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {pending ? 'Making it…' : 'Create · opens sign-ups'}
+          {pending ? 'Making it…' : 'Create'}
         </button>
       </div>
     </form>
