@@ -17,7 +17,9 @@
     "setup": "tsx scripts/setup.ts",
     "predev": "tsx scripts/setup.ts",
     "db:bootstrap": "tsx scripts/gen-bootstrap.ts",
-    "e2e": "node scripts/stage1.mjs"
+    "e2e": "node scripts/stage1.mjs",
+    "seed:games": "tsx scripts/seed-games.ts",
+    "tick": "tsx scripts/tick.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

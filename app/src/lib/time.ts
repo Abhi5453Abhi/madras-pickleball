@@ -75,3 +75,24 @@ export function endOfVenueDay(from: Date = new Date()): Date {
 export function startOfVenueDay(from: Date = new Date()): Date {
   return new Date(`${venueDayKey(from)}T00:00:00+05:30`)
 }
+
+/**
+ * A venue-local date and time as the instant it actually is.
+ *
+ * `new Date('2026-09-15T19:00')` is the *server's* seven o'clock, which on a
+ * UTC host is half past midnight in Chennai. India has one offset nationwide
+ * and no daylight saving, so +05:30 is a constant rather than a lookup.
+ *
+ * Returns null for anything that isn't a date and a time, so a hand-typed form
+ * value can be checked rather than becoming an Invalid Date three layers down.
+ */
+export function venueInstant(dayKey: string, hhmm: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey) || !/^\d{2}:\d{2}$/.test(hhmm)) return null
+  const d = new Date(`${dayKey}T${hhmm}:00+05:30`)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+/** "19:00" in venue time — what a time input wants back. */
+export function venueTimeValue(d: Date): string {
+  return venueTime(d)
+}

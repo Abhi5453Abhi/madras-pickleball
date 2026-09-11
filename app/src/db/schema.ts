@@ -1033,3 +1033,294 @@ export const auditLog = pgTable(
   },
   (t) => [index('audit_entity_idx').on(t.entity, t.entityId, t.at), index('audit_at_idx').on(t.at)],
 )
+
+// ═══════════════════════════ daily games ═══════════════════════════
+//
+// Open-play sessions: the host hosts, players join with a name and a phone and
+// no login, they play, and the money follows afterwards. Sessions are their own
+// aggregate rather than a tournament wearing a `kind` column — docs/ADR-daily-games.md
+// decision 1 has the argument, including what that costs in stage 7.
+//
+// Money is integer paise here and everywhere downstream. There is no float in
+// this feature at any stage (SPEC-v4 §4, "Money is integer paise").
+
+/** Open play is the drop-in Tuesday; booked is a court hired by a known group. */
+export const sessionKindEnum = pgEnum('session_kind', ['open_play', 'booked'])
+
+/**
+ * `locked` is the point attendance stops being editable — the moment stage 3
+ * hangs charge creation off. `cancelled` and `locked` are terminal.
+ */
+export const sessionStatusEnum = pgEnum('session_status', [
+  'draft',
+  'open',
+  'live',
+  'ended',
+  'locked',
+  'cancelled',
+])
+
+/**
+ * SPEC-v4 §5, Participation. `absent` produces no session charge — they did not
+ * play, so they do not owe the session fee; an optional no-show fee is a separate
+ * policy charge in stage 3 and never this state wearing a different label.
+ */
+export const participationStateEnum = pgEnum('participation_state', [
+  'joined',
+  'confirmed',
+  'waitlisted',
+  'withdrawn',
+  'checked_in',
+  'played',
+  'absent',
+])
+
+/** Who put them on the list. A third of people always reply in the group instead. */
+export const participationSourceEnum = pgEnum('participation_source', ['self', 'host'])
+
+export const gameSessions = pgTable(
+  'game_sessions',
+  {
+    id: text('id').primaryKey(),
+    venueId: text('venue_id')
+      .notNull()
+      .references(() => venues.id, { onDelete: 'cascade' }),
+    /** Public URL is /g/<slug>; a separate namespace from tournaments' /t/<slug>. */
+    slug: text('slug').notNull(),
+    title: text('title').notNull(),
+    kind: sessionKindEnum('kind').notNull().default('open_play'),
+    status: sessionStatusEnum('status').notNull().default('draft'),
+
+    startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+    endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+
+    /** Integer paise. No float touches money at any stage. */
+    pricePaise: integer('price_paise').notNull().default(0),
+    currency: text('currency').notNull().default('INR'),
+
+    /** Soft: 16 is comfortable, 18 is fine, and "open 4 more" is one tap (s1c). */
+    capacity: integer('capacity').notNull().default(16),
+    /** Display only until stage 2 gives sessions real court holds. */
+    courtCount: integer('court_count').notNull().default(1),
+
+    /**
+     * The gate is per session and defaults on. A host who never told anyone can
+     * turn it off rather than have sixteen people silently withdrawn — in stage 1
+     * the host is the only delivery channel there is (ADR 6d).
+     */
+    confirmationGate: boolean('confirmation_gate').notNull().default(true),
+
+    /**
+     * Resolved boundaries, written when the session is created or rescheduled.
+     * Stored rather than recomputed so a transition is still explainable months
+     * later and so `planSession` can stay a pure function of this row.
+     */
+    confirmOpensAt: timestamp('confirm_opens_at', { withTimezone: true }),
+    confirmDeadlineAt: timestamp('confirm_deadline_at', { withTimezone: true }),
+    autoEndAt: timestamp('auto_end_at', { withTimezone: true }),
+    lockAt: timestamp('lock_at', { withTimezone: true }),
+    /** Which policy produced those boundaries. */
+    policyVersion: integer('policy_version').notNull().default(1),
+
+    notes: text('notes'),
+
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+    endedByUserId: text('ended_by_user_id').references(() => users.id),
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    cancelReason: text('cancel_reason'),
+    createdByUserId: text('created_by_user_id').references(() => users.id),
+
+    /** Bumped in the same transaction as any visible write; drives the poll route. */
+    streamVersion: bigint('stream_version', { mode: 'number' }).notNull().default(0),
+
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('game_sessions_slug_key').on(t.slug),
+    index('game_sessions_venue_start_idx').on(t.venueId, t.startsAt),
+    index('game_sessions_status_start_idx').on(t.status, t.startsAt),
+    check('game_sessions_span', sql`ends_at > starts_at`),
+    check('game_sessions_price_nonneg', sql`price_paise >= 0`),
+    check('game_sessions_inr', sql`currency = 'INR'`),
+    check('game_sessions_capacity', sql`capacity >= 1 and capacity <= 200`),
+    check('game_sessions_courts', sql`court_count >= 0 and court_count <= 50`),
+    check(
+      'game_sessions_gate_order',
+      sql`confirm_opens_at is null or confirm_deadline_at is null or confirm_opens_at <= confirm_deadline_at`,
+    ),
+  ],
+)
+
+export const sessionParticipants = pgTable(
+  'session_participants',
+  {
+    id: text('id').primaryKey(),
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => gameSessions.id, { onDelete: 'cascade' }),
+    /**
+     * Deliberately NOT `on delete cascade`. `mergePlayers` hard-deletes a player
+     * it believes is an orphan (registration.ts:853); a cascade here would take
+     * someone's whole attendance history with it. No action turns that into an
+     * error, and the merge itself now refuses — ADR 8b.
+     */
+    playerId: text('player_id')
+      .notNull()
+      .references(() => players.id),
+    /**
+     * Who owes for this spot. Equal to `player_id` for everyone except a guest,
+     * whose payer defaults to the inviter. Keeping the two apart is what stops a
+     * guest's game landing in the inviter's attendance history (s1k).
+     *
+     * INVARIANT: attendance, history and stats key on `player_id`, never on this.
+     */
+    payerPlayerId: text('payer_player_id')
+      .notNull()
+      .references(() => players.id),
+    invitedByPlayerId: text('invited_by_player_id').references(() => players.id),
+
+    state: participationStateEnum('state').notNull().default('joined'),
+
+    /** Arrival order within the session. Never changes; the waitlist is FIFO on it. */
+    seq: integer('seq').notNull(),
+    /**
+     * Which of the capacity seats this participation holds, 1-based. Null while
+     * waitlisted or withdrawn. `session_participants_seat_uq` is what actually
+     * stops two people taking the sixteenth seat — not a lock anyone has to
+     * remember to take (ADR 5).
+     */
+    seatNo: integer('seat_no'),
+
+    isGuest: boolean('is_guest').notNull().default(false),
+    source: participationSourceEnum('source').notNull().default('self'),
+
+    /** Name as given, snapshotted, so a later rename doesn't rewrite the night. */
+    displayName: text('display_name').notNull(),
+    /** Some people don't want their Tuesday evenings advertised (SPEC-v4 §8). */
+    hideFromPublic: boolean('hide_from_public').notNull().default(false),
+
+    /**
+     * The capability that lets a phone with no login confirm or cancel its own
+     * spot: 160 random bits, in the URL at /s/<token>.
+     *
+     * Stored as it is, and not hashed — which is a deliberate departure from
+     * every other token in this schema, so it needs its reason written down.
+     * In stage 1 the host IS the delivery channel: the Tonight screen puts a
+     * one-tap WhatsApp link beside anybody who has not confirmed, and it cannot
+     * do that from a digest. Hashing would also make the link unrecoverable for
+     * a player whose phone cleared its storage, with no way to send them a new
+     * one. What it would buy is small: unlike a session token this authorises
+     * nothing but confirming or giving up one spot in one game, and an attacker
+     * who can read this table already has every name and phone number in it.
+     *
+     * It is rotatable (unlike a value derived from the row id), and stage 5
+     * replaces it with a verified device session.
+     */
+    manageToken: text('manage_token').notNull(),
+
+    deviceId: text('device_id'),
+    ipHash: text('ip_hash'),
+
+    joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+    promotedAt: timestamp('promoted_at', { withTimezone: true }),
+    withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
+    withdrawnBy: text('withdrawn_by'),
+    withdrawReason: text('withdraw_reason'),
+    checkedInAt: timestamp('checked_in_at', { withTimezone: true }),
+    attendanceMarkedAt: timestamp('attendance_marked_at', { withTimezone: true }),
+    attendanceMarkedBy: text('attendance_marked_by'),
+
+    version: integer('version').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    /**
+     * One live participation per human per session. An allowlist rather than
+     * `<> 'withdrawn'`, so a terminal state added later cannot silently re-enter
+     * the index and collide with a genuine rejoin.
+     */
+    uniqueIndex('session_participants_live_uq')
+      .on(t.sessionId, t.playerId)
+      .where(
+        sql`state in ('joined'::participation_state, 'confirmed'::participation_state, 'waitlisted'::participation_state, 'checked_in'::participation_state, 'played'::participation_state, 'absent'::participation_state)`,
+      ),
+    /** Two people cannot hold the same seat. This is the capacity interlock. */
+    uniqueIndex('session_participants_seat_uq')
+      .on(t.sessionId, t.seatNo)
+      .where(
+        sql`seat_no is not null and state in ('joined'::participation_state, 'confirmed'::participation_state, 'checked_in'::participation_state, 'played'::participation_state, 'absent'::participation_state)`,
+      ),
+    uniqueIndex('session_participants_seq_uq').on(t.sessionId, t.seq),
+    uniqueIndex('session_participants_token_uq').on(t.manageToken),
+    index('session_participants_session_state_idx').on(t.sessionId, t.state),
+    index('session_participants_player_idx').on(t.playerId),
+    index('session_participants_payer_idx').on(t.payerPlayerId),
+    check('session_participants_guest_has_host', sql`is_guest = false or invited_by_player_id is not null`),
+    /** Waitlisted and withdrawn hold no seat; everyone else holds exactly one. */
+    check(
+      'session_participants_seat_shape',
+      sql`(state in ('waitlisted'::participation_state, 'withdrawn'::participation_state) and seat_no is null)
+          or (state not in ('waitlisted'::participation_state, 'withdrawn'::participation_state) and seat_no is not null)`,
+    ),
+    check('session_participants_seat_positive', sql`seat_no is null or seat_no >= 1`),
+    check('session_participants_seq_positive', sql`seq >= 1`),
+  ],
+)
+
+/**
+ * One row per scheduled boundary the reconciler has already acted on.
+ *
+ * A pure planner makes two overlapping ticks compute PRECISELY the same actions,
+ * which amplifies a replay rather than preventing one. The key is derived from
+ * the boundary and never from `now`, the insert happens in the same transaction
+ * as the effect, and an empty `returning` means "already done" (ADR 6b).
+ *
+ * `kind` is text, not an enum: stages 4 to 6 add notice, sweep and probe kinds,
+ * and `ALTER TYPE … ADD VALUE` cannot be used in the migration that adds it.
+ */
+export const sessionScheduledActions = pgTable(
+  'session_scheduled_actions',
+  {
+    id: text('id').primaryKey(),
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => gameSessions.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    /** The scheduled instant this action belongs to — the idempotency key. */
+    boundaryAt: timestamp('boundary_at', { withTimezone: true }).notNull(),
+    firedAt: timestamp('fired_at', { withTimezone: true }).notNull().defaultNow(),
+    /** applied | noop | skipped_stale */
+    outcome: text('outcome').notNull(),
+    detail: jsonb('detail'),
+  },
+  (t) => [
+    uniqueIndex('session_scheduled_actions_uq').on(t.sessionId, t.kind, t.boundaryAt),
+    index('session_scheduled_actions_session_idx').on(t.sessionId, t.boundaryAt),
+  ],
+)
+
+/**
+ * Scheduler health. The Tonight screen shows the age of the last tick and goes
+ * red when it is stale — the signal an opportunistic page-render trigger would
+ * have hidden by quietly doing the work on render (SPEC-v4 §7).
+ */
+export const schedulerRuns = pgTable(
+  'scheduler_runs',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    seen: integer('seen').notNull().default(0),
+    applied: integer('applied').notNull().default(0),
+    error: text('error'),
+  },
+  (t) => [index('scheduler_runs_name_idx').on(t.name, t.startedAt)],
+)

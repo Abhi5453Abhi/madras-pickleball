@@ -52,6 +52,18 @@ export default async function AdminHome(props: PageProps<'/admin'>) {
         )}
       </header>
 
+      {/* Daily games are the other half of the venue's week and have their own
+          list; tournaments and open play never share a screen. */}
+      <Link
+        href="/admin/games"
+        className="tap flex items-center justify-between gap-3 rounded-control border border-line-key bg-paper px-4 text-[16px] font-semibold text-text"
+      >
+        Daily games
+        <span aria-hidden className="text-text-3">
+          &rsaquo;
+        </span>
+      </Link>
+
       {nothing ? (
         <div className="relative overflow-hidden rounded-card border border-line-strong bg-paper p-6 shadow-card">
           <CourtMark className="pointer-events-none absolute -right-6 -bottom-8 size-40 text-ink opacity-[0.05]" />

@@ -97,6 +97,61 @@ update users set pin_hash = '<paste>', must_change_pin = true where username = '
 2. **Locked out by wrong tries** → wait fifteen minutes, or clear them on the database:
    `psql "$DATABASE_URL" -c "delete from attempts"`.
 
+## Daily games — the scheduler
+
+Open play needs a clock. Three things happen without anybody pressing anything:
+
+| When | What |
+|---|---|
+| 3 hours before | Confirmations open — every player's own link starts asking "still coming?" |
+| 1 hour before | Spots nobody confirmed are released and the waitlist moves up |
+| 30 min after the finish | A game nobody ended ends itself |
+| 45 min after it ended | Who played is fixed. Nobody who was not ticked off is charged |
+
+All of it is driven by **one URL**: `POST /api/cron/tick`, with
+`Authorization: Bearer $CRON_SECRET`. **It wants running every 5 to 15 minutes.**
+
+**Two environment variables on Vercel:**
+
+- `CRON_SECRET` — any long random string. Without it the endpoint answers 401 to everybody,
+  including Vercel, which is deliberate: an unguarded state-changing GET on a public URL is the
+  bug this whole design avoids.
+- `MPB_TOKEN_SECRET` — any long random string. It makes each player's own spot link unguessable
+  even to somebody who has seen a database id. Not required; set it.
+
+**Vercel's free plan runs a cron once a day and will not accept anything more often**, so
+`app/vercel.json` carries a daily schedule and the `daily games tick` GitHub Action pings the
+same URL every ten minutes for nothing. Two repository secrets make it work: `MPB_URL` (the
+site, `https://…`, no trailing slash) and `MPB_CRON_SECRET` (the same value as `CRON_SECRET`).
+When the project moves to Vercel Pro, change `app/vercel.json` to `*/10 * * * *` and delete the
+workflow.
+
+### The gate did not run
+
+Every game screen shows how long ago the tick last finished, and goes red past thirty minutes.
+**Missing ticks costs time, not correctness** — three missed weeks produce one catch-up, not
+three replayed cycles, and a boundary whose moment has gone is recorded as missed rather than
+fired late. Nobody loses a spot because of our outage.
+
+What to do:
+
+1. On any game, press **Run it now**. That does exactly what the tick would have done.
+2. Check the GitHub Action's last run, and `CRON_SECRET` / `MPB_CRON_SECRET` still matching.
+3. On a laptop pointed at the same database, `cd app && npm run tick` does the same thing.
+
+### Somebody says they lost their spot
+
+Their link is `/s/<token>` and the host's screen can send it to them again — there is a
+**Nudge** button beside anybody who has not confirmed, and a **Tell them** button beside
+anybody the waitlist promoted. Nothing is ever messaged automatically; in this stage the host
+is the delivery channel.
+
+### Nobody was charged for a game
+
+Correct, if nobody was ticked off. The host taps who turned up, and anybody who was not ticked
+off by the time the night closed is marked away, which produces no charge. Failing to charge is
+recoverable; charging sixteen people who were not there is not.
+
 ## Tournament morning
 
 - **Ping the site about 10 minutes before the first match.** Neon autosuspends after a few minutes
