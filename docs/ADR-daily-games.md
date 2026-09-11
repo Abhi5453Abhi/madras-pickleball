@@ -279,6 +279,13 @@ player and a fresh seat. The check runs before a player is resolved at all, and 
 is the same shape whether the name matched or not, so the public form cannot be used to ask
 "is this number Suresh's?".
 
+The response is the same for somebody who has just joined and somebody who was already on
+the list — the earlier version returned `alreadyIn` to the browser, which made the form a
+one-request oracle answering *is this number playing tonight* for any number under any name.
+**One residual signal is not closeable here and should not be pretended away:** the public
+page shows the count, so anybody can watch whether joining moved it. Limits make that slow;
+the OTP at stage 5, demanded when a payment method is linked, is what makes it wrong.
+
 A host adding a **name only** (`s1h`, `s1k`) has no phone to match on. It matches a
 same-name player already in the venue's book — phone or no phone, which is what
 `registration.ts:331` has always done and is right for the host, who is looking at the
@@ -286,6 +293,13 @@ person. What it refuses is a bare name that exactly matches somebody **already o
 list**: that is either a second Priya or a second tap, and only the host can say which, so
 they are asked for a surname or a number rather than having a duplicate player created for
 them in silence.
+
+**This one also expires.** A walk-in "Deepak Raj" still binds silently to member Deepak Raj's
+player row when he is not himself on that list. Today that is a wrong attendance row, which
+is recoverable. Once stage 3 raises charges it is a misdirected debit, and at that point the
+exact-name match against a phone-bearing player has to become a one-tap host confirmation —
+"the Deepak Raj on 98400 12345?" — using the `flagged` value the join already computes and
+currently only half uses.
 
 ### 8a. Self-cancel needs authority, and Stage 1 has none without this
 
@@ -311,10 +325,30 @@ token in this schema.** Two earlier designs were tried and both were wrong:
   link leaks, and — the trap that killed it — silently invalidates every live link the day
   somebody sets the secret it is salted with.
 
-Storing it buys back re-sending and rotation. What it costs is small: unlike a session token
-this authorises nothing but confirming or giving up one spot in one game, and an attacker who
-can read the table already has every name and phone number in it. Stage 5 replaces it with a
-verified device session.
+Storing it buys back re-sending and rotation — and rotation is implemented, not just
+claimed: `rotateSpotToken` draws a new one and retires the old, reachable from the host's
+own screen for the day a link ends up in the wrong group chat.
+
+**What it costs, stated properly.** The first version of this paragraph said an attacker who
+can read the table already has every name and phone number in it, so the token adds nothing.
+That is wrong, and it is worth being clear about why: a name is a *record*, a token is a
+*live capability*. A read-only leak — a backup, a `select *` in a log, a console screenshot,
+a reporting replica — would now also hand over the power to cancel every spot in every game.
+Hashing makes that class of leak inert, and that asymmetry is precisely why every other token
+in this schema is hashed.
+
+The judgement is that for stage 1 the capability is small enough to trade: confirming or
+giving up one seat in one game, for one evening, recoverable by the host in a tap. **That
+trade expires the moment `/s/` shows money.** SPEC-v4 §8 requires a verified device for
+financial access, and this token must not become what stage 3 reaches for — at that point it
+is hashed and the raw value kept encrypted for the host's send, or it is replaced outright by
+the device session of stage 5. Written here rather than left to be rediscovered.
+
+**It does not ride a `Referer`.** `/s/` and `/r/` send `Referrer-Policy: no-referrer` from
+`next.config.ts`. Browsers already default to `strict-origin-when-cross-origin`, which keeps
+the path off a cross-origin request — but a default is the browser's to change and these two
+paths *are* the credential. What no header fixes is that WhatsApp's link preview fetcher sees
+the URL; that is true of any forwarded capability link and is already true of `/r/`.
 
 **Its rate limiter is its own.** The existing `checkTokenLookupAllowed` counts failures
 across the whole venue and locks out at a hundred an hour — correct for a QR code inside the
@@ -416,6 +450,21 @@ where each is fixed, because the fix is the interesting part:
 | The Tonight toggle was a 3.3:1 green slab labelled "Tap" / "Here", with no accessible name — sixteen buttons all called "Tap". | Ink fill, "Not here" / "Here", and a name that carries whose row it is. |
 | A cancelled game read "Finished"; a waitlisted player on a finished game was still told they might move up; a cancellation with no reason typed showed no notice at all. | Each state renders its own sentence. |
 | The test suite's `beforeEach` re-seeded a venue and an organiser that `truncate` never cleared, so every test after the first died in the hook — and its idempotency test wound the session back to a status it already had, leaving an empty plan, so the replay defence it claimed to prove was never executed. | Seed once; the idempotency test now uses `go_live`, whose plan does not depend on participant state, and asserts the claim row count. |
+
+### The second round
+
+The same two reviewers were sent back at the fixes. Four of them held; three did not, and
+one fix had introduced a worse bug than the one it closed:
+
+| Found on re-review | Fix |
+|---|---|
+| **The capacity floor I had just "fixed" was unsafe.** Flooring on the headcount instead of the highest seat number meant that after withdrawals — seats `{12, 15}` held by two people — lowering the cap to four left both of them *above* it and invisible to `freeSeats`, which scans `1..capacity`. The promotion in the same call then filled 1–4 on top of them: six people in a four-seat game, proved on a live database. | Seats are compacted onto `1..n` under the lock before the cap moves, so the highest number equals the headcount and the floor is right without being over-conservative. In two statements via an offset, because a single renumbering `UPDATE` raises a duplicate key the moment the new order swaps two rows — also proved. |
+| **Closing the seat-stuffing hole made the join oracle worse.** Matching on the number alone, before any name is resolved, meant one request answered *is this number playing tonight* for any number under any name — cheaper and quieter than before, since the early return takes no seat and never reaches the host's screen. | `alreadyIn` no longer leaves the server. Both outcomes render one sentence; only a device match returns a token. The residual signal — the public count moves when somebody joins — is named in decision 8 rather than pretended away, and stage 5's OTP is what actually closes it. |
+| **The guest self-invite fix left a dangling foreign key**, making that particular merge impossible for ever with nothing the host could do. | The self-invite is cleared whichever id it still carries. |
+| **The plaintext-token argument had a false premise and an unimplemented claim** — "an attacker who can read the table already has everything" conflates a record with a live capability, and there was no rotation. | Decision 8a rewritten to say what it really costs and when the trade expires; `rotateSpotToken` implemented and on the host's screen. |
+| The new spot limiter exempted a request with no forwarded IP, and its cap was low enough that one person on the venue Wi-Fi could lock everybody out of their own links. | Missing IP is its own bucket; the cap is now hygiene rather than a control, which is honest about what a 160-bit token already does. |
+| Seating somebody off the waitlist pushed the cap up with no audit row and no status guard. | Both added. |
+| The cron 500 still returned driver text, and "run it now" reported only failure even when most games had reconciled. | Both fixed. |
 
 Everything above is a defect found by reading, not by running: `npm install` is blocked in
 the environment this was written in, so the SQL-level claims were proved against a real

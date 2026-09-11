@@ -153,11 +153,20 @@ export async function recordTokenAttempt(
  * A venue-wide lockout on a public URL would be a denial of service anyone
  * could trigger with a hundred requests.
  */
-const SPOT_FAIL_PER_HOUR = 60
+/**
+ * Deliberately high. The token is 160 random bits, so nothing here is standing
+ * between an attacker and a guess — this is hygiene, to stop a spray filling
+ * the table and the logs. Set low it would be worse than useless: the venue is
+ * one NAT, so a tight per-IP cap on a PUBLIC URL is something anybody on the
+ * club Wi-Fi could spend to lock everybody else out of their own spot links.
+ */
+const SPOT_FAIL_PER_HOUR = 300
+/** A request with no forwarded IP is its own bucket, never an exemption. */
+const NO_IP = 'no-ip'
 
 export async function checkSpotLookupAllowed(ipHash: string | null) {
-  if (!ipHash) return { allowed: true as const }
   const hourAgo = new Date(Date.now() - 3_600_000)
+  const key = ipHash ?? NO_IP
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(tokenAttempts)
@@ -165,7 +174,7 @@ export async function checkSpotLookupAllowed(ipHash: string | null) {
       and(
         eq(tokenAttempts.kind, 'spot'),
         eq(tokenAttempts.succeeded, false),
-        eq(tokenAttempts.ipHash, ipHash),
+        eq(tokenAttempts.ipHash, key),
         gte(tokenAttempts.at, hourAgo),
       ),
     )

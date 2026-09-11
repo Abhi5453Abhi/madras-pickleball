@@ -105,7 +105,10 @@ export const publicSessions = cache(async (now: Date = new Date()): Promise<Publ
     .where(
       and(
         isNull(gameSessions.deletedAt),
-        inArray(gameSessions.status, ['open', 'live']),
+        // Cancelled games stay on the list until they would have finished.
+        // Somebody who saw one an hour ago and comes back to an empty list has
+        // no way to tell whether it was called off or they imagined it.
+        inArray(gameSessions.status, ['open', 'live', 'cancelled']),
         gte(gameSessions.autoEndAt, listCutoff(now)),
       ),
     )
@@ -238,7 +241,7 @@ export async function publicSessionsVersion(now: Date = new Date()): Promise<str
     .where(
       and(
         isNull(gameSessions.deletedAt),
-        inArray(gameSessions.status, ['open', 'live']),
+        inArray(gameSessions.status, ['open', 'live', 'cancelled']),
         gte(gameSessions.autoEndAt, listCutoff(now)),
       ),
     )

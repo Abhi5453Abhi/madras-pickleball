@@ -28,6 +28,7 @@ import {
   cancelGame,
   changePayer,
   hidePerson,
+  newSpotLink,
   openMoreSpots,
   publishGame,
   removePerson,
@@ -283,6 +284,13 @@ export default async function AdminGame(props: PageProps<'/admin/g/[slug]'>) {
                           More
                         </summary>
                         <div className="mt-2 flex flex-col gap-2.5 rounded-control border border-line-strong bg-sunken p-3.5">
+                          <form action={newSpotLink} className="flex flex-col gap-2">
+                            <input type="hidden" name="slug" value={slug} />
+                            <input type="hidden" name="participantId" value={e.id} />
+                            <Button type="submit" variant="secondary" className="w-full">
+                              Give them a new link
+                            </Button>
+                          </form>
                           <form action={hidePerson} className="flex flex-col gap-2">
                             <input type="hidden" name="slug" value={slug} />
                             <input type="hidden" name="participantId" value={e.id} />

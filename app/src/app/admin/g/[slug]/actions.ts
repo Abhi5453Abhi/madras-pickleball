@@ -13,6 +13,7 @@ import {
   leaveSession,
   publishSession,
   roster,
+  rotateSpotToken,
   seatFromWaitlist,
   setCapacity,
   setHidden,
@@ -265,6 +266,26 @@ export async function promoteFromWaitlist(formData: FormData) {
   )
 }
 
+/**
+ * Replace one person's link. For when it ends up in the wrong group chat, or
+ * when somebody needs a fresh one sent.
+ */
+export async function newSpotLink(formData: FormData) {
+  await requireUser('admin')
+  await ensureReady()
+  const slug = String(formData.get('slug') ?? '')
+  const participantId = String(formData.get('participantId') ?? '')
+  const found = await own(slug, participantId)
+  if (!found) back(slug, { err: 'That spot has gone.' })
+  const res = await rotateSpotToken(participantId)
+  back(
+    slug,
+    res.ok
+      ? { note: `${found.entry.name} has a new link — the old one stops working. Send it to them.` }
+      : { err: res.error },
+  )
+}
+
 export async function hidePerson(formData: FormData) {
   await requireUser('admin')
   await ensureReady()
@@ -304,6 +325,18 @@ export async function runGateNow(formData: FormData) {
   const to = formData.get('from') === 'tonight' ? 'tonight' : 'game'
   const out = await runTick()
   if (out.skipped) back(slug, { note: 'Already running — give it a moment.' }, to)
-  if (out.error) back(slug, { err: 'The gate didn’t finish. Try again in a minute.' }, to)
+  if (out.error) {
+    // Some games may well have reconciled; saying only that it failed sends the
+    // host looking for a problem that has already half fixed itself.
+    back(
+      slug,
+      {
+        err: out.applied
+          ? `${out.applied} change${out.applied === 1 ? '' : 's'} went through, but some games didn’t. Try again in a minute.`
+          : 'The gate didn’t finish. Try again in a minute.',
+      },
+      to,
+    )
+  }
   back(slug, { note: out.applied ? `Done — ${out.applied} change${out.applied === 1 ? '' : 's'}.` : 'Nothing was due.' }, to)
 }

@@ -4,7 +4,7 @@ import { rupees } from '@/lib/display'
 import { venueDate, venueTime } from '@/lib/time'
 import { ensureReady } from '@/server/bootstrap'
 import { publicSessions, publicSessionsVersion, type PublicSession } from '@/server/daily-public'
-import { Masthead } from '../t/court-card'
+import { Eyebrow, Masthead } from '../t/court-card'
 import { GamesRefresh } from './refresh'
 
 /**
@@ -23,6 +23,7 @@ export const metadata = {
 }
 
 function spotsWord(s: PublicSession) {
+  if (s.status === 'cancelled') return 'Not happening'
   if (s.status === 'live') return 'On now'
   if (s.full) return s.waiting > 0 ? `Full · ${s.waiting} waiting` : 'Full — join the waitlist'
   const left = s.capacity - s.taken
@@ -34,6 +35,7 @@ export default async function GamesPage() {
   const now = new Date()
   const [sessions, version] = await Promise.all([publicSessions(now), publicSessionsVersion(now)])
 
+  const live = sessions.filter((s) => s.status !== 'cancelled')
   const anyLive = sessions.some((s) => s.status === 'live')
   const byDay = new Map<string, PublicSession[]>()
   for (const s of sessions) {
@@ -48,7 +50,7 @@ export default async function GamesPage() {
       <GamesRefresh endpoint="/api/public/games/version" version={version} mode={anyLive ? 'live' : 'idle'} />
       <Masthead
         title="Games"
-        sub={sessions.length ? `${sessions.length} coming up` : 'Nothing on today'}
+        sub={live.length ? `${live.length} coming up` : 'Nothing on today'}
       />
 
       <div className="mx-auto w-full max-w-3xl px-4 pt-6">
@@ -63,7 +65,7 @@ export default async function GamesPage() {
           <div className="flex flex-col gap-7">
             {[...byDay.entries()].map(([day, list]) => (
               <section key={day}>
-                <h2 className="font-score text-eyebrow text-text-2 uppercase">{day}</h2>
+                <Eyebrow>{day}</Eyebrow>
                 <Panel className="mt-2">
                   <ul className="divide-y divide-line">
                     {list.map((s) => (
@@ -73,19 +75,31 @@ export default async function GamesPage() {
                           className="flex min-h-[76px] items-center gap-3 px-4 py-3.5 active:bg-sunken"
                         >
                           <div className="min-w-0 flex-1">
-                            <p className="text-row font-semibold text-text">{s.title}</p>
+                            <p
+                              className={
+                                s.status === 'cancelled'
+                                  ? 'text-row font-semibold text-text-3 line-through'
+                                  : 'text-row font-semibold text-text'
+                              }
+                            >
+                              {s.title}
+                            </p>
                             <p className="num mt-0.5 text-meta text-text-2">
                               {venueTime(s.startsAt)}–{venueTime(s.endsAt)} ·{' '}
                               {s.courtCount === 1 ? '1 court' : `${s.courtCount} courts`} ·{' '}
                               {s.pricePaise > 0 ? rupees(s.pricePaise) : 'Free'}
                             </p>
                             <p className="mt-1 flex flex-wrap items-center gap-1.5">
-                              <Tag tone={s.full ? 'waiting' : 'neutral'}>
-                                <span className="num">
-                                  {s.taken}/{s.capacity}
-                                </span>{' '}
-                                in
-                              </Tag>
+                              {s.status === 'cancelled' ? (
+                                <Tag tone="alert">Called off</Tag>
+                              ) : (
+                                <Tag tone={s.full ? 'waiting' : 'neutral'}>
+                                  <span className="num">
+                                    {s.taken}/{s.capacity}
+                                  </span>{' '}
+                                  in
+                                </Tag>
+                              )}
                               <span className="text-meta text-text-3">{spotsWord(s)}</span>
                             </p>
                           </div>

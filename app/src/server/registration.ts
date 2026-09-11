@@ -919,10 +919,20 @@ export async function mergePlayers(
           .update(sessionParticipants)
           .set({ invitedByPlayerId: keepId, updatedAt: new Date() })
           .where(and(eq(sessionParticipants.invitedByPlayerId, dropId), ne(sessionParticipants.playerId, keepId)))
+        // …including the row where the person who STAYS was the dropped row's
+        // guest: `invited_by` still points at the id about to be deleted, the
+        // re-point above skips it (it would make them their own inviter), and
+        // the delete then hits the foreign key — making that merge impossible
+        // for good, with nothing the organiser could do about it.
         await tx
           .update(sessionParticipants)
           .set({ isGuest: false, invitedByPlayerId: null, updatedAt: new Date() })
-          .where(and(eq(sessionParticipants.invitedByPlayerId, keepId), eq(sessionParticipants.playerId, keepId)))
+          .where(
+            and(
+              inArray(sessionParticipants.invitedByPlayerId, [keepId, dropId]),
+              eq(sessionParticipants.playerId, keepId),
+            ),
+          )
 
         // A player row that was only ever this one mistaken sign-up goes with it.
         // Its daily games have just moved to the row that stays, so the count that

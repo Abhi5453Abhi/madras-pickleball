@@ -7,6 +7,7 @@ import { venueDate, venueTime } from '@/lib/time'
 import { ensureReady } from '@/server/bootstrap'
 import { schedulerHealth } from '@/server/daily-reconcile'
 import { allSessions, countRoster, roster } from '@/server/sessions'
+import { Eyebrow } from '../../t/court-card'
 import { PRIMARY_LINK } from '../_ui'
 import { runGateNow } from '../g/[slug]/actions'
 
@@ -126,7 +127,7 @@ export default async function AdminGames() {
 
       {past.length > 0 ? (
         <section>
-          <h2 className="font-score text-eyebrow text-text-2 uppercase">Finished</h2>
+          <Eyebrow>Finished</Eyebrow>
           <Panel className="mt-2">
             <ul className="divide-y divide-line">
               {past.slice(0, 20).map((s) => {

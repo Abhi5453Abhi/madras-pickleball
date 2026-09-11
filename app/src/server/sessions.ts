@@ -419,6 +419,48 @@ function freeSeats(taken: ReadonlySet<number>, capacity: number): number[] {
   return free
 }
 
+/**
+ * Renumber the seats in use onto 1..n, in arrival order.
+ *
+ * In two statements, via an offset, and that is not belt and braces: a single
+ * renumbering UPDATE raises `duplicate key ... session_participants_seat_uq`
+ * the moment the new numbering swaps two rows — seq 1 holding seat 2 and seq 2
+ * holding seat 1 is enough, and recycled seats produce exactly that. Postgres
+ * checks a plain unique index per row, not at the end of the statement.
+ *
+ * Always called under the session row lock.
+ */
+const SEAT_SHUFFLE_OFFSET = 100_000
+
+async function compactSeats(tx: Tx, sessionId: string) {
+  const held = await tx
+    .select({ id: sessionParticipants.id, seq: sessionParticipants.seq, seatNo: sessionParticipants.seatNo })
+    .from(sessionParticipants)
+    .where(
+      and(
+        eq(sessionParticipants.sessionId, sessionId),
+        inArray(sessionParticipants.state, [...OCCUPYING]),
+      ),
+    )
+    .orderBy(asc(sessionParticipants.seq))
+
+  const wanted = held.map((h, i) => ({ id: h.id, seat: i + 1, was: h.seatNo }))
+  if (wanted.every((w) => w.seat === w.was)) return
+
+  await tx
+    .update(sessionParticipants)
+    .set({ seatNo: sql`${sessionParticipants.seatNo} + ${SEAT_SHUFFLE_OFFSET}` })
+    .where(
+      and(
+        eq(sessionParticipants.sessionId, sessionId),
+        inArray(sessionParticipants.state, [...OCCUPYING]),
+      ),
+    )
+  for (const w of wanted) {
+    await tx.update(sessionParticipants).set({ seatNo: w.seat }).where(eq(sessionParticipants.id, w.id))
+  }
+}
+
 async function nextSeq(tx: Tx, sessionId: string) {
   const [row] = await tx
     .select({ n: sql<number>`coalesce(max(${sessionParticipants.seq}), 0) + 1` })
@@ -489,6 +531,19 @@ async function seatAWaitingPlayer(tx: Tx, session: SessionRow, p: ParticipantRow
     capacity += 1
     await tx.update(gameSessions).set({ capacity, updatedAt: now }).where(eq(gameSessions.id, session.id))
     seat = freeSeats(taken, capacity)[0] ?? null
+    // Every other path that moves the cap writes a row; this one pushes it past
+    // what the host set, and can do it repeatedly.
+    await recordAudit(
+      {
+        actorLabel: 'host',
+        action: 'session.capacity.waitlist',
+        entity: 'game_session',
+        entityId: session.id,
+        reason: 'somebody waiting was put in and the list was full',
+        after: { capacity },
+      },
+      tx,
+    )
   }
   if (seat === null) return null
 
@@ -714,19 +769,23 @@ export async function joinSession(input: JoinInput, now: Date = new Date()): Pro
      */
     const alreadyHere = async (): Promise<ParticipantRow | null> => {
       if (!phoneKey) return null
-      const [row] = await tx
-        .select({ p: sessionParticipants })
+      const rows = await tx
+        .select({ p: sessionParticipants, phone: players.phone, phoneKey: players.phoneKey })
         .from(sessionParticipants)
         .innerJoin(players, eq(players.id, sessionParticipants.playerId))
         .where(
           and(
             eq(sessionParticipants.sessionId, session.id),
             inArray(sessionParticipants.state, [...LIVE]),
-            eq(players.phoneKey, phoneKey),
           ),
         )
-        .limit(1)
-      return row?.p ?? null
+      // Matched in JS on the NORMALISED number, not by `phone_key` alone.
+      // `phone_key` is unique across players, so somebody whose number already
+      // belonged to a different name carries it as text with a null key — and a
+      // check that only read the key would miss them, which is the whole
+      // seat-stuffing hole in a subtler shape. The roster is a few dozen rows.
+      const hit = rows.find((r) => r.phoneKey === phoneKey || normalizePhone(r.phone) === phoneKey)
+      return hit?.p ?? null
     }
 
     const standing = (existing: ParticipantRow) => {
@@ -889,7 +948,9 @@ export async function resolveSpot(rawToken: string): Promise<SpotView | null> {
  */
 export async function resolveSpotToken(raw: string): Promise<SpotView | null> {
   const h = await headers()
-  const ipHash = hashIp(h.get('x-forwarded-for')?.split(',')[0]?.trim())
+  // Null is a bucket of its own in the limiter, so a request that arrives
+  // without a forwarded IP is counted rather than exempted.
+  const ipHash = hashIp(h.get('x-forwarded-for')?.split(',')[0]?.trim()) ?? 'no-ip'
   const gate = await checkSpotLookupAllowed(ipHash)
   if (!gate.allowed) return null
 
@@ -1093,12 +1154,17 @@ export async function setCapacity(
     const capacity =
       typeof want === 'number' ? want : Math.min(200, Math.max(1, session.capacity + want.by))
 
+    // Seats are recycled, so after a few withdrawals the numbers in use can be
+    // {12, 15} for two people. Lowering the cap to four then leaves two seats
+    // ABOVE it, invisible to `freeSeats` — which scans 1..capacity — so the
+    // promotion below would fill 1..4 on top of them and put six people in a
+    // four-seat game. Compacting first makes the highest seat number equal the
+    // headcount, which is the only floor that is both safe and not
+    // over-conservative.
+    await compactSeats(tx, sessionId)
     const taken = await seatMapFor(tx, sessionId)
-    // Lowering never turns anybody out — it only stops new joins. The floor is
-    // how many people are holding a seat, not the highest seat NUMBER: seats
-    // are recycled, so one person left holding seat 12 must not pin the cap
-    // at twelve.
-    const floor = Math.max(1, taken.size)
+    // Lowering never turns anybody out — it only stops new joins.
+    const floor = Math.max(1, taken.size, ...taken)
     const applied = Math.max(capacity, floor)
 
     await tx
@@ -1201,6 +1267,9 @@ export async function seatFromWaitlist(participantId: string, now: Date = new Da
     if (session.status === 'locked' || session.status === 'cancelled') {
       return fail('That game is closed, so the list can’t change. Nothing was lost.')
     }
+    // The same wall `joinSession` puts up: an unpublished game has no list to
+    // be put in to.
+    if (session.status === 'draft') return fail('That game isn’t published yet.')
 
     const [p] = await tx
       .select()
@@ -1213,6 +1282,25 @@ export async function seatFromWaitlist(participantId: string, now: Date = new Da
     const seated = await seatAWaitingPlayer(tx, session, p, now)
     return seated ? { ok: true as const } : fail('There was no room for them. Open a spot first.')
   })
+}
+
+/**
+ * Draw a new link for one spot and retire the old one.
+ *
+ * The reason the token is stored rather than hashed is that the host has to be
+ * able to send it; the reason it is drawn rather than derived is that it has to
+ * be replaceable when a link ends up in the wrong group chat. This is that.
+ */
+export async function rotateSpotToken(participantId: string) {
+  const token = newSpotToken()
+  const rows = await db
+    .update(sessionParticipants)
+    .set({ manageToken: token, version: sql`${sessionParticipants.version} + 1`, updatedAt: new Date() })
+    .where(eq(sessionParticipants.id, participantId))
+    .returning({ sessionId: sessionParticipants.sessionId })
+  if (!rows.length) return fail('That spot has gone.')
+  await bumpSessionVersion(rows[0].sessionId)
+  return { ok: true as const, token }
 }
 
 /** Keep a name off the public list without keeping them out of the game. */

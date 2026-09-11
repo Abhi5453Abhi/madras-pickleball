@@ -82,7 +82,7 @@ export default async function NewGamePage(props: PageProps<'/admin/games/new'>) 
           <Input id="notes" name="notes" maxLength={400} className="mt-2" placeholder="Bring a spare ball" />
         </div>
 
-        <label className="flex items-start gap-2.5 text-body text-text-2">
+        <label className="flex items-start gap-2.5 py-2 text-body text-text-2">
           <input
             type="checkbox"
             name="confirmationGate"

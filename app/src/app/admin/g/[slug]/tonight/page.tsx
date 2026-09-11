@@ -8,6 +8,7 @@ import { venueDate, venueTime } from '@/lib/time'
 import { ensureReady } from '@/server/bootstrap'
 import { schedulerHealth } from '@/server/daily-reconcile'
 import { countRoster, getSessionBySlug, roster } from '@/server/sessions'
+import { Eyebrow } from '../../../../t/court-card'
 import { SECONDARY_LINK } from '../../../_ui'
 import {
   addPerson,
@@ -162,10 +163,7 @@ export default async function Tonight(props: PageProps<'/admin/g/[slug]/tonight'
       ) : null}
 
       <section>
-        <h2 className="font-score text-eyebrow text-text-2 uppercase">
-          On the list
-          <small className="num ml-1.5 font-normal normal-case text-text-3">{playing.length}</small>
-        </h2>
+        <Eyebrow count={playing.length}>On the list</Eyebrow>
         {playing.length === 0 ? (
           <div className="mt-2">
             <EmptyState title="Nobody on the list">
@@ -229,7 +227,7 @@ export default async function Tonight(props: PageProps<'/admin/g/[slug]/tonight'
 
       {!closedOff && playing.some((e) => e.state === 'joined') ? (
         <section className="flex flex-col gap-2.5">
-          <h2 className="font-score text-eyebrow text-text-2 uppercase">Where are they?</h2>
+          <Eyebrow>Where are they?</Eyebrow>
           <ul className="flex flex-col gap-2">
             {playing
               .filter((e) => e.state === 'joined')
@@ -250,10 +248,7 @@ export default async function Tonight(props: PageProps<'/admin/g/[slug]/tonight'
 
       {waiting.length > 0 ? (
         <section>
-          <h2 className="font-score text-eyebrow text-text-2 uppercase">
-            Waiting
-            <small className="num ml-1.5 font-normal normal-case text-text-3">{waiting.length}</small>
-          </h2>
+          <Eyebrow count={waiting.length}>Waiting</Eyebrow>
           <Panel className="mt-2">
             <ul className="divide-y divide-line">
               {waiting.map((e, i) => (
@@ -280,7 +275,7 @@ export default async function Tonight(props: PageProps<'/admin/g/[slug]/tonight'
 
       {!closedOff ? (
         <section className="flex flex-col gap-2.5">
-          <h2 className="font-score text-eyebrow text-text-2 uppercase">Walk-in</h2>
+          <Eyebrow>Walk-in</Eyebrow>
           <form action={addPerson} className="flex flex-col gap-2.5">
             <input type="hidden" name="slug" value={slug} />
             <input type="hidden" name="from" value="tonight" />

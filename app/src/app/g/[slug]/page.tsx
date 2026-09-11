@@ -4,7 +4,7 @@ import { rupees } from '@/lib/display'
 import { venueDate, venueTime } from '@/lib/time'
 import { ensureReady } from '@/server/bootstrap'
 import { publicSession, publicSessionVersion } from '@/server/daily-public'
-import { Masthead } from '../../t/court-card'
+import { Eyebrow, Masthead } from '../../t/court-card'
 import { GamesRefresh } from '../../games/refresh'
 import { JoinForm, MySpot } from './join-form'
 import { ShareGame } from './share'
@@ -55,7 +55,10 @@ export default async function GamePage(props: PageProps<'/g/[slug]'>) {
       />
 
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-7 px-4 pt-6">
-        <p className="sr-only" role="status">
+        {/* Announced only while it can still change. A live region that
+            re-reads the same count every five seconds is an interruption, not
+            information. */}
+        <p className="sr-only" role={closed ? undefined : 'status'}>
           {s.taken} of {s.capacity} spots taken{s.waiting > 0 ? `, ${s.waiting} waiting` : ''}.
         </p>
 
@@ -126,10 +129,7 @@ export default async function GamePage(props: PageProps<'/g/[slug]'>) {
         ) : null}
 
         <section>
-          <h2 className="font-score text-eyebrow text-text-2 uppercase">
-            Who’s in
-            <small className="num ml-1.5 font-normal normal-case text-text-3">{s.taken}</small>
-          </h2>
+          <Eyebrow count={s.taken}>Who’s in</Eyebrow>
           {s.spots.length === 0 && s.hidden === 0 ? (
             <div className="mt-2">
               <EmptyState title="Nobody yet">
@@ -159,10 +159,7 @@ export default async function GamePage(props: PageProps<'/g/[slug]'>) {
 
         {s.waitingList.length > 0 ? (
           <section>
-            <h2 className="font-score text-eyebrow text-text-2 uppercase">
-              Waiting
-              <small className="num ml-1.5 font-normal normal-case text-text-3">{s.waiting}</small>
-            </h2>
+            <Eyebrow count={s.waiting}>Waiting</Eyebrow>
             <Panel className="mt-2">
               <ul className="divide-y divide-line">
                 {s.waitingList.map((p, i) => (
@@ -179,7 +176,7 @@ export default async function GamePage(props: PageProps<'/g/[slug]'>) {
 
         {!over ? (
           <section>
-            <h2 className="font-score text-eyebrow text-text-2 uppercase">Short of players?</h2>
+            <Eyebrow>Short of players?</Eyebrow>
             <div className="mt-2">
               <ShareGame text={shareText} />
             </div>

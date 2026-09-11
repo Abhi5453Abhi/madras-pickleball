@@ -41,7 +41,14 @@ async function tick(req: Request) {
   if (!authorised(req)) return new Response('no', { status: 401 })
   await ensureReady()
   const result = await runTick()
-  return Response.json(result, { status: result.error ? 500 : 200, headers: { 'Cache-Control': 'no-store' } })
+  if (result.error) {
+    // Logged, not returned. The body of a 500 is the wrong place for driver
+    // text, and whoever can read it is a cron runner rather than an operator.
+    console.error('daily tick', result.error)
+    const { error: _dropped, ...rest } = result
+    return Response.json({ ...rest, error: true }, { status: 500, headers: { 'Cache-Control': 'no-store' } })
+  }
+  return Response.json(result, { headers: { 'Cache-Control': 'no-store' } })
 }
 
 export async function GET(req: Request) {

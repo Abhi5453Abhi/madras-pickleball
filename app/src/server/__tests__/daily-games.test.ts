@@ -14,6 +14,7 @@ import {
   publishSession,
   resolveSpot,
   roster,
+  rotateSpotToken,
   seatFromWaitlist,
   setCapacity,
   setPayer,
@@ -671,5 +672,69 @@ describe('the spot link', () => {
     const b = await join(s.id, 'Priya Sharma', '9840012346')
     expect((a as { token: string }).token).not.toBe((b as { token: string }).token)
     expect((a as { token: string }).token.length).toBeGreaterThan(20)
+  })
+})
+
+describe('seats are compacted before the cap moves', () => {
+  it('lowering the cap after withdrawals cannot leave people above it', async () => {
+    // Seats are recycled, so a handful of withdrawals leaves the numbers in use
+    // scattered — {6, 8} for two people out of eight. Lowering the cap to three
+    // without compacting first leaves both of them ABOVE it and invisible to
+    // `freeSeats`, which only scans 1..capacity, so the promotion in the same
+    // call fills 1..3 on top of them.
+    const s = await makeGame({ capacity: 8 })
+    const joined = []
+    for (let i = 1; i <= 8; i++) {
+      joined.push(await join(s.id, `Player ${'ABCDEFGH'[i - 1]}`, `98400123${40 + i}`))
+    }
+    // Everybody but the sixth and the eighth drops out.
+    for (const [i, p] of joined.entries()) {
+      if (i === 5 || i === 7) continue
+      await leaveSession((p as { participantId: string }).participantId, { kind: 'host', label: 'organiser' }, null, BEFORE_GATE)
+    }
+    // …and three people are waiting.
+    for (let i = 1; i <= 3; i++) await join(s.id, `Waiter ${'XYZ'[i - 1]}`, `98400124${40 + i}`)
+
+    const res = await setCapacity(s.id, 3, actor, BEFORE_GATE)
+    expect(res.ok).toBe(true)
+
+    const held = (await roster(s.id)).filter((r) => r.seatNo !== null && r.state !== 'withdrawn')
+    expect(held.length).toBeLessThanOrEqual(res.ok ? res.capacity : 0)
+    // …and every seat number is inside the cap, not stranded above it.
+    for (const h of held) expect(h.seatNo!).toBeLessThanOrEqual(res.ok ? res.capacity : 0)
+  })
+
+  it('renumbers onto 1..n even when the new order swaps two people', async () => {
+    // A single renumbering UPDATE raises a duplicate-key error the moment the
+    // new numbering swaps two rows; the compaction goes via an offset for
+    // exactly that reason.
+    const s = await makeGame({ capacity: 4 })
+    const a = await join(s.id, 'Player A', '9840012351')
+    await join(s.id, 'Player B', '9840012352')
+    await leaveSession((a as { participantId: string }).participantId, { kind: 'host', label: 'organiser' }, null, BEFORE_GATE)
+    await join(s.id, 'Player C', '9840012353') // takes the freed seat 1, behind B in arrival order
+
+    const res = await setCapacity(s.id, 2, actor, BEFORE_GATE)
+    expect(res.ok).toBe(true)
+    const held = (await roster(s.id))
+      .filter((r) => r.seatNo !== null && r.state !== 'withdrawn')
+      .sort((x, y) => x.seq - y.seq)
+    expect(held.map((h) => h.seatNo)).toEqual([1, 2])
+  })
+})
+
+describe('a link that leaked', () => {
+  it('can be replaced, and the old one stops working', async () => {
+    const s = await makeGame({ capacity: 4 })
+    const a = await join(s.id, 'Ravi Kumar', '9840012345')
+    const old = (a as { token: string }).token
+    expect(await resolveSpot(old)).not.toBe(null)
+
+    const res = await rotateSpotToken((a as { participantId: string }).participantId)
+    expect(res.ok).toBe(true)
+    expect(await resolveSpot(old)).toBe(null)
+    expect((await resolveSpot(res.ok ? res.token : ''))?.participant.id).toBe(
+      (a as { participantId: string }).participantId,
+    )
   })
 })
