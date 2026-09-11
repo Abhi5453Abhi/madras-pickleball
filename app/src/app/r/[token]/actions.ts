@@ -1,6 +1,6 @@
 'use server'
 
-import { resolveRegistrationToken, submitRegistration } from '@/server/registration'
+import { resolveRegistrationToken, submitRegistration, submitTeamRegistration } from '@/server/registration'
 import { ensureReady } from '@/server/bootstrap'
 
 export type SignupState = { ok?: boolean; alreadyIn?: boolean; error?: string }
@@ -8,6 +8,10 @@ export type SignupState = { ok?: boolean; alreadyIn?: boolean; error?: string }
 /**
  * Public, no login, no cookie. Everything is re-resolved from the token: the
  * form carries nothing that is trusted.
+ *
+ * `registerTeammate` (sent only for doubles, when the "sign them up too"
+ * checkbox is on) switches this from naming a wish to registering both
+ * people and pairing them on the spot — see `submitTeamRegistration`.
  */
 export async function signUp(_prev: SignupState, formData: FormData): Promise<SignupState> {
   await ensureReady()
@@ -23,13 +27,27 @@ export async function signUp(_prev: SignupState, formData: FormData): Promise<Si
   const raw = String(formData.get('deviceId') ?? '').trim()
   const deviceId = /^[A-Za-z0-9_-]{8,64}$/.test(raw) ? raw : null
 
-  const res = await submitRegistration({
-    tournamentId: view.tournament.id,
-    name: String(formData.get('name') ?? '').slice(0, 200),
-    phone: String(formData.get('phone') ?? '').slice(0, 40) || null,
-    partnerName: String(formData.get('partnerName') ?? '').slice(0, 200) || null,
-    deviceId,
-  })
+  const name = String(formData.get('name') ?? '').slice(0, 200)
+  const phone = String(formData.get('phone') ?? '').slice(0, 40) || null
+  const partnerName = String(formData.get('partnerName') ?? '').slice(0, 200) || null
+  const registerTeammate = view.discipline === 'doubles' && formData.get('registerTeammate') === 'on'
+
+  const res =
+    registerTeammate && partnerName
+      ? await submitTeamRegistration({
+          tournamentId: view.tournament.id,
+          name,
+          phone,
+          teammateName: partnerName,
+          deviceId,
+        })
+      : await submitRegistration({
+          tournamentId: view.tournament.id,
+          name,
+          phone,
+          partnerName,
+          deviceId,
+        })
   if (!res.ok) return { error: res.error }
   return { ok: true, alreadyIn: res.alreadyIn }
 }

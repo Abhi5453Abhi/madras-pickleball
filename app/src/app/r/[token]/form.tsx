@@ -33,17 +33,24 @@ export function SignupForm({
   tournamentName: string
 }) {
   const [state, action, pending] = useActionState<SignupState, FormData>(signUp, {})
+  const [together, setTogether] = useState(false)
+  const [teammateName, setTeammateName] = useState('')
 
   if (state.ok) {
+    // Registered together and it actually went through as a fresh pair —
+    // not the "already on the list" fallback, which only ever saves a wish.
+    const paired = together && !state.alreadyIn && teammateName.trim()
     return (
       <div className="rounded-card border border-line-key bg-paper p-4 shadow-card">
         <p className="text-section text-text">
           {state.alreadyIn ? 'You’re already on the list.' : 'You’re on the list.'}
         </p>
         <p className="mt-1 text-body text-text-2">
-          {doubles
-            ? 'The organiser sorts the pairs before the day. Ask your partner to sign up too and put your name down.'
-            : 'The organiser makes the schedule before the day.'}
+          {paired
+            ? `You and ${teammateName.trim()} are both in, paired together.`
+            : doubles
+              ? 'The organiser sorts the pairs before the day. Ask your partner to sign up too and put your name down.'
+              : 'The organiser makes the schedule before the day.'}
         </p>
         <ShareLinkRow token={token} tournamentName={tournamentName} />
       </div>
@@ -86,13 +93,37 @@ export function SignupForm({
       </label>
 
       {doubles ? (
-        <label className="block">
-          <span className="text-row text-text">Playing with someone?</span>
-          <Input name="partnerName" autoComplete="off" className="mt-2 h-14" placeholder="Their name" />
-          <span className="mt-1.5 block text-meta text-text-3">
-            If you leave this blank the organiser pairs you up.
-          </span>
-        </label>
+        <div className="flex flex-col gap-2.5">
+          <label className="block">
+            <span className="text-row text-text">
+              {together ? 'Teammate’s name' : 'Playing with someone?'}
+            </span>
+            <Input
+              name="partnerName"
+              autoComplete="off"
+              required={together}
+              value={teammateName}
+              onChange={(e) => setTeammateName(e.target.value)}
+              className="mt-2 h-14"
+              placeholder="Their name"
+            />
+            <span className="mt-1.5 block text-meta text-text-3">
+              {together
+                ? 'We’ll add them to the list and pair you together right away.'
+                : 'If you leave this blank the organiser pairs you up.'}
+            </span>
+          </label>
+          <label className="flex items-center gap-2.5 text-body text-text-2">
+            <input
+              type="checkbox"
+              name="registerTeammate"
+              checked={together}
+              onChange={(e) => setTogether(e.target.checked)}
+              className="h-5 w-5 shrink-0 rounded border-line-key"
+            />
+            Sign them up too, so they don’t need to open this link
+          </label>
+        </div>
       ) : null}
 
       <Button type="submit" disabled={pending} className="w-full">

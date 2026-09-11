@@ -24,6 +24,7 @@ import {
 import { bumpStreamVersion } from '@/lib/stream'
 import { checkTokenLookupAllowed, recordTokenAttempt } from '@/lib/rate-limit'
 import { primaryCategory, syncCategoryPlayers } from './events'
+import { settleTeams } from './teams'
 
 /**
  * Registration — SPEC v4.
@@ -447,6 +448,45 @@ export type RegistrationResult =
   | { ok: false; error: string }
 
 /**
+ * Is this the same person coming back? Same number under the same name, or
+ * the same browser having already put this name down. Shared by both
+ * sign-up paths (solo and "sign up together") so "already in" means the
+ * same thing either way.
+ *
+ * A number alone must not answer "is so-and-so playing", nor let a stranger
+ * with the number change somebody else's partner wish — it only counts
+ * alongside a matching name.
+ */
+async function findMine(
+  tournamentId: string,
+  roster: RosterRow[],
+  nameKey: string,
+  phoneKey: string | null,
+  deviceId?: string | null,
+): Promise<RosterRow | undefined> {
+  let mine = phoneKey ? roster.find((r) => r.phoneKey === phoneKey && r.nameKey === nameKey) : undefined
+  if (!mine && deviceId) {
+    const sameNameHere = roster.filter((r) => r.nameKey === nameKey)
+    if (sameNameHere.length) {
+      const [earlier] = await db
+        .select({ playerId: pendingRegistrations.mergedPlayerId })
+        .from(pendingRegistrations)
+        .where(
+          and(
+            eq(pendingRegistrations.tournamentId, tournamentId),
+            eq(pendingRegistrations.nameKey, nameKey),
+            eq(pendingRegistrations.deviceId, deviceId),
+            ne(pendingRegistrations.status, 'rejected'),
+          ),
+        )
+        .limit(1)
+      mine = sameNameHere.find((r) => r.playerId === earlier?.playerId)
+    }
+  }
+  return mine
+}
+
+/**
  * The public form. Straight onto the list — unless they are on it already,
  * which is the common case: people reload, or come back to add a partner.
  * "Already" is the same phone number, or the same name from the same browser.
@@ -479,28 +519,7 @@ export async function submitRegistration(input: SubmitRegistration): Promise<Reg
   const partnerWish = t.discipline === 'singles' ? null : input.partnerName?.trim() || null
 
   const roster = await rosterRows(input.tournamentId)
-  // "Already on the list" only for the same number under the same name —
-  // a number alone must not answer "is so-and-so playing", nor let a
-  // stranger with the number change their partner wish.
-  let mine = phoneKey ? roster.find((r) => r.phoneKey === phoneKey && r.nameKey === nameKey) : undefined
-  if (!mine && input.deviceId) {
-    const sameNameHere = roster.filter((r) => r.nameKey === nameKey)
-    if (sameNameHere.length) {
-      const [earlier] = await db
-        .select({ playerId: pendingRegistrations.mergedPlayerId })
-        .from(pendingRegistrations)
-        .where(
-          and(
-            eq(pendingRegistrations.tournamentId, input.tournamentId),
-            eq(pendingRegistrations.nameKey, nameKey),
-            eq(pendingRegistrations.deviceId, input.deviceId),
-            ne(pendingRegistrations.status, 'rejected'),
-          ),
-        )
-        .limit(1)
-      mine = sameNameHere.find((r) => r.playerId === earlier?.playerId)
-    }
-  }
+  const mine = await findMine(input.tournamentId, roster, nameKey, phoneKey, input.deviceId)
 
   if (mine) {
     // Coming back to say who they are playing with is the one edit worth taking.
@@ -527,6 +546,121 @@ export async function submitRegistration(input: SubmitRegistration): Promise<Reg
     ipHash,
   })
   if (!res.ok) return res
+  // A statistic on the link, nothing more.
+  await db
+    .update(registrationTokens)
+    .set({ useCount: sql`${registrationTokens.useCount} + 1` })
+    .where(
+      and(
+        eq(registrationTokens.tournamentId, input.tournamentId),
+        eq(registrationTokens.status, 'active'),
+      ),
+    )
+  return { ok: true, alreadyIn: false }
+}
+
+export type SubmitTeamRegistration = {
+  tournamentId: string
+  name: string
+  phone?: string | null
+  teammateName: string
+  deviceId?: string | null
+}
+
+/**
+ * "I know who I'm playing with" — doubles only. Registers both people from
+ * one form and pairs them immediately, rather than leaving the teammate as a
+ * wish that only resolves once they separately open the link and find their
+ * own way onto the list. Only the signer's phone is asked for; the teammate
+ * goes on with none.
+ *
+ * Both `addPlayer` calls run the venue's ordinary identity lookup (so a
+ * teammate who has played before is recognised, not duplicated), and adding
+ * the signer first is what lets the teammate's call resolve the pairing both
+ * ways in one pass — see `addPlayer`'s partner-wish notes. `settleTeams`
+ * then turns that mutual wish into an actual pair before this returns, so
+ * the team exists the moment the organiser next looks, not on some later
+ * page load.
+ */
+export async function submitTeamRegistration(input: SubmitTeamRegistration): Promise<RegistrationResult> {
+  const name = input.name.trim()
+  if (name.length < 2) return { ok: false, error: 'Put your name in.' }
+  if (name.length > 60) return { ok: false, error: 'That name is too long.' }
+  const nameKey = normalizeName(name)
+  const phoneKey = normalizePhone(input.phone)
+  if (input.phone?.trim() && !phoneKey) {
+    return { ok: false, error: 'That phone number doesn’t look right — ten digits, or leave it blank.' }
+  }
+  const teammateName = input.teammateName.trim()
+  if (teammateName.length < 2) return { ok: false, error: 'Put your teammate’s name in.' }
+  if (teammateName.length > 60) return { ok: false, error: 'That name is too long.' }
+  const teammateKey = normalizeName(teammateName)
+  if (!teammateKey) return { ok: false, error: 'That doesn’t look like a name.' }
+  if (teammateKey === nameKey) return { ok: false, error: 'Your teammate needs a different name.' }
+
+  const [t] = await db
+    .select({
+      status: tournaments.status,
+      registrationClosedAt: tournaments.registrationClosedAt,
+      discipline: categories.discipline,
+    })
+    .from(tournaments)
+    .innerJoin(categories, eq(categories.tournamentId, tournaments.id))
+    .where(and(eq(tournaments.id, input.tournamentId), isNull(tournaments.deletedAt), isNull(categories.deletedAt)))
+    .orderBy(asc(categories.seq))
+    .limit(1)
+  if (!t) return { ok: false, error: 'This link doesn’t work any more. Ask the organiser.' }
+  if (signupsClosed(t)) return { ok: false, error: 'Sign-ups have closed — ask the organiser.' }
+  if (t.discipline === 'singles') return { ok: false, error: 'Singles has no teammates to add.' }
+
+  const roster = await rosterRows(input.tournamentId)
+  const mine = await findMine(input.tournamentId, roster, nameKey, phoneKey, input.deviceId)
+
+  if (mine) {
+    // Already on the list. Rather than fail the second submission outright,
+    // leave the teammate's name as a wish — same as the solo form would —
+    // so the organiser has something to finish from Registration.
+    if (!mine.partnerWish) {
+      const partner = teammateKey !== mine.nameKey ? roster.find((r) => r.nameKey === teammateKey) : undefined
+      await db
+        .update(tournamentPlayers)
+        .set({ partnerWish: teammateName, partnerPlayerId: partner?.playerId ?? null })
+        .where(eq(tournamentPlayers.id, mine.tpId))
+      await bumpStreamVersion(input.tournamentId)
+    }
+    return { ok: true, alreadyIn: true }
+  }
+
+  const h = await headers()
+  const ipHash = hashIp(h.get('x-forwarded-for')?.split(',')[0]?.trim())
+
+  const signerRes = await addPlayer(input.tournamentId, {
+    name,
+    phone: input.phone,
+    partnerWish: teammateName,
+    source: 'link',
+    deviceId: input.deviceId ?? null,
+    ipHash,
+  })
+  if (!signerRes.ok) return signerRes
+
+  const teammateRes = await addPlayer(input.tournamentId, {
+    name: teammateName,
+    phone: null,
+    partnerWish: name,
+    source: 'link',
+    ipHash,
+  })
+  if (!teammateRes.ok) {
+    // The signer is already on — left with the wish pointing at the
+    // teammate's name — even though the teammate's own add failed (a stray
+    // duplicate, say). The organiser finishes it from Registration rather
+    // than the whole sign-up being lost.
+    return teammateRes
+  }
+
+  await settleTeams(input.tournamentId)
+
   // A statistic on the link, nothing more.
   await db
     .update(registrationTokens)
