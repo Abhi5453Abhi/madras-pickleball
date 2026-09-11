@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useEffect, useRef, useState } from 'react'
+import { useActionState, useEffect, useRef, useSyncExternalStore } from 'react'
 import Link from 'next/link'
 import { Button, Input, Notice } from '@/components/ui'
 import { joinGame, type JoinState } from './actions'
@@ -62,6 +62,25 @@ function rememberMe(name: string, phone: string) {
   }
 }
 
+/**
+ * Storage is an external store, so it is read as one.
+ *
+ * `storage` events fire in the other tabs, never the one that wrote, so the
+ * writer tells the subscribers itself. That is what makes "Your spot" appear
+ * the moment somebody joins, without a reload and without a render pass whose
+ * only job is to correct the render before it.
+ */
+const spotListeners = new Set<() => void>()
+
+function subscribeToSpots(onChange: () => void) {
+  spotListeners.add(onChange)
+  window.addEventListener('storage', onChange)
+  return () => {
+    spotListeners.delete(onChange)
+    window.removeEventListener('storage', onChange)
+  }
+}
+
 function rememberSpot(slug: string, token: string) {
   try {
     const all = readSpots()
@@ -70,20 +89,23 @@ function rememberSpot(slug: string, token: string) {
   } catch {
     /* storage is off; the link on screen is still the way in */
   }
+  for (const listener of spotListeners) listener()
 }
 
 /**
  * The spot this phone already holds, if it holds one.
  *
- * Read in an effect rather than during render, because localStorage does not
- * exist on the server and a mismatch here is a hydration error on the one page
- * the whole club opens at once.
+ * The server snapshot is null, because localStorage does not exist there and a
+ * mismatch here is a hydration error on the one page the whole club opens at
+ * once. The client snapshot returns a string, which React compares by value,
+ * so a subscriber that fires on every write still renders only on a change.
  */
 export function MySpot({ slug }: { slug: string }) {
-  const [token, setToken] = useState<string | null>(null)
-  useEffect(() => {
-    setToken(readSpots()[slug] ?? null)
-  }, [slug])
+  const token = useSyncExternalStore(
+    subscribeToSpots,
+    () => readSpots()[slug] ?? null,
+    () => null,
+  )
   if (!token) return null
   return (
     <Link

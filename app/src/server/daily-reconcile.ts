@@ -3,12 +3,7 @@ import { and, asc, eq, gte, inArray, isNotNull, isNull, lte, or, sql } from 'dri
 import { db, transact } from '@/db'
 import { gameSessions, schedulerRuns, sessionParticipants, sessionScheduledActions } from '@/db/schema'
 import { newId } from '@/lib/ids'
-import {
-  DEFAULT_SESSION_POLICY,
-  planSession,
-  type PlannedAction,
-  type SessionPolicy,
-} from '@/lib/daily-clock'
+import { planSession, type PlannedAction } from '@/lib/daily-clock'
 import {
   lockSessionAttendance,
   markAutoEnded,
@@ -108,7 +103,7 @@ async function applyOne(
 }
 
 /** One session, up to `MAX_PASSES` state changes, each in its own transaction. */
-async function reconcileSession(session: SessionRow, now: Date, policy: SessionPolicy) {
+async function reconcileSession(session: SessionRow, now: Date) {
   const done: string[] = []
   for (let pass = 0; pass < MAX_PASSES; pass++) {
     const changed = await transact(async (tx) => {
@@ -125,7 +120,7 @@ async function reconcileSession(session: SessionRow, now: Date, policy: SessionP
         .from(sessionParticipants)
         .where(eq(sessionParticipants.sessionId, fresh.id))
 
-      const plan = planSession(fresh, parts, now, policy)
+      const plan = planSession(fresh, parts, now)
       const applied: string[] = []
 
       for (const action of plan) {
@@ -184,7 +179,7 @@ async function reconcileSession(session: SessionRow, now: Date, policy: SessionP
  * miss — correctness never depends on the scheduler being on time, only
  * collection *timing* does.
  */
-export async function runTick(now: Date = new Date(), policy: SessionPolicy = DEFAULT_SESSION_POLICY): Promise<TickResult> {
+export async function runTick(now: Date = new Date()): Promise<TickResult> {
   // A cheap, portable guard against two ticks overlapping. Not airtight, and it
   // does not need to be — the boundary keys and the row lock are what make
   // overlap harmless. This only stops the pointless work.
@@ -211,7 +206,7 @@ export async function runTick(now: Date = new Date(), policy: SessionPolicy = DE
     const failures: string[] = []
     for (const session of rows) {
       try {
-        const actions = await reconcileSession(session, now, policy)
+        const actions = await reconcileSession(session, now)
         if (actions.length) {
           out.applied += actions.length
           out.sessions.push({ id: session.id, slug: session.slug, actions })

@@ -116,12 +116,17 @@ export type PlannableParticipant = {
  * pre-state guard, so the second sees the state the first produced. The applier
  * re-plans a bounded number of times so `lock` — which only becomes reachable
  * once `auto_end` has committed — also lands in the same tick.
+ *
+ * There is deliberately no policy argument. Every boundary this reads was
+ * computed once, when the session was published, and stored on the row with
+ * the policy version that produced it. Re-deriving a boundary from today's
+ * policy would move a deadline under a player who had already been told when
+ * it was.
  */
 export function planSession(
   session: PlannableSession,
   participants: readonly PlannableParticipant[],
   now: Date,
-  _policy: SessionPolicy = DEFAULT_SESSION_POLICY,
 ): PlannedAction[] {
   // draft was never published; locked and cancelled are terminal.
   if (session.status === 'draft' || session.status === 'locked' || session.status === 'cancelled') return []
