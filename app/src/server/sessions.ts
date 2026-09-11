@@ -1293,14 +1293,16 @@ export async function seatFromWaitlist(participantId: string, now: Date = new Da
  */
 export async function rotateSpotToken(participantId: string) {
   const token = newSpotToken()
-  const rows = await db
-    .update(sessionParticipants)
-    .set({ manageToken: token, version: sql`${sessionParticipants.version} + 1`, updatedAt: new Date() })
-    .where(eq(sessionParticipants.id, participantId))
-    .returning({ sessionId: sessionParticipants.sessionId })
-  if (!rows.length) return fail('That spot has gone.')
-  await bumpSessionVersion(rows[0].sessionId)
-  return { ok: true as const, token }
+  return transact(async (tx) => {
+    const rows = await tx
+      .update(sessionParticipants)
+      .set({ manageToken: token, version: sql`${sessionParticipants.version} + 1`, updatedAt: new Date() })
+      .where(eq(sessionParticipants.id, participantId))
+      .returning({ sessionId: sessionParticipants.sessionId })
+    if (!rows.length) return fail('That spot has gone.')
+    await bumpSessionVersion(rows[0].sessionId, tx)
+    return { ok: true as const, token }
+  })
 }
 
 /** Keep a name off the public list without keeping them out of the game. */
