@@ -41,6 +41,10 @@ export default async function CourtsPage(props: PageProps<'/admin/courts'>) {
       ) : null}
       {note ? <Notice tone="done">{String(note)}</Notice> : null}
 
+      <Link href="/admin/courts/day" className={SECONDARY_LINK}>
+        What is on today, and what is free
+      </Link>
+
       <Panel>
         <ul className="divide-y divide-line">
           {list.map((c) => (
@@ -60,7 +64,7 @@ export default async function CourtsPage(props: PageProps<'/admin/courts'>) {
               </form>
               <div className="flex items-center justify-between gap-3 pl-8">
                 <p className="text-meta text-text-3">
-                  {c.heldBy.length ? `Used by ${c.heldBy.join(', ')}` : 'Free'}
+                  {c.heldBy.length ? `Used by ${c.heldBy.join(', ')}` : 'Nothing booked on it'}
                 </p>
                 {c.heldBy.length ? null : (
                   <Confirm
