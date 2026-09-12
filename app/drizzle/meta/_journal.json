@@ -43,6 +43,27 @@
       "when": 1788654175168,
       "tag": "0005_partner_wish",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789128000000,
+      "tag": "0006_daily_games",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789131600000,
+      "tag": "0007_court_holds",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789192460115,
+      "tag": "0008_money",
+      "breakpoints": true
     }
   ]
 }

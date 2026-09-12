@@ -1,22 +1,40 @@
 import 'server-only'
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
 import { db, transact } from '@/db'
 import {
   categories,
   categoryPlayers,
+  courtHolds,
   courts,
   matches,
   pendingRegistrations,
   teamPlayers,
   teams,
-  tournamentCourts,
   tournamentPlayers,
   tournaments,
 } from '@/db/schema'
 import { newId } from '@/lib/ids'
 import { bumpStreamVersion } from '@/lib/stream'
-import { venueDayKey } from '@/lib/time'
+import { venueClock, venueDayKey } from '@/lib/time'
 import { flowTournament } from './board'
+import {
+  clashSentence,
+  courtNames,
+  courtsHeldBy,
+  CourtTaken,
+  dayEnd,
+  dayStart,
+  endHoldsAt,
+  holdsBetween,
+  releaseHolds,
+  isWriteConflict,
+  planFor,
+  savedAtOnce,
+  setHolds,
+  takenNow,
+  tournamentWindows,
+  type Window,
+} from './courts'
 import { createCategory, createTournament, getVenue, standingsFor } from './tournaments'
 
 /**
@@ -59,14 +77,26 @@ export function categoryName(gender: Gender, discipline: Discipline) {
 export type CreateInput = {
   name: string
   date: Date
+  /** How many days it runs, starting on `date`. One unless somebody says. */
+  days?: number
   gender: Gender
   discipline: Discipline
   finalsStage: FinalsStage
   courtIds: string[]
+  /** Null, or left out, holds the courts for the whole day. */
+  hours?: Hours | null
 }
 
 export async function createEvent(input: CreateInput) {
-  const tournament = await createTournament({ name: input.name, startDate: input.date })
+  // A two-day tournament holds its courts on both days. The old model could not
+  // represent that at all — `unique (tournament_id, court_id)` meant a court
+  // could be claimed once, ever — so nothing above this line ever asked.
+  const days = Math.min(Math.max(Math.round(input.days ?? 1), 1), 14)
+  const tournament = await createTournament({
+    name: input.name,
+    startDate: input.date,
+    endDate: new Date(input.date.getTime() + (days - 1) * 24 * 60 * 60_000),
+  })
   const catId = await createCategory({
     tournamentId: tournament.id,
     name: categoryName(input.gender, input.discipline),
@@ -74,7 +104,7 @@ export async function createEvent(input: CreateInput) {
     gender: input.gender,
     finalsStage: input.finalsStage,
   })
-  const courtsResult = await assignCourts(tournament.id, input.courtIds)
+  const courtsResult = await assignCourts(tournament.id, input.courtIds, input.hours ?? null)
   // Sign-ups open the moment it exists: the link is the first thing the
   // organiser wants, and "draft" was a state nobody could explain.
   await db
@@ -119,143 +149,194 @@ export async function syncCategoryPlayers(tournamentId: string) {
 
 // ───────────────────────────── courts ─────────────────────────────
 
+/** The hours a tournament holds its courts, or null for the whole day. */
+export type Hours = { fromMin: number; untilMin: number }
+
 export type CourtOption = {
   id: string
   name: string
   colorKey: string
-  /** Set when another tournament holds it that day. */
-  takenBy: { id: string; name: string; slug: string } | null
+  /** Set when somebody else has it during these hours. */
+  takenBy: { name: string; label: string } | null
   /** This tournament holds it. */
   mine: boolean
 }
 
 /**
- * Every court at the venue, with who holds it on this tournament's day. A court
- * held by another tournament is shown, named, and not pickable — to use it the
- * organiser takes it off the other tournament first. No lending.
+ * The hours this tournament's courts are held for. Null is the whole day, which
+ * is what every tournament held before hours existed.
+ *
+ * Stored on the row, not read back off the holds: a hold taken up at eleven, or
+ * truncated when the tournament finished, says nothing about the hours the
+ * organiser asked for — and reading it back as if it did moved every other day
+ * of a two-day tournament to match the one day that had been clamped.
  */
-export async function courtOptions(tournamentId: string): Promise<CourtOption[]> {
+export async function tournamentHours(tournamentId: string): Promise<Hours | null> {
   const [t] = await db
-    .select({ startDate: tournaments.startDate })
+    .select({ fromMin: tournaments.courtFromMin, untilMin: tournaments.courtUntilMin })
     .from(tournaments)
     .where(eq(tournaments.id, tournamentId))
     .limit(1)
-  if (!t) return []
-  const dayKey = venueDayKey(t.startDate)
+  if (!t || t.fromMin === null || t.untilMin === null) return null
+  return { fromMin: t.fromMin, untilMin: t.untilMin }
+}
+
+async function windowsFor(tournamentId: string, hours: Hours | null | undefined): Promise<Window[] | null> {
+  const [t] = await db
+    .select({ startDate: tournaments.startDate, endDate: tournaments.endDate })
+    .from(tournaments)
+    .where(eq(tournaments.id, tournamentId))
+    .limit(1)
+  if (!t) return null
+  const effective = hours === undefined ? await tournamentHours(tournamentId) : hours
+  return tournamentWindows(t.startDate, t.endDate, effective)
+}
+
+/**
+ * Every court at the venue, with who has it during the hours this tournament
+ * wants. A court somebody else has is shown, named with the hours they have it
+ * for, and not pickable — the organiser resolves that on the other holder.
+ *
+ * Passing `hours` asks the question for hours not saved yet, which is what the
+ * screen does while the organiser is still choosing them.
+ */
+export async function courtOptions(tournamentId: string, hours?: Hours | null): Promise<CourtOption[]> {
+  const windows = await windowsFor(tournamentId, hours)
+  if (!windows) return []
   const venue = await getVenue()
 
-  const [allCourts, held] = await Promise.all([
+  const [allCourts, mine] = await Promise.all([
     db
       .select({ id: courts.id, name: courts.name, colorKey: courts.colorKey })
       .from(courts)
       .where(and(eq(courts.venueId, venue.id), eq(courts.active, true)))
       .orderBy(asc(courts.sortOrder)),
-    db
-      .select({
-        courtId: tournamentCourts.courtId,
-        tournamentId: tournamentCourts.tournamentId,
-        name: tournaments.name,
-        slug: tournaments.slug,
-      })
-      .from(tournamentCourts)
-      .innerJoin(tournaments, eq(tournaments.id, tournamentCourts.tournamentId))
-      // A finished tournament lets go of its courts: Men's Doubles wrapping
-      // up at three frees Court 1 for whatever the evening is.
-      .where(
-        and(
-          eq(tournamentCourts.dayKey, dayKey),
-          isNull(tournaments.deletedAt),
-          ne(tournaments.status, 'completed'),
-          ne(tournaments.status, 'archived'),
-        ),
-      ),
+    courtsHeldBy({ kind: 'tournament', tournamentId }),
   ])
-  const byCourt = new Map(held.map((h) => [h.courtId, h]))
+  const mineIds = new Set(mine.map((c) => c.id))
+  const { unplaceable, clashes } = await planFor(
+    { kind: 'tournament', tournamentId },
+    allCourts.map((c) => c.id),
+    windows,
+  )
+  const byCourt = new Map(clashes.map((c) => [c.courtId, c]))
+  const gone = new Set(unplaceable)
 
   return allCourts.map((c) => {
-    const h = byCourt.get(c.id)
+    const clash = byCourt.get(c.id)
     return {
       id: c.id,
       name: c.name,
       colorKey: c.colorKey,
-      mine: h?.tournamentId === tournamentId,
-      takenBy:
-        h && h.tournamentId !== tournamentId
-          ? { id: h.tournamentId, name: h.name, slug: h.slug }
+      mine: mineIds.has(c.id),
+      takenBy: clash
+        ? { name: clash.holderName, label: hoursLabel(clash.heldFrom, clash.heldUntil) }
+        : // Nothing left of those hours at all — a court that is not free and
+          // has nobody to name is still not a court this tournament can have,
+          // and showing it as pickable means a save that refuses.
+          gone.has(c.id)
+          ? { name: 'nothing free', label: 'in these hours' }
           : null,
     }
   })
 }
 
+/** "9:00 am–3:00 pm", or "all day" when it is the whole of one. */
+export function hoursLabel(from: Date, until: Date): string {
+  const key = venueDayKey(from)
+  if (from.getTime() <= dayStart(key).getTime() && until.getTime() >= dayEnd(key).getTime()) return 'all day'
+  return `${venueClock(from)}–${venueClock(until)}`
+}
+
+export type CalendarHold = {
+  courtId: string
+  dayKey: string
+  holderName: string
+  slug: string | null
+  /** Minutes from the start of that venue day, clipped to it. */
+  fromMin: number
+  untilMin: number
+}
+
 /**
- * For the create form, which has no tournament yet: every court, and who
- * holds which court on which day from today on. The form filters by the day
- * that is picked; the server re-checks on submit.
+ * For the create form, which has no tournament yet: every court, and who has
+ * which court when, for the next few weeks. The form filters by the day and
+ * hours that are picked; the server re-checks on submit, and the index is what
+ * actually decides.
  */
-export async function courtCalendar() {
+export async function courtCalendar(days = 30) {
   const venue = await getVenue()
   const todayKey = venueDayKey(new Date())
+  const from = dayStart(todayKey)
+  const until = new Date(from.getTime() + days * 24 * 60 * 60_000)
+
   const [allCourts, held] = await Promise.all([
     db
       .select({ id: courts.id, name: courts.name, colorKey: courts.colorKey })
       .from(courts)
       .where(and(eq(courts.venueId, venue.id), eq(courts.active, true)))
       .orderBy(asc(courts.sortOrder)),
-    db
-      .select({
-        courtId: tournamentCourts.courtId,
-        dayKey: tournamentCourts.dayKey,
-        name: tournaments.name,
-        slug: tournaments.slug,
-      })
-      .from(tournamentCourts)
-      .innerJoin(tournaments, eq(tournaments.id, tournamentCourts.tournamentId))
-      .where(
-        and(
-          gte(tournamentCourts.dayKey, todayKey),
-          isNull(tournaments.deletedAt),
-          ne(tournaments.status, 'completed'),
-          ne(tournaments.status, 'archived'),
-        ),
-      ),
+    holdsBetween(from, until),
   ])
-  return { courts: allCourts, held }
+
+  // A hold is split across the days it touches, because the form asks its
+  // question one day at a time.
+  const spread: CalendarHold[] = []
+  for (const h of held) {
+    let cursor = dayStart(venueDayKey(h.heldFrom))
+    while (cursor.getTime() < h.heldUntil.getTime()) {
+      const key = venueDayKey(cursor)
+      const base = dayStart(key).getTime()
+      const dayFinish = dayEnd(key).getTime()
+      const segFrom = Math.max(h.heldFrom.getTime(), base)
+      const segUntil = Math.min(h.heldUntil.getTime(), dayFinish)
+      if (segUntil > segFrom && segUntil > from.getTime()) {
+        spread.push({
+          courtId: h.courtId,
+          dayKey: key,
+          holderName: h.holderName,
+          slug: h.holderSlug,
+          fromMin: Math.round((segFrom - base) / 60_000),
+          untilMin: Math.round((segUntil - base) / 60_000),
+        })
+      }
+      cursor = new Date(dayFinish)
+    }
+  }
+  return { courts: allCourts, held: spread }
 }
 
 export type CourtCalendar = Awaited<ReturnType<typeof courtCalendar>>
 
 /**
- * Set a tournament's courts to exactly this list. Refuses a court another
- * tournament holds that day and names it — the organiser resolves that on the
- * other tournament, deliberately, rather than this one silently taking it.
+ * Set a tournament's courts to exactly this list, for exactly these hours.
+ *
+ * Names whoever already has a court instead of taking it: a court is a physical
+ * thing and two organisers cannot both be right about it. The sentence is
+ * produced by reading; the guarantee is the slot index, which is why the write
+ * is still wrapped — between the read and the write is exactly where the other
+ * organiser presses Save.
  */
-export async function assignCourts(tournamentId: string, courtIds: string[]) {
+export async function assignCourts(tournamentId: string, courtIds: string[], hours?: Hours | null) {
   const wanted = [...new Set(courtIds.filter(Boolean))]
-  const options = await courtOptions(tournamentId)
-  const byId = new Map(options.map((o) => [o.id, o]))
+  const hoursAsked = hours
+  const windows = await windowsFor(tournamentId, hours)
+  if (!windows) return { ok: false as const, error: 'That tournament no longer exists.' }
 
+  const venue = await getVenue()
+  const here = await db
+    .select({ id: courts.id })
+    .from(courts)
+    .where(and(eq(courts.venueId, venue.id), eq(courts.active, true)))
+  const hereIds = new Set(here.map((c) => c.id))
   for (const id of wanted) {
-    const o = byId.get(id)
-    if (!o) return { ok: false as const, error: 'That court is not at this venue.' }
-    if (o.takenBy) {
-      return {
-        ok: false as const,
-        error: `${o.name} belongs to ${o.takenBy.name} that day. Take it off there first.`,
-      }
-    }
+    if (!hereIds.has(id)) return { ok: false as const, error: 'That court is not at this venue.' }
   }
-
-  const [t] = await db
-    .select({ startDate: tournaments.startDate })
-    .from(tournaments)
-    .where(eq(tournaments.id, tournamentId))
-    .limit(1)
-  if (!t) return { ok: false as const, error: 'That tournament no longer exists.' }
-  const dayKey = venueDayKey(t.startDate)
 
   // A court being removed with a live match on it is not ours to pull away
   // from under the players.
-  const removing = options.filter((o) => o.mine && !wanted.includes(o.id)).map((o) => o.id)
+  const mine = await courtsHeldBy({ kind: 'tournament', tournamentId })
+  const removing = mine.filter((c) => !wanted.includes(c.id)).map((c) => c.id)
   if (removing.length) {
     const [live] = await db
       .select({ courtName: courts.name })
@@ -277,51 +358,65 @@ export async function assignCourts(tournamentId: string, courtIds: string[]) {
     }
   }
 
-  await transact(async (tx) => {
-    await tx.delete(tournamentCourts).where(eq(tournamentCourts.tournamentId, tournamentId))
-    if (wanted.length) {
-      // `courtOptions` above says a finished tournament has let go of its
-      // courts, but its rows still sit under the one-court-per-day index.
-      // They are released here, at the moment somebody actually takes the
-      // court — otherwise the insert below was a raw constraint error on the
-      // afternoon Men's Doubles finished and the evening's tournament was made.
-      await tx.delete(tournamentCourts).where(
-        and(
-          eq(tournamentCourts.dayKey, dayKey),
-          inArray(tournamentCourts.courtId, wanted),
-          inArray(
-            tournamentCourts.tournamentId,
-            tx
-              .select({ id: tournaments.id })
-              .from(tournaments)
-              .where(
-                or(
-                  inArray(tournaments.status, ['completed', 'archived']),
-                  isNotNull(tournaments.deletedAt),
-                ),
-              ),
-          ),
-        ),
-      )
-      await tx.insert(tournamentCourts).values(
-        wanted.map((courtId) => ({ id: newId('tc'), tournamentId, courtId, dayKey })),
-      )
+  const now = new Date()
+  if (wanted.length && !windows.some((w) => w.until.getTime() > now.getTime())) {
+    return { ok: false as const, error: 'Those hours have already gone — a court can’t be held in the past.' }
+  }
+
+  const { unplaceable, clashes } = await planFor({ kind: 'tournament', tournamentId }, wanted, windows, now)
+  if (clashes.length) return { ok: false as const, error: clashSentence(clashes[0]) }
+  if (unplaceable.length) {
+    const names = await courtNames(unplaceable)
+    return {
+      ok: false as const,
+      error: `There is nothing left of those hours on ${names}. Change the hours, or pick another court.`,
     }
-  })
+  }
+
+  let held: string[] | null
+  try {
+    held = await transact(async (tx) => {
+      // Re-asserted here, in the transaction, so this serialises against
+      // `finishEvent` — which takes the same row and then gives the courts
+      // back. Without it, a save that started a moment earlier could re-take
+      // courts for a tournament that has just finished, and nothing would ever
+      // release them.
+      const [still] = await tx
+        .update(tournaments)
+        .set({
+          updatedAt: now,
+          courtFromMin: hoursAsked === undefined ? undefined : (hoursAsked?.fromMin ?? null),
+          courtUntilMin: hoursAsked === undefined ? undefined : (hoursAsked?.untilMin ?? null),
+        })
+        .where(
+          and(
+            eq(tournaments.id, tournamentId),
+            isNull(tournaments.deletedAt),
+            inArray(tournaments.status, ['draft', 'registration', 'live']),
+          ),
+        )
+        .returning({ id: tournaments.id })
+      if (!still) return null
+      return setHolds(tx, { kind: 'tournament', tournamentId }, wanted, windows, {}, now)
+    })
+  } catch (e) {
+    if (e instanceof CourtTaken) return { ok: false as const, error: takenNow }
+    if (isWriteConflict(e)) return { ok: false as const, error: savedAtOnce }
+    throw e
+  }
+  if (held === null) {
+    return { ok: false as const, error: 'That tournament has finished — its courts are back with the venue.' }
+  }
+
   await bumpStreamVersion(tournamentId)
   // A court added to a running tournament is a free court: fill it.
   await flowTournament(tournamentId)
-  return { ok: true as const, count: wanted.length }
+  return { ok: true as const, count: held.length }
 }
 
-/** The courts this tournament holds, in venue order. */
+/** The courts this tournament holds, in venue order, once each. */
 export async function myCourts(tournamentId: string) {
-  return db
-    .select({ id: courts.id, name: courts.name, colorKey: courts.colorKey })
-    .from(tournamentCourts)
-    .innerJoin(courts, eq(courts.id, tournamentCourts.courtId))
-    .where(eq(tournamentCourts.tournamentId, tournamentId))
-    .orderBy(asc(courts.sortOrder))
+  return courtsHeldBy({ kind: 'tournament', tournamentId })
 }
 
 // ─────────────────────────── registration ───────────────────────────
@@ -410,17 +505,19 @@ export async function dashboard(): Promise<{
       .innerJoin(categories, eq(categories.id, teams.categoryId))
       .where(and(inArray(categories.tournamentId, ids), ne(teams.status, 'withdrawn')))
       .groupBy(categories.tournamentId),
+    // Distinct: a tournament that runs two days holds each court twice, and
+    // the row on the dashboard wants the court once.
     db
-      .select({
-        tournamentId: tournamentCourts.tournamentId,
+      .selectDistinct({
+        tournamentId: courtHolds.tournamentId,
         id: courts.id,
         name: courts.name,
         colorKey: courts.colorKey,
         sortOrder: courts.sortOrder,
       })
-      .from(tournamentCourts)
-      .innerJoin(courts, eq(courts.id, tournamentCourts.courtId))
-      .where(inArray(tournamentCourts.tournamentId, ids))
+      .from(courtHolds)
+      .innerJoin(courts, eq(courts.id, courtHolds.courtId))
+      .where(inArray(courtHolds.tournamentId, ids))
       .orderBy(asc(courts.sortOrder)),
     db
       .select({
@@ -455,6 +552,10 @@ export async function dashboard(): Promise<{
   const su = new Map(signupAgg.map((r) => [r.tournamentId, r.n]))
   const courtsBy = new Map<string, DashboardRow['courts']>()
   for (const c of courtRows) {
+    // `tournament_id` is nullable on a hold — a block has no holder — but this
+    // query asked for holds of these tournaments, so a null here is impossible
+    // rather than merely unlikely. Narrowed, not asserted.
+    if (!c.tournamentId) continue
     const list = courtsBy.get(c.tournamentId) ?? []
     list.push({ id: c.id, name: c.name, colorKey: c.colorKey })
     courtsBy.set(c.tournamentId, list)
@@ -709,9 +810,8 @@ export async function startEvent(tournamentId: string) {
 /**
  * Delete a tournament. Soft: the row keeps its `deletedAt` and everything
  * under it stays for the record, but it leaves every list and its public page
- * stops answering. Its courts are freed for the day — that is a hard delete of
- * the `tournament_courts` rows, because the one-tournament-per-court-per-day
- * index would otherwise keep the courts held by something nobody can see.
+ * stops answering. Its courts go back to the venue outright — a hold nobody can
+ * see is a court nobody can use.
  *
  * Refused while a match is on court: those players are standing on it.
  */
@@ -733,7 +833,7 @@ export async function deleteEvent(tournamentId: string) {
       .update(tournaments)
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(and(eq(tournaments.id, tournamentId), isNull(tournaments.deletedAt)))
-    await tx.delete(tournamentCourts).where(eq(tournamentCourts.tournamentId, tournamentId))
+    await releaseHolds(tx, { kind: 'tournament', tournamentId })
   })
   // Nothing to flow here: the courts come free, but they belong to no
   // tournament until the organiser gives them to one under Schedule & courts.
@@ -755,10 +855,17 @@ export async function finishEvent(tournamentId: string) {
       error: `${agg.remaining} ${agg.remaining === 1 ? 'match has' : 'matches have'} no result yet.`,
     }
   }
-  await db
-    .update(tournaments)
-    .set({ status: 'completed', updatedAt: new Date() })
-    .where(eq(tournaments.id, tournamentId))
+  const now = new Date()
+  await transact(async (tx) => {
+    await tx
+      .update(tournaments)
+      .set({ status: 'completed', updatedAt: now })
+      .where(eq(tournaments.id, tournamentId))
+    // Men's Doubles wrapping up at three frees Court 1 for the evening. The old
+    // model only pretended this happened and left the rows in place, so the
+    // evening's organiser met a constraint error instead of a court.
+    await endHoldsAt(tx, { kind: 'tournament', tournamentId }, now)
+  })
   await bumpStreamVersion(tournamentId)
   return { ok: true as const }
 }

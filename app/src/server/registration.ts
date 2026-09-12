@@ -4,10 +4,12 @@ import { headers } from 'next/headers'
 import { db, transact, type Tx } from '@/db'
 import {
   categories,
+  gameSessions,
   matches,
   pendingRegistrations,
   players,
   registrationTokens,
+  sessionParticipants,
   teamPlayers,
   teams,
   tournamentPlayers,
@@ -789,6 +791,43 @@ export async function removePlayer(tournamentId: string, playerId: string): Prom
 }
 
 /**
+ * Thrown from inside the merge transaction, so the rollback and the sentence the
+ * organiser reads are the same decision.
+ */
+class MergeClash extends Error {
+  constructor(readonly session: string) {
+    super('both on one session')
+  }
+}
+
+/**
+ * The first daily game both of these people are on the list for, if there is
+ * one. Two live participations for one person in one session is refused by
+ * `session_participants_live_uq`, so a merge has to find this out first and say
+ * something useful rather than surface a constraint error.
+ */
+async function bothInOneSession(tx: Tx, keepId: string, dropId: string): Promise<string | null> {
+  const rows = await tx
+    .select({ sessionId: sessionParticipants.sessionId, playerId: sessionParticipants.playerId, title: gameSessions.title })
+    .from(sessionParticipants)
+    .innerJoin(gameSessions, eq(gameSessions.id, sessionParticipants.sessionId))
+    .where(
+      and(
+        inArray(sessionParticipants.playerId, [keepId, dropId]),
+        ne(sessionParticipants.state, 'withdrawn'),
+      ),
+    )
+  const bySession = new Map<string, { players: Set<string>; title: string }>()
+  for (const r of rows) {
+    const entry = bySession.get(r.sessionId) ?? { players: new Set<string>(), title: r.title }
+    entry.players.add(r.playerId)
+    bySession.set(r.sessionId, entry)
+  }
+  for (const entry of bySession.values()) if (entry.players.size === 2) return entry.title
+  return null
+}
+
+/**
  * "Same person": the earlier row stays, the later one goes, and anything the
  * earlier row lacked — a partner wish, a phone number — comes across. Anyone
  * who had named the later row now points at the one that stays.
@@ -809,58 +848,120 @@ export async function mergePlayers(
   if (late) return { ok: false, error: late }
 
   const remaining = roster.filter((r) => r.playerId !== dropId)
-  await transact(async (tx) => {
-    if (pair) await tx.delete(teams).where(eq(teams.id, pair.teamId))
-    if (!keep.partnerWish && drop.partnerWish) {
-      await tx
-        .update(tournamentPlayers)
-        .set({
-          partnerWish: drop.partnerWish,
-          partnerPlayerId: drop.partnerPlayerId === keepId ? null : drop.partnerPlayerId,
-        })
-        .where(eq(tournamentPlayers.id, keep.tpId))
+  try {
+    await transact(async (tx) => {
+      // Daily games hang off `players` too, and a merge that ignored them would
+      // either leave an orphan or cascade somebody's attendance history away.
+      // Both sides on the same night is two people who both played — that is not
+      // a duplicate, and no merge can decide which of them owes for the evening.
+      // Checked INSIDE the transaction; the same check outside it is a window in
+      // which the host puts the other one on that list and the merge lands as a
+      // raw constraint error instead of a sentence.
+      const clash = await bothInOneSession(tx, keepId, dropId)
+      if (clash) throw new MergeClash(clash)
+
+        if (pair) await tx.delete(teams).where(eq(teams.id, pair.teamId))
+        if (!keep.partnerWish && drop.partnerWish) {
+          await tx
+            .update(tournamentPlayers)
+            .set({
+              partnerWish: drop.partnerWish,
+              partnerPlayerId: drop.partnerPlayerId === keepId ? null : drop.partnerPlayerId,
+            })
+            .where(eq(tournamentPlayers.id, keep.tpId))
+        }
+        await tx
+          .update(tournamentPlayers)
+          .set({ partnerPlayerId: keepId })
+          .where(
+            and(
+              eq(tournamentPlayers.tournamentId, tournamentId),
+              eq(tournamentPlayers.partnerPlayerId, dropId),
+              ne(tournamentPlayers.playerId, keepId),
+            ),
+          )
+        await tx.delete(tournamentPlayers).where(eq(tournamentPlayers.id, drop.tpId))
+        if (!keep.phoneKey && drop.phoneKey) {
+          // The number is unique across players, so it has to leave one row before
+          // it can land on the other.
+          await tx.update(players).set({ phone: null, phoneKey: null }).where(eq(players.id, dropId))
+          await tx
+            .update(players)
+            .set({ phone: drop.phone, phoneKey: drop.phoneKey, updatedAt: new Date() })
+            .where(eq(players.id, keepId))
+        }
+        await tx
+          .update(pendingRegistrations)
+          .set({ status: 'approved', mergedPlayerId: keepId, reviewedAt: new Date() })
+          .where(
+            and(
+              eq(pendingRegistrations.tournamentId, tournamentId),
+              eq(pendingRegistrations.mergedPlayerId, dropId),
+            ),
+          )
+        // Daily-game history follows the person who stays. `player_id` is who
+        // played and `payer_player_id` is who owes; both are re-pointed, and so is
+        // the inviter link — and all three before the delete below, or it hits a
+        // foreign key. That foreign key is deliberately NOT a cascade: if a
+        // re-point is ever missed this fails loudly rather than taking somebody's
+        // attendance history with it.
+        await tx
+          .update(sessionParticipants)
+          .set({ playerId: keepId, updatedAt: new Date() })
+          .where(eq(sessionParticipants.playerId, dropId))
+        await tx
+          .update(sessionParticipants)
+          .set({ payerPlayerId: keepId, updatedAt: new Date() })
+          .where(eq(sessionParticipants.payerPlayerId, dropId))
+        // …and a guest whose inviter was the dropped row would otherwise end up
+        // having invited themselves.
+        await tx
+          .update(sessionParticipants)
+          .set({ invitedByPlayerId: keepId, updatedAt: new Date() })
+          .where(and(eq(sessionParticipants.invitedByPlayerId, dropId), ne(sessionParticipants.playerId, keepId)))
+        // …including the row where the person who STAYS was the dropped row's
+        // guest: `invited_by` still points at the id about to be deleted, the
+        // re-point above skips it (it would make them their own inviter), and
+        // the delete then hits the foreign key — making that merge impossible
+        // for good, with nothing the organiser could do about it.
+        await tx
+          .update(sessionParticipants)
+          .set({ isGuest: false, invitedByPlayerId: null, updatedAt: new Date() })
+          .where(
+            and(
+              inArray(sessionParticipants.invitedByPlayerId, [keepId, dropId]),
+              eq(sessionParticipants.playerId, keepId),
+            ),
+          )
+
+        // A player row that was only ever this one mistaken sign-up goes with it.
+        // Its daily games have just moved to the row that stays, so the count that
+        // decides this is the tournament one — and the foreign key above is what
+        // catches the case where they did not move.
+        const [elsewhere] = await tx
+          .select({ n: sql<number>`cast(count(*) as int)` })
+          .from(tournamentPlayers)
+          .where(eq(tournamentPlayers.playerId, dropId))
+        if (!elsewhere?.n) await tx.delete(players).where(eq(players.id, dropId))
+        await settleOrphanFlags(tx, tournamentId, remaining)
+        await bumpStreamVersion(tournamentId, tx)
+    })
+  } catch (e) {
+    if (e instanceof MergeClash) {
+      return {
+        ok: false,
+        error: `${keep.name} and ${drop.name} are both on the list for ${e.session}. If that is one person, take one of them off that game first.`,
+      }
     }
-    await tx
-      .update(tournamentPlayers)
-      .set({ partnerPlayerId: keepId })
-      .where(
-        and(
-          eq(tournamentPlayers.tournamentId, tournamentId),
-          eq(tournamentPlayers.partnerPlayerId, dropId),
-          ne(tournamentPlayers.playerId, keepId),
-        ),
-      )
-    await tx.delete(tournamentPlayers).where(eq(tournamentPlayers.id, drop.tpId))
-    if (!keep.phoneKey && drop.phoneKey) {
-      // The number is unique across players, so it has to leave one row before
-      // it can land on the other.
-      await tx.update(players).set({ phone: null, phoneKey: null }).where(eq(players.id, dropId))
-      await tx
-        .update(players)
-        .set({ phone: drop.phone, phoneKey: drop.phoneKey, updatedAt: new Date() })
-        .where(eq(players.id, keepId))
-    }
-    await tx
-      .update(pendingRegistrations)
-      .set({ status: 'approved', mergedPlayerId: keepId, reviewedAt: new Date() })
-      .where(
-        and(
-          eq(pendingRegistrations.tournamentId, tournamentId),
-          eq(pendingRegistrations.mergedPlayerId, dropId),
-        ),
-      )
-    // A player row that was only ever this one mistaken sign-up goes with it.
-    const [elsewhere] = await tx
-      .select({ n: sql<number>`cast(count(*) as int)` })
-      .from(tournamentPlayers)
-      .where(eq(tournamentPlayers.playerId, dropId))
-    if (!elsewhere?.n) await tx.delete(players).where(eq(players.id, dropId))
-    await settleOrphanFlags(tx, tournamentId, remaining)
-    await bumpStreamVersion(tournamentId, tx)
-  })
+    // The unique index on one live participation per person is the last line of
+    // defence, and it has to read as a sentence rather than a 500.
+    console.error('mergePlayers', e)
+    return { ok: false, error: 'That merge didn’t go through. Check the list and try again.' }
+  }
   await syncCategoryPlayers(tournamentId)
   return { ok: true, note: `${drop.name} and ${keep.name} are one person on the list now.` }
 }
+
 
 /** "Different": the flag comes off and both stay. */
 export async function keepBoth(tournamentId: string, playerId: string) {

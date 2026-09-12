@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { requireUser } from '@/lib/auth'
 import { Chevron } from '@/components/ui'
-import { venueDayKey } from '@/lib/time'
+import { minutesOfDay, venueDayKey, venueTime } from '@/lib/time'
 import { ensureReady } from '@/server/bootstrap'
 import { courtCalendar } from '@/server/events'
 import { NewForm } from './new-form'
@@ -14,6 +14,11 @@ export default async function NewTournamentPage() {
   await ensureReady()
   await requireUser('admin')
   const calendar = await courtCalendar()
+  // The venue's clock, not the browser's: the form uses it to ignore the part
+  // of today that has already gone, so a court a finished tournament held all
+  // morning is still offered for this evening.
+  const now = new Date()
+  const nowMin = minutesOfDay(venueTime(now)) ?? 0
 
   return (
     <div className="flex flex-col gap-6">
@@ -27,7 +32,7 @@ export default async function NewTournamentPage() {
         </Link>
         <h1 className="mt-1 text-title text-text">New tournament</h1>
       </header>
-      <NewForm calendar={calendar} todayKey={venueDayKey(new Date())} />
+      <NewForm calendar={calendar} todayKey={venueDayKey(now)} nowMin={nowMin} />
     </div>
   )
 }

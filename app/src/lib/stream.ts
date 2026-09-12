@@ -1,7 +1,7 @@
 import 'server-only'
 import { eq, sql } from 'drizzle-orm'
 import { db } from '@/db'
-import { tournaments } from '@/db/schema'
+import { gameSessions, tournaments } from '@/db/schema'
 
 /**
  * One monotonic counter per tournament, bumped in the same transaction as any
@@ -26,4 +26,16 @@ export async function readStreamVersion(tournamentSlug: string) {
     .where(eq(tournaments.slug, tournamentSlug))
     .limit(1)
   return rows[0] ?? null
+}
+
+/**
+ * The same counter, for a daily game. Bumped in the same transaction as any
+ * write the public list or the host's screen can see, so a phone polling the
+ * version route refreshes exactly when something changed and never otherwise.
+ */
+export async function bumpSessionVersion(sessionId: string, tx: { update: typeof db.update } = db) {
+  await tx
+    .update(gameSessions)
+    .set({ streamVersion: sql`${gameSessions.streamVersion} + 1`, updatedAt: new Date() })
+    .where(eq(gameSessions.id, sessionId))
 }

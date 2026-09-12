@@ -2,10 +2,10 @@ import { clsx } from 'clsx'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
-import { Chevron, CourtSwatch, Notice, Panel, splitTeam } from '@/components/ui'
+import { Chevron, CourtSwatch, Input, Label, Notice, Panel, splitTeam } from '@/components/ui'
 import { estimateDay, minutesPerMatch } from '@/lib/estimate'
-import { formatDuration, venueTime } from '@/lib/time'
-import { courtOptions, formatWords, hub } from '@/server/events'
+import { formatDuration, hhmmFromMinutes, venueTime } from '@/lib/time'
+import { courtOptions, formatWords, hub, tournamentHours } from '@/server/events'
 import { settleTeams } from '@/server/teams'
 import { getTournamentBySlug, listMatches, teamNameMap } from '@/server/tournaments'
 import { PRIMARY_LINK, SECONDARY_LINK } from '../../../_ui'
@@ -22,7 +22,7 @@ export const dynamic = 'force-dynamic'
 export default async function SchedulePage(props: PageProps<'/admin/t/[slug]/schedule'>) {
   await requireUser('admin')
   const { slug } = await props.params
-  const { err } = await props.searchParams
+  const { err, note } = await props.searchParams
   // Mutual pairs and singles' teams of one are made on the way in, so the
   // schedule has something to draw from even if Teams was never opened.
   const found = await getTournamentBySlug(slug)
@@ -32,8 +32,9 @@ export default async function SchedulePage(props: PageProps<'/admin/t/[slug]/sch
   if (!h) notFound()
   const { tournament: t, category } = h
 
+  const hours = await tournamentHours(t.id)
   const [options, all, names] = await Promise.all([
-    courtOptions(t.id),
+    courtOptions(t.id, hours),
     listMatches(t.id),
     teamNameMap(t.id),
   ])
@@ -85,6 +86,7 @@ export default async function SchedulePage(props: PageProps<'/admin/t/[slug]/sch
       </header>
 
       {err ? <Notice tone="alert">{String(err)}</Notice> : null}
+      {note ? <Notice tone="done">{String(note)}</Notice> : null}
 
       {/* Over: the courts are released and the order of play is empty, so a
           court form and a blank list would only look like set-up. */}
@@ -122,14 +124,40 @@ export default async function SchedulePage(props: PageProps<'/admin/t/[slug]/sch
                   />
                   <CourtSwatch colorKey={o.colorKey} size="md" />
                   {o.name}
-                  {o.takenBy ? <span className="font-normal">· {o.takenBy.name}</span> : null}
+                  {o.takenBy ? (
+                    <span className="font-normal">
+                      · {o.takenBy.name} {o.takenBy.label}
+                    </span>
+                  ) : null}
                 </label>
               ))}
             </div>
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <Label htmlFor="courtsFrom">On court from</Label>
+                <Input
+                  id="courtsFrom"
+                  name="courtsFrom"
+                  type="time"
+                  defaultValue={hours ? hhmmFromMinutes(hours.fromMin) : ''}
+                  className="mt-2"
+                />
+              </div>
+              <div>
+                <Label htmlFor="courtsUntil">until</Label>
+                <Input
+                  id="courtsUntil"
+                  name="courtsUntil"
+                  type="time"
+                  defaultValue={hours ? hhmmFromMinutes(hours.untilMin) : ''}
+                  className="mt-2"
+                />
+              </div>
+            </div>
             <p className="text-meta text-text-3">
               {options.some((o) => o.takenBy)
-                ? 'A greyed court belongs to another tournament that day — take it off there to use it here.'
-                : 'Matches only ever go onto these courts.'}
+                ? 'A greyed court is somebody else’s during those hours — change the hours, or take it off them.'
+                : 'Matches only ever go onto these courts, and only during these hours. Leave the hours blank to hold them all day.'}
             </p>
             <button className={SECONDARY_LINK}>Save courts</button>
           </form>

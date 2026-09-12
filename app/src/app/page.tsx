@@ -3,6 +3,7 @@ import { Card, Chevron, Notice } from '@/components/ui'
 import { venueDate } from '@/lib/time'
 import { ensureReady } from '@/server/bootstrap'
 import { publicToday } from '@/server/public'
+import { publicSessions } from '@/server/daily-public'
 import { CourtCard, Masthead } from './t/court-card'
 import { LiveRefresh } from './t/[slug]/live-refresh'
 
@@ -18,6 +19,7 @@ export const dynamic = 'force-dynamic'
 export default async function Home() {
   await ensureReady()
   const day = await publicToday()
+  const games = await publicSessions()
   const { today, upcoming } = day
   const anyLive = day.courts.some((c) => c.live)
   const paused = today.filter((t) => t.pauseNote)
@@ -101,9 +103,33 @@ export default async function Home() {
           </Card>
         ) : (
           <p className="text-body text-text-2">
-            Nothing on today. When a tournament is on, every court and every score shows up here.
+            {games.length
+              ? // A games-only evening is a real evening. "Nothing on today"
+                // above a card naming tonight's game was simply false.
+                'No tournament today — there is open play below.'
+              : 'Nothing on today. When a tournament is on, every court and every score shows up here.'}
           </p>
         )}
+
+        {/* Open play is the other half of the week. It has its own list rather
+            than being folded into the tournament cards above — they are
+            different things and a visitor is looking for one of them. */}
+        <Link
+          href="/games"
+          className="tap-lg mt-2 flex items-center gap-3 rounded-card border border-line-key bg-paper px-4 shadow-card"
+        >
+          <span className="min-w-0 flex-1">
+            <span className="block text-row font-semibold text-text">Games</span>
+            <span className="block text-meta text-text-3">
+              {games.length
+                ? `${games.length} coming up · join with a name and a phone`
+                : 'Open play — nothing listed right now'}
+            </span>
+          </span>
+          <span aria-hidden className="text-text-3">
+            <Chevron className="-rotate-90" />
+          </span>
+        </Link>
 
         <p className="mt-6 border-t border-line pt-4 text-center text-meta text-text-3">
           <Link href="/login" className="font-semibold text-link">

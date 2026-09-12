@@ -7,6 +7,7 @@ import { db } from '@/db'
 import { matches } from '@/db/schema'
 import { requireUser } from '@/lib/auth'
 import { recordAudit } from '@/lib/audit'
+import { minutesOfDay } from '@/lib/time'
 import { assignCourts, primaryCategory } from '@/server/events'
 import { settleTeams } from '@/server/teams'
 import { generateDrawForCategory, getTournamentBySlug } from '@/server/tournaments'
@@ -22,7 +23,22 @@ async function load(formData: FormData) {
 export async function setCourtsAction(formData: FormData) {
   const { user, slug, tournament, back } = await load(formData)
   const courtIds = formData.getAll('courts').map(String).filter(Boolean)
-  const res = await assignCourts(tournament.id, courtIds)
+
+  // Both blank holds the courts all day, which is what every tournament did
+  // before it could hold part of one. One blank is a half-finished thought.
+  const fromRaw = String(formData.get('courtsFrom') ?? '').trim()
+  const untilRaw = String(formData.get('courtsUntil') ?? '').trim()
+  let hours: { fromMin: number; untilMin: number } | null = null
+  if (fromRaw || untilRaw) {
+    const fromMin = minutesOfDay(fromRaw)
+    const untilMin = minutesOfDay(untilRaw)
+    if (fromMin === null || untilMin === null || untilMin <= fromMin) {
+      redirect(`${back}?err=${encodeURIComponent('Those court hours don’t read as a start and a finish.')}` as never)
+    }
+    hours = { fromMin, untilMin }
+  }
+
+  const res = await assignCourts(tournament.id, courtIds, hours)
   if (!res.ok) redirect(`${back}?err=${encodeURIComponent(res.error)}` as never)
   await recordAudit({
     userId: user.id,
@@ -30,11 +46,15 @@ export async function setCourtsAction(formData: FormData) {
     action: 'tournament.courts',
     entity: 'tournament',
     entityId: tournament.id,
-    after: { courts: courtIds },
+    after: { courts: courtIds, held: res.count, hours },
   })
   revalidatePath(`/admin/t/${slug}`, 'layout')
   revalidatePath('/admin')
-  redirect(back as never)
+  // A receipt, like every other act in this app. This screen can now save
+  // something subtly different from what was ticked, and silence is the wrong
+  // way to say so.
+  const note = res.count === 0 ? 'No courts held for it now.' : `On ${res.count} court${res.count === 1 ? '' : 's'}.`
+  redirect(`${back}?note=${encodeURIComponent(note)}` as never)
 }
 
 /**

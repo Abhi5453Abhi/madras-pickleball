@@ -58,7 +58,7 @@ export default async function MovePage(props: PageProps<'/admin/live/move/[match
         <ul className="divide-y divide-line">
           {opts.courts.map((c) => {
             const meta = c.closedReason
-              ? `${opts.tournament.categoryName} · out of action — ${c.closedReason}`
+              ? `${opts.tournament.categoryName} · ${c.closedReason}`
               : c.busy
                 ? `${opts.tournament.categoryName} · busy — ${shortPair(c.busy.nameA)} v ${shortPair(c.busy.nameB)}, ${
                     c.busy.minutes < 1 ? 'just started' : `on for ${c.busy.minutes} min`
@@ -117,7 +117,7 @@ export default async function MovePage(props: PageProps<'/admin/live/move/[match
         {opts.courts.length === 0
           ? `${opts.tournament.categoryName} has only the one court. `
           : free.length === 0 && opts.courts.length
-            ? 'Every other court is busy. '
+            ? 'Every other court is busy or outside this tournament’s hours. '
             : ''}
         Need another court? Add one under{' '}
         <Link href={`/admin/t/${opts.tournament.slug}/schedule` as never} className="font-semibold text-link">

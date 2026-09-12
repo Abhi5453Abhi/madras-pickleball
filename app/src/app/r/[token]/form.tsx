@@ -153,7 +153,7 @@ function ShareLinkRow({ token, tournamentName }: { token: string; tournamentName
 
   return (
     <div className="mt-4 border-t border-line pt-4">
-      <p className="text-meta text-text-3">Know someone else who's playing? Share the sign-up link.</p>
+      <p className="text-meta text-text-3">Know someone else who’s playing? Share the sign-up link.</p>
       <div className="mt-2 flex flex-wrap gap-2">
         <button
           type="button"
