@@ -12,8 +12,9 @@
 import 'dotenv/config'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db'
-import { users } from '../src/db/schema'
+import { courts, users } from '../src/db/schema'
 import { ensureReady } from '../src/server/bootstrap'
+import { blockCourt } from '../src/server/courts'
 import {
   confirmSpot,
   createSession,
@@ -72,10 +73,22 @@ async function main() {
   await ensureReady()
   const HOST = await organiser()
 
+  // Real courts, so the day view and the pickers have something on them. The
+  // last two, so a seeded tournament on Courts 1–2 and this can coexist.
+  const all = await db.select({ id: courts.id, name: courts.name }).from(courts).where(eq(courts.active, true))
+  const mine = all.slice(-2).map((c) => c.id)
+
   // ── the one coming up ──
   const soon = evening(2)
   const made = await createSession(
-    { title: 'Tuesday evening social', ...soon, pricePaise: 30000, capacity: 12, courtCount: 2 },
+    {
+      title: 'Tuesday evening social',
+      ...soon,
+      pricePaise: 30000,
+      capacity: 12,
+      courtCount: mine.length,
+      courtIds: mine,
+    },
     HOST,
   )
   if (!made.ok) throw new Error(made.error)
@@ -110,7 +123,22 @@ async function main() {
   })
   if (!guest.ok) console.warn(`guest: ${guest.error}`)
 
+  // ── a court out of action, so the day view has all three kinds on it ──
+  if (all.length > 2) {
+    const coaching = evening(2)
+    const block = await blockCourt({
+      courtId: all[0].id,
+      reason: 'Coaching batch',
+      from: new Date(coaching.startsAt.getTime() - 90 * 60_000),
+      until: coaching.startsAt,
+      createdByUserId: HOST.id,
+    })
+    if (!block.ok) console.warn(`block: ${block.error}`)
+  }
+
   // ── last week's, already closed ──
+  // No courts on this one: its hours have gone, and a court cannot be held in
+  // the past. That is the rule, and the seed does not get to break it.
   const past = evening(-5)
   const old = await createSession(
     { title: 'Tuesday evening social', ...past, pricePaise: 30000, capacity: 12, courtCount: 2 },
@@ -128,7 +156,8 @@ async function main() {
   await endSession(old.session.id, HOST, past.endsAt)
   await runTick(new Date())
 
-  console.log(`\nUpcoming:  /g/${s.slug}`)
+  console.log(`\nUpcoming:  /g/${s.slug}${mine.length ? ` (on ${all.slice(-2).map((c) => c.name).join(' and ')})` : ''}`)
+  console.log(`The day:   /admin/courts/day`)
   console.log(`Host:      /admin/g/${s.slug}`)
   console.log(`Finished:  /admin/g/${old.session.slug}`)
   process.exit(0)

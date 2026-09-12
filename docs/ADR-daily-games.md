@@ -52,49 +52,133 @@ occupancy into one table both aggregates write to, rather than leaving it to cal
 remember to union. See below.
 
 ## 2. Court occupancy is one table, time-ranged, and it is the cross-holder guarantee
-— stage 2
+— stage 2, BUILT
 
-`tournament_courts (court_id, day_key)` with `unique (court_id, day_key)` is replaced by
-`court_holds`, which **both** tournaments and sessions write to.
+`tournament_courts (court_id, day_key)` is gone. In its place, `court_holds` says who has
+which court between which two instants, and both tournaments and daily sessions write to
+it. Migration `0007_court_holds.sql`.
 
-The first draft claimed `matches_one_live_per_court` keeps two time-sharing holders safe.
-That was wrong: that index is on `matches`, and sessions never produce matches, so it
-would not have covered the session-vs-tournament case at all. The correct statement:
+### What the old model could not say
 
-- **Between holders** (tournament vs session vs tournament) the guarantee is
-  non-overlapping holds in `court_holds`. That is the only guarantee there is, and it is
-  structural.
-- **Within a tournament**, `matches_one_live_per_court` survives unchanged and still
-  stops two matches going live on one court.
+- A court belonged to one tournament for a **whole day**, so a 7pm social could not have a
+  court on a tournament day. That is `s2a`, and it is the headline.
+- `unique (tournament_id, court_id)` made a **two-day tournament unrepresentable**: it could
+  hold a court once, ever. `assignCourts` only ever computed one `day_key`, from
+  `start_date`, so day two silently had no rows — while eight of the eleven read sites
+  never filtered by day at all and went on believing the tournament held the court forever.
+  The picker, which did filter by day, would happily give the same court to somebody else
+  that afternoon.
+- A finished tournament **pretended** to let go of its courts. `courtOptions` filtered
+  completed tournaments out of the picker; the rows stayed, still holding the court under
+  the index, and were deleted only opportunistically, inside the next tournament's save,
+  for exactly the courts it asked for. Anything else — the board, the public page, the
+  send-to-court gate — still thought a finished tournament owned its courts.
+- `court_closures` had **no writer anywhere in the repo's history**. Three reads, all
+  scoped to a tournament, all therefore always empty. "Block a court" (`s2b`) did not exist.
+
+### The shape
+
+```
+court_holds(id, court_id, kind, tournament_id, session_id, reason,
+            held_from, held_until, released_at, created_by_user_id, …)
+```
+
+- `kind` is `tournament | session | block`, and a CHECK ties it to the columns: exactly one
+  holder, or none at all, which is a block. **No polymorphic FK-less holder** — nothing else
+  in this schema is FK-less and this table is not going to be the first.
+- A block is venue-wide. `court_closures.tournament_id` scoped a closure to one tournament,
+  which is the wrong shape: a court with a broken net is broken for everybody.
+- A block must say what for (CHECK), and must have an end. A court taken out "until further
+  notice" is a court that quietly disappears.
+
+### The guarantee: `court_hold_slots`, not the application
+
+```
+court_hold_slots(court_id, slot_start, hold_id)  primary key (court_id, slot_start)
+```
+
+One row per court per quarter hour, materialised by a trigger on `court_holds`, boundaries
+rounded **outward**. Two holds that overlap by one minute share at least one slot, so the
+second is refused by Postgres. Nothing in `server/courts.ts` is allowed to be the
+guarantee: the checks there exist to produce a sentence naming who has the court, and the
+index exists to be right when two people press Save in the same second.
+
+**No `btree_gist` EXCLUDE.** `CREATE EXTENSION btree_gist` is fine on Neon and is **not
+available in PGlite** (verified: `extension "btree_gist" is not available`), and the whole
+migration file runs in one transaction, so adding it would brick the embedded database that
+`npm run dev` and every test depend on. A quarter-hour grid is the price. A 14-hour
+tournament day is 56 rows; an evening session is 8.
+
+**The trigger is statement level, with transition tables** (`REFERENCING OLD TABLE`/`NEW
+TABLE`, `FOR EACH STATEMENT`), and its SELECT is ordered by `(court_id, slot)`. Row level
+was wrong in two ways: one statement that moves several holds at once would re-insert the
+first row's slots while the second row still held the ones it was moving out of, raising on
+an overlap that does not exist; and the lock order on the slot index would follow whatever
+order the rows happened to arrive in, so two hosts saving the same two courts in opposite
+checkbox order deadlocked instead of one of them waiting. `setHolds` sorts its VALUES list
+to match the trigger's ORDER BY.
+
+### Rounding, in both directions
+
+Outward rounding can only ever over-reserve, which is the safe direction — but it has to be
+consistent or it produces refusals nobody caused:
+
+- **Taking a court** rounds the start DOWN to the quarter hour it is in, so a court assigned
+  at 18:31 is playable at 18:31 rather than at 18:45.
+- **Letting one go** (`endHoldsAt`) truncates DOWN too, so the hold left behind does not own
+  the quarter hour the next holder starts in — but never below the END of the quarter hour
+  it began in, because a game that ran 19:02–19:10 did use 19:00–19:15 and a row with
+  `held_until <= held_from` is not one Postgres will keep.
+- **Reading** — `holdsBetween` and `gaps` — widens to the same grid, so a screen that says
+  "free" means free to the index. `holdsAtInstant` is the exact query, for the two places
+  that ask "what is happening right now": the live board and the public gate sign.
+- **Taking a court whose quarter hour is already spoken for** walks forward to the first
+  free slot rather than being refused. A block that ended at 19:05 still owns 19:00; the
+  answer the venue wants is "you have it from 19:15", not "pick another court".
+
+`resolveWindows` is the single place all of this is decided, and both the check and the
+write call it. Any drift between them is the bug class that turns "Court 3 is free" into a
+refusal, so there is exactly one function that can drift.
+
+### Hours are stored, not inferred
+
+`tournaments.court_from_min` / `court_until_min`, null meaning the whole day. The first
+version read the hours back off the holds, which is wrong the moment a hold is clamped or
+truncated: a court taken up at eleven made `tournamentHours` report 11:00, and the next
+save moved **every other day** of a two-day tournament to match.
+
+### Holds end when the holder ends
+
+`finishEvent`, `deleteEvent`, `endSession`, `cancelSession` and `markAutoEnded` all release
+or truncate in the same transaction as the state change, and `assignCourts` /
+`setSessionCourts` re-assert the holder's state inside their own transaction — otherwise a
+save that began a moment earlier could put courts back on a tournament that has just
+finished, and nothing would ever release them again.
+
+### What the migration does with the old rows
+
+- `tournament_courts` → one whole-day hold per row, **excluding** tournaments that are
+  completed, archived or soft-deleted. That makes real what the old picker only claimed.
+  The old indexes guarantee no two of these can overlap.
+- `court_closures` → one block hold per row, **one subtransaction at a time**. That table
+  had no uniqueness of any kind, so two closures on one court in one afternoon are ordinary
+  — and a single INSERT of both would collide on the slot index and abort the whole
+  migration, which on this codebase means `ensureReady()` throws and the app never boots. A
+  closure that cannot be placed is dropped. An open-ended closure becomes a 24-hour block:
+  the product now requires an end, and re-blocking is one form.
+- Both tables are then dropped. Every reader was rewritten; leaving them would leave a
+  second answer to the same question.
+
+### What this still does not cover
+
+- **Within a tournament**, `matches_one_live_per_court` survives unchanged and still stops
+  two matches going live on one court.
 - **Within a session**, stage 7 gets its own one-live-foursome-per-court index.
-- `livePlayerConflict` (`board.ts:1137`) scans `matches` venue-wide and today covers
-  cross-tournament player clashes for free. It goes blind to sessions. Stage 7 must union
-  session play into it. Written down here so it is a task, not a surprise.
-
-**No `btree_gist` EXCLUDE.** `CREATE EXTENSION btree_gist` is fine on Neon and **fails on
-PGlite** unless the contrib bundle is registered at `new PGlite()` construction
-(`db/index.ts:79`), and the whole migration file runs in one transaction
-(`bootstrap.ts:58-73`), so the failure bricks the embedded database that `npm run dev` and
-every future test depend on. Instead, overlap is made impossible with stock btree:
-
-- `court_holds` carries `held_from < held_until` (CHECK) and a real FK to its holder;
-- each hold materialises into `court_hold_slots` rows of **15 minutes**, boundaries
-  rounded outward, written in the same transaction;
-- `unique (court_id, slot_start)` on the slot table.
-
-Two overlapping holds share at least one slot, so the unique index refuses the second.
-Rounding outward only ever over-reserves, never under-reserves. A 14-hour tournament day
-is 56 rows; an evening session is 8.
-
-**No polymorphic FK-less holder.** `court_holds` gets two nullable FK columns,
-`tournament_id` and `session_id`, both `on delete cascade`, and
-`check (num_nonnulls(tournament_id, session_id) = 1)`. Nothing else in this schema is
-FK-less and this table will not be the first.
-
-**Holds end when the holder ends.** `events.ts:161-170` currently pretends a finished
-tournament has let go of its courts while the row still says otherwise. That fiction does
-not survive: completing or cancelling a holder truncates `held_until` to now, in the same
-transaction, and deletes the freed slots.
+- `livePlayerConflict` (`board.ts`) scans `matches` venue-wide and covers cross-tournament
+  player clashes for free. It is blind to sessions, because a session produces no matches.
+  Stage 7 must union session play into it. Written down here so it is a task, not a surprise.
+- `markAutoEnded` can leave `ended_at` a few minutes after `held_until`, because the hold is
+  truncated to the quarter hour. The court is the thing that has to be right.
 
 ## 3. Price and payer are Stage 1 requirements, not scope pulled forward
 
@@ -466,7 +550,121 @@ one fix had introduced a worse bug than the one it closed:
 | Seating somebody off the waitlist pushed the cap up with no audit row and no status guard. | Both added. |
 | The cron 500 still returned driver text, and "run it now" reported only failure even when most games had reconciled. | Both fixed. |
 
-Everything above is a defect found by reading, not by running: `npm install` is blocked in
-the environment this was written in, so the SQL-level claims were proved against a real
-PostgreSQL 16 and the pure logic against its own tests, and `tsc`, `vitest`, `eslint` and
-`next build` are still owed.
+Everything in the two rounds above was a defect found by reading, not by running: at the
+time, `npm install` was blocked in both sandboxes, so the SQL-level claims were proved
+against a real PostgreSQL 16 and the pure logic against a hand-written test harness.
+
+That was resolved later by fetching the Linux builds of the seven native packages this app
+uses (next-swc, Tailwind's oxide, lightningcss, esbuild, argon2, rolldown, the resolver
+binding) on the one machine with a route to npm, and layering them into `app/node_modules`.
+`tsc`, `vitest`, `eslint` and `next build` all run in the sandbox now, and stage 1's checks
+came back green — **except one defect only `next build` could find**: `app/s/[token]/actions.ts`
+is a `'use server'` module and exported a synchronous type guard. Every export from such a
+module must be an async server action; Next refuses at build, not at request, so typecheck,
+lint and 181 tests all passed it happily and the deploy would have failed. The codes moved
+to `s/[token]/outcome.ts`. The other seven `'use server'` files export only types, which are
+erased.
+
+## 13. What the stage 2 reviews found
+
+Two adversarial passes over the court-hold model, the second sent at the fixes from the
+first. Rows are ordered by how badly they would have hurt.
+
+| Found | Fix |
+|---|---|
+| **`isCourtClash` was a tautology.** Both branches of its ternary were byte-identical, so the SQLSTATE was read and discarded — and drizzle 0.45 wraps driver errors, putting the real one on `cause` and making the message the failing SQL, which for an insert into `court_holds` never mentions `court_hold_slots`. The entire "somebody took that court a second before you" path was dead: those races returned a 500. In the other direction, an FK violation or an unmigrated table would have been reported to an organiser as a court clash for ever. | Walk the `cause` chain; require the SQLSTATE **and** the constraint. `constraint_name` is postgres.js, `constraint` is PGlite — both are checked, and there is now a unit test for each shape. |
+| **The check and the write disagreed about what was being taken.** The pre-check asked about the window as typed; the write kept the start of an already-running hold. A game moved from 19:00 to 22:00 was checked for 22:00–23:00 and written as 19:00–23:00 — three hours nobody asked for, and a refusal, blamed on a phantom third party, that no retry could clear. A multi-day tournament index-matched its windows to its holds and could collide with itself. | One function, `resolveWindows`, decides what a holder gets on one court; the check and the write both call it. Existing holds are matched by **overlap**, never by position. |
+| **The first fix for that was worse than the bug.** Anchoring on "a hold that is *running*" meant a game whose scheduled end had passed but which was still being played had no anchor, its window collapsed to nothing — and `setHolds` read "no window" as "no hold" and **deleted every court the game was standing on**, reporting success. | Anchor on "a hold that has begun". And an empty resolution is never a delete: a court keeps what it has, and a court that cannot be given is named in the refusal instead of being silently dropped. |
+| **The closures backfill could abort the migration.** `court_closures` had no uniqueness of any kind, so two closures on one court in one afternoon collide on the slot index — and every migration runs in one transaction, so the whole thing rolls back, `ensureReady()` throws, and the app never boots at all. The pre-fix behaviour was merely losing the rows. | One subtransaction per closure. A closure that cannot be placed is dropped; a failed deploy is not the right price for a row no screen could ever see. |
+| **Two hosts saving the same two courts in opposite checkbox order deadlocked** — a 40P01, which is not a clash and had no sentence. | The insert is sorted by court then start, the trigger's own SELECT is ordered to match, and 40001/40P01 now produce "Two people saved at once. Nothing was changed — try again." rather than a stack trace. |
+| **The screens and the index disagreed about "free".** The pickers and the day view asked in real time; the interlock works on the quarter-hour grid. A tournament that finished at 19:05 left its court showing free from 19:10, and the save then refused it. | `holdsBetween` and `gaps` widened to the grid. The two places that genuinely mean "right now" — the live board and the public gate sign — got `holdsAtInstant`, which is exact. |
+| **Rounding the start up cost the venue a quarter of an hour** at the moment it mattered: a court assigned at 18:31 was owned by nobody until 18:45, and `sendToCourt` refused every match. | Both the taking and the letting-go round down, which is only safe because they are consistent; and a start whose quarter hour is genuinely spoken for now walks forward to the first free one instead of being refused. |
+| **`setSessionCourts` never re-asserted the session's status inside its transaction**, so a save already in flight could give courts to a game the reconciler had just ended, and nothing would ever release them. `assignCourts` had the same shape against `finishEvent`. | A guarded `UPDATE … RETURNING` on the holder's own row, inside the transaction — the house pattern, taking the row lock that serialises the two. |
+| **`sendToCourt` and `moveMatch` checked the hold outside their transaction** and never re-asserted it, so a match could go live on a court the tournament had stopped holding. `moveMatch` also had no `.returning()` check at all. | Both re-check inside the transaction with the hold row locked `FOR SHARE`, and `moveMatch` uses `.returning()` as its test like everything else. |
+| **`endHoldsAt` deleted a hold that began in the same quarter hour it ended in** — a game that ran 19:02 to 19:10 was recorded as having been played on no court. | Truncated to the end of the quarter hour it began in, never below its own start. |
+| **The hours were read back off the holds**, so one clamped hold moved every other day of a two-day tournament to match it. | `tournaments.court_from_min` / `court_until_min`. The hours are an input, not something to reverse-engineer from output. |
+| Reporting success while holding nothing: a window entirely in the past wrote no holds and returned `{ok: true}` with the asked count. | Refused, by name: "There is nothing left of those hours on Court 1 and Court 2." |
+| `createSession`, `rescheduleSession` and `extendSession` ignored what was actually held; `cancelSession`, `endSession` and `markAutoEnded` never resynced `court_count`. | `setHolds` returns the courts it held; `syncSessionCourtCount` runs on every path that changes them. |
+| The `tournaments_court_hours` CHECK evaluated to NULL — which passes — when exactly one column was null. | `(a is null) = (b is null) and …`. |
+| The test file's dates were fixed, so two thirds of it would have started failing on 16 September with errors about hours that had gone. | Every date is derived from today. |
+| `courtOptions` showed a court as free when there was nothing left of the hours at all, because a court with no resolvable window was skipped rather than reported. | Skipped means "cannot answer": it renders as "nothing free in these hours". |
+
+A third pass looked at the screens rather than the engine, and found that the model was
+ahead of the product. What it changed:
+
+| Found | Fix |
+|---|---|
+| **The court identity stage 2 made real was never shown to the player.** `/g/[slug]`, `/s/[token]`, `/games` and the WhatsApp share text all still said "2 courts" — the one fact a player standing at the gate already has. | `courtsLabel`: "Courts 3 and 4", read from the holds rather than the cached count, because courts can be swapped mid-evening and a number goes stale silently. |
+| **"That game has finished — nothing to extend."** about a game that had not started. The ordinary order is make it, fix the hours, publish; `extendSession` refused drafts. | Drafts allowed, and the sentence says what it means. |
+| **`closedReason` changed meaning and two screens didn't.** The live board and the move screen printed "out of action — Yours from 6:00 pm" about a court in perfect condition. | The reason is a sentence in its own right now; nothing prefixes it. |
+| **Two tournaments sharing a court in one day crossed their board entries** — `perCourt` was keyed by court alone, last writer wins, so a live evening match could be captioned with the morning tournament's "Your hours ended at 3:00 pm". Newly reachable *because* of stage 2. | Keyed by holder and court. |
+| **Taking a court off a game deleted the record that it had been played on.** The opposite of the care `endHoldsAt` takes. A game that used Court 1 from seven to half past showed the court free from seven. | A removed court's running hold is truncated, not deleted — the same rule, in the same shape. |
+| **Blocking a court defaulted to 06:00–08:00** and allowed the past outright, so at half seven in the evening a host got a block from this morning and a receipt saying it would come back "at the time you set". | Defaults to the next quarter hour for two hours; a block whose hours have gone is refused. |
+| **"Give it back" was offered on a block that ended hours ago**, and erased the record that the court had ever been out. | Past blocks read as history, and the write refuses them too — a stale screen is where that tap comes from. |
+| **The blocking refusal gave impossible advice.** A broken net on a busy court got "pick another court, or another time": the net is broken on *that* court at *this* time. | Blocks get their own sentence — move or finish what is on it first. |
+| **The free-slot list under-answered its own question.** An empty day read "Free 00:00–00:00"; a booked court offered midnight-to-six as the answer; the answer was the smallest, palest text on the screen. | Gaps clipped to the drawn window, each with its length, in the size of an answer. The bar gained a legend and a "now" marker, and stretches to cover anything running outside 6am–11pm instead of clamping it to a zero-width sliver. |
+| **`/admin/games/new` threw the whole form away on any refusal** — title, times, price, spots, notes, court ticks and the gate switch — on the screen used weekly, while the tournament form next door preserved everything. | The refusal carries the values back. Courts are no longer pre-ticked either: ticking every free court made a one-court game three unticks. |
+| **The free-slot view was filed under Settings.** "Availability IS the product", reachable only via avatar → Your account → Courts. | Linked from `/admin/games`, `/admin/games/new` and `/admin/live` — the screens where somebody is deciding whether a court is free. |
+| **The multi-day fix had no screen at all.** `dayKeysBetween` and `tournamentWindows` handled it perfectly and nothing could produce a tournament longer than a day. | A "Days" field on the create form. |
+| `removeCourt` named a screen that cannot clear a block, and `/admin/live` said "nothing on court yet" above two cards naming a game on two courts. | Both say what is true. |
+| The court `<select>` on the day view was 48px, below this app's own 56px floor, and preselected Court 1 with no empty option. | `tap`, and "Which court?" first. |
+
+A fourth pass read the ~1,350 lines written since the last green build, looking only for
+what a compiler would have caught. It found no compile errors and six real defects:
+
+| Found | Fix |
+|---|---|
+| **The multi-day clash check on the create form was a no-op.** `Math.min(want.fromMin, 1440)` where `fromMin` is already ≤ 1440 — so a weekend tournament ignored tomorrow's holds entirely and offered a court the save would refuse. | The clip to "now" applies only to the day that is actually today; every other day is asked about in full. |
+| **Re-saving a multi-day tournament mid-run resurrected finished days.** A window whose hours had ended was re-anchored to its full configured hours, undoing the truncation `finishEvent` had applied — and then asked whether those hours were free, so a court free right now could be refused over yesterday afternoon. | A window that is entirely over keeps its hold verbatim, or takes nothing. Three assertions pin it. |
+| **A live match whose tournament's hours had run out vanished from the board.** Keying the board's per-court entries by holder made the holder the only thing that can own a court — so four people standing on one were taken off the screen. | A court with a live match is owned by that match's tournament, hours or no hours. |
+| **The day view still dropped a hold that runs past midnight** — the widening added for exactly that case capped its own upper bound at midnight. | Capped at 48 hours instead. |
+| **The new-game form stopped pre-ticking any court**, so a host who did not notice created a game holding none. | A first visit pre-ticks the free courts; a refused save restores what was ticked. |
+| An emptied "Days" field submitted `''`, and `Number('')` is 0, so it was refused as out of range instead of defaulting to one. | `||`, not `??`. |
+
+**One caveat, deliberately accepted.** Migration `0007` was rewritten in place — twice — after
+it had been applied to throwaway databases on this branch. That is a rule this project would
+normally not break: a migration that has run anywhere must be corrected by the next one, or
+databases silently diverge from their journal. It is safe here because 0007 has never run
+anywhere that survives — it is not on `main`, it has not been deployed, and every database
+that applied it (the test PGlite, a local PostgreSQL, a throwaway container) is built from
+scratch. Anyone who ran `npm run dev` on this branch mid-stage should delete `app/.pglite`
+once; anyone who has not can ignore this. The moment this branch merges, 0007 is frozen.
+
+### What stage 2 deliberately does not do
+
+- **Per-court hours within one game.** "Beginners on Court 1 from six, Court 2 from half seven"
+  is one window per session, applied to every court it holds. The swap is performed at the
+  time, by editing, which works and is not the same as scheduling it. `s2c` is satisfied in
+  the sense that two games can share an evening; it is not satisfied in the sense that the
+  swap can be set up in advance.
+- **"When can I get two courts for ninety minutes?"** `freeCourtsBetween` answers it exactly
+  and has no screen. The day view lists gaps court by court and leaves the intersection to
+  the host.
+- **A repeating block.** Coaching batches are weekly and this screen makes you type them
+  fifty-two times. The nearest spec item is `s5a`.
+- **A start-time field on "Courts and hours".** A game that starts late has no expression;
+  only the finish moves.
+- **Taking a court out from under a live game.** The broken-net case refuses and says what
+  has to move first. Doing it in one act means ending or moving a game, which is a decision
+  with people standing on a court and not one to make implicitly.
+
+Two things the second reviewer flagged that were **left as they are**, deliberately:
+
+- The statement-level trigger closes a hole the application cannot currently open — nothing
+  does a multi-row `UPDATE` that grows a hold. It is kept because the lock ordering it makes
+  possible is not optional, and because the next person to write such an update should not
+  have to discover this.
+
+  One risk goes with it, and it is worth naming because it is the one thing this project
+  said it would never take: transition tables (`REFERENCING OLD TABLE` / `NEW TABLE`) have
+  not been run against PGlite. They are core Postgres executor machinery since 10 and PGlite
+  is a real Postgres 18 backend compiled to WASM, so the expectation is that they work — but
+  it is an expectation, not a test, and if it is wrong the migration aborts inside its single
+  transaction, `ensureReady()` throws, and the embedded database every `npm run dev` uses
+  never comes up. The failure is loud and immediate rather than silent, and `npm test` is
+  what finds it. **If it does fail, the fallback is the row-level version in commit
+  `ba368e5`**, which was run against PGlite and works; `setHolds` already sorts its VALUES
+  list, which is what gives a row-level trigger the same lock ordering. Nothing merges
+  before that test has run.
+- `markAutoEnded` can leave `ended_at` a few minutes after `held_until`. The court going back
+  to the venue on a grid boundary is the point; the attendance record is unaffected.

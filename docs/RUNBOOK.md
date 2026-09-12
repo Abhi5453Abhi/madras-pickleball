@@ -152,6 +152,44 @@ Correct, if nobody was ticked off. The host taps who turned up, and anybody who 
 off by the time the night closed is marked away, which produces no charge. Failing to charge is
 recoverable; charging sixteen people who were not there is not.
 
+## Courts — who has what, and when
+
+`/admin/courts/day` is the one screen that answers it: every court, hour by hour, what is
+on it and what is left. It is also where a court goes out of action.
+
+**A court is held for a time range, not for a day.** A tournament that runs nine to three
+leaves the evening free for a game; two games can share an evening on different courts; a
+game can be extended mid-evening if the court after it is free. All of that is one table,
+`court_holds`, and the rule that stops two things being on one court is a unique index on
+quarter-hour slots, not a check anybody has to remember.
+
+Consequences worth knowing on a Tuesday:
+
+- **Time is counted in quarter hours, rounded outward.** A hold from 19:05 to 19:10 takes
+  19:00 to 19:15. If a screen says a court is free from 7:15 when the thing before it
+  finished at 7:05, that is why, and it is deliberate: the other way round puts two games
+  on one court.
+- **A court cannot be held in the past.** Making a game for hours that have already gone is
+  refused rather than quietly made with no court. A tournament assigned courts halfway
+  through its day gets them from now, not from this morning.
+- **Finishing a tournament or ending a game gives its courts back immediately**, at the
+  minute it happened. That is real now — the old model only said so, and the next
+  organiser met a constraint error instead of a court.
+- **Blocks have an end.** "Out of action until further notice" is how a court quietly
+  disappears for a month, so a block is always for a stated stretch and comes back on its
+  own. Re-block it if the net is still broken.
+- **Taking a court off a tournament with a live match on it is refused.** Let the match
+  finish, or move it, first.
+
+If you ran `npm run dev` on the daily-games branch while stage 2 was being built, delete
+`app/.pglite` once: migration 0007 was corrected in place before it shipped anywhere, and an
+embedded database that applied an earlier draft will not pick the correction up. A database
+that has never seen the branch needs nothing.
+
+If two people save the same court in the same second, one of them is told so and nothing is
+half-written. If a save is refused, the sentence names who has the court and until when —
+that is the next step, not "blocked".
+
 ## Tournament morning
 
 - **Ping the site about 10 minutes before the first match.** Neon autosuspends after a few minutes

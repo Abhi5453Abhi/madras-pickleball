@@ -276,19 +276,101 @@ export const courts = pgTable(
   ],
 )
 
-export const courtClosures = pgTable(
-  'court_closures',
+export const courtHoldKindEnum = pgEnum('court_hold_kind', ['tournament', 'session', 'block'])
+
+/**
+ * Who has a court, and between which two instants.
+ *
+ * This is the only record of court occupancy, and both tournaments and daily
+ * sessions write to it. It replaced `tournament_courts (court_id, day_key)`,
+ * which could only say "all of Tuesday" — so a 7pm social could not have a
+ * court on a tournament day, and a two-day tournament silently lost its courts
+ * on day two.
+ *
+ * Exactly one holder, by CHECK: a tournament, a session, or nobody at all,
+ * which is a block — coaching, maintenance, a private booking, a broken net.
+ * A block is venue-wide on purpose; a court with a broken net is broken for
+ * everybody.
+ *
+ * The no-two-holders guarantee is NOT here. It is `court_hold_slots` below.
+ */
+export const courtHolds = pgTable(
+  'court_holds',
   {
     id: text('id').primaryKey(),
     courtId: text('court_id')
       .notNull()
       .references(() => courts.id, { onDelete: 'cascade' }),
-    tournamentId: text('tournament_id'),
+    kind: courtHoldKindEnum('kind').notNull(),
+    tournamentId: text('tournament_id').references(() => tournaments.id, { onDelete: 'cascade' }),
+    sessionId: text('session_id').references(() => gameSessions.id, { onDelete: 'cascade' }),
+    /** Required for a block, and the whole of what a block is. */
     reason: text('reason'),
-    from: timestamp('from', { withTimezone: true }).notNull().defaultNow(),
-    until: timestamp('until', { withTimezone: true }),
+    heldFrom: timestamp('held_from', { withTimezone: true }).notNull(),
+    heldUntil: timestamp('held_until', { withTimezone: true }).notNull(),
+    /**
+     * When a holder finished early and the court went back to the venue. The
+     * row is kept for the audit trail; `held_until` is what was truncated, so
+     * the slots are already gone and nothing reads this to decide occupancy.
+     */
+    releasedAt: timestamp('released_at', { withTimezone: true }),
+    createdByUserId: text('created_by_user_id').references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('court_closures_idx').on(t.courtId, t.from)],
+  (t) => [
+    index('court_holds_court_from_idx').on(t.courtId, t.heldFrom),
+    index('court_holds_tournament_idx').on(t.tournamentId).where(sql`tournament_id is not null`),
+    index('court_holds_session_idx').on(t.sessionId).where(sql`session_id is not null`),
+    index('court_holds_window_idx').on(t.heldFrom, t.heldUntil),
+    check('court_holds_span', sql`held_until > held_from`),
+    check(
+      'court_holds_holder',
+      sql`(kind = 'tournament' and tournament_id is not null and session_id is null) or (kind = 'session' and session_id is not null and tournament_id is null) or (kind = 'block' and tournament_id is null and session_id is null)`,
+    ),
+    check('court_holds_block_reason', sql`kind <> 'block' or (reason is not null and btrim(reason) <> '')`),
+  ],
+)
+
+/**
+ * The interlock. One row per court per quarter hour, primary key
+ * `(court_id, slot_start)` — so two holds that overlap by one minute collide
+ * on a real index and the second one is refused by Postgres, not by a check
+ * somebody might forget to write.
+ *
+ * These rows are NOT written by application code. A trigger on `court_holds`
+ * materialises them (migration 0007, `court_hold_slots_sync`), with the
+ * boundaries rounded outward to the quarter hour, so every write path gets the
+ * guarantee whether or not its author knew about it. Rounding outward can only
+ * ever over-reserve — a hold that ends at 19:05 keeps the court until 19:15 —
+ * which is the safe direction.
+ *
+ * The trigger is statement level, with transition tables, deliberately: one
+ * statement that moves several holds at once must free every old slot before it
+ * claims any new one, or a hold shifted by an hour collides with the one behind
+ * it and raises on an overlap that does not exist.
+ *
+ * The alternative was `EXCLUDE USING gist (court_id WITH =, tstzrange(...) WITH &&)`,
+ * which needs `btree_gist`. That extension is fine on Neon and is NOT available
+ * in PGlite, and the whole migration file runs in one transaction, so adding it
+ * would brick the embedded database that `npm run dev` and every test use.
+ * A quarter-hour grid is the price of that; a 14-hour tournament day is 56 rows.
+ */
+export const courtHoldSlots = pgTable(
+  'court_hold_slots',
+  {
+    courtId: text('court_id')
+      .notNull()
+      .references(() => courts.id, { onDelete: 'cascade' }),
+    slotStart: timestamp('slot_start', { withTimezone: true }).notNull(),
+    holdId: text('hold_id')
+      .notNull()
+      .references(() => courtHolds.id, { onDelete: 'cascade' }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.courtId, t.slotStart] }),
+    index('court_hold_slots_hold_idx').on(t.holdId),
+  ],
 )
 
 // ──────────────────────────  club roster  ──────────────────────────
@@ -332,6 +414,18 @@ export const tournaments = pgTable(
       .references(() => venues.id),
     startDate: timestamp('start_date', { withTimezone: true }).notNull(),
     endDate: timestamp('end_date', { withTimezone: true }).notNull(),
+    /**
+     * The hours its courts are held for, each day it runs, as minutes from the
+     * start of the venue day. Null is the whole day, which is what every
+     * tournament held before it could hold part of one.
+     *
+     * Stored rather than derived from the holds: a hold that was taken up at
+     * eleven, or truncated when the day finished, says nothing about the hours
+     * the organiser asked for, and reading it back as if it did quietly moved
+     * every other day of a two-day tournament.
+     */
+    courtFromMin: integer('court_from_min'),
+    courtUntilMin: integer('court_until_min'),
     status: tournamentStatusEnum('status').notNull().default('draft'),
     description: text('description'),
     bannerUrl: text('banner_url'),
@@ -361,34 +455,10 @@ export const tournaments = pgTable(
   (t) => [
     uniqueIndex('tournaments_slug_key').on(t.slug),
     index('tournaments_status_idx').on(t.status, t.startDate),
-  ],
-)
-
-/**
- * Which courts a tournament runs on. A court belongs to one tournament at a
- * time: two tournaments on the same day cannot share one, and a match only ever
- * goes onto one of its own tournament's courts. Changing this table is how the
- * organiser gives a tournament another court — there is no lending.
- */
-export const tournamentCourts = pgTable(
-  'tournament_courts',
-  {
-    id: text('id').primaryKey(),
-    tournamentId: text('tournament_id')
-      .notNull()
-      .references(() => tournaments.id, { onDelete: 'cascade' }),
-    courtId: text('court_id')
-      .notNull()
-      .references(() => courts.id, { onDelete: 'cascade' }),
-    /** Day-level key, venue time, so the uniqueness below means "that day". */
-    dayKey: text('day_key').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    uniqueIndex('tournament_courts_uq').on(t.tournamentId, t.courtId),
-    /** One tournament per court per day — the rule the whole product rests on. */
-    uniqueIndex('tournament_courts_day_uq').on(t.courtId, t.dayKey),
-    index('tournament_courts_tournament_idx').on(t.tournamentId),
+    check(
+      'tournaments_court_hours',
+      sql`(court_from_min is null) = (court_until_min is null) and (court_from_min is null or (court_from_min >= 0 and court_until_min > court_from_min and court_until_min <= 1440))`,
+    ),
   ],
 )
 

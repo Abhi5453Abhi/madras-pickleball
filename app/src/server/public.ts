@@ -9,10 +9,10 @@ import {
   players,
   teamPlayers,
   teams,
-  tournamentCourts,
   tournamentPlayers,
   tournaments,
 } from '@/db/schema'
+import { courtsHeldBy, holdsAtInstant } from './courts'
 import { tieNote, standings } from '@/lib/standings'
 import { venueDayKey } from '@/lib/time'
 import { AUTO_CONFIRM_MINUTES, isProvisional, projectedState } from './scoring'
@@ -229,14 +229,10 @@ export const publicTournament = cache(async function publicTournament(slug: stri
         .where(eq(matches.tournamentId, tournament.id))
         .orderBy(asc(games.gameNo)),
 
-      // The tournament's own courts, in venue order. "Courts 1, 2" in the
-      // header and one card per court with a match on it.
-      db
-        .select({ id: courts.id, name: courts.name, colorKey: courts.colorKey })
-        .from(tournamentCourts)
-        .innerJoin(courts, eq(courts.id, tournamentCourts.courtId))
-        .where(eq(tournamentCourts.tournamentId, tournament.id))
-        .orderBy(asc(courts.sortOrder)),
+      // The tournament's own courts, in venue order, once each however many
+      // days it runs. "Courts 1, 2" in the header and one card per court with
+      // a match on it.
+      courtsHeldBy({ kind: 'tournament', tournamentId: tournament.id }),
 
       // Names only. The roster row has a phone on it and this is the one
       // place it must never come through.
@@ -460,10 +456,11 @@ export async function publicToday() {
 
   const [heldRows, liveRows, memberRows, aggRows] = ids.length
     ? await Promise.all([
-        db
-          .select({ courtId: tournamentCourts.courtId, tournamentId: tournamentCourts.tournamentId })
-          .from(tournamentCourts)
-          .where(inArray(tournamentCourts.tournamentId, ids)),
+        // Who has each court AT THIS MOMENT — the exact query, not the one
+        // widened to the quarter-hour grid. The grid is right for "can I book
+        // this"; a gate sign that named a tournament whose hold ended ten
+        // minutes ago would simply be wrong.
+        holdsAtInstant(new Date()),
         db
           .select({
             courtId: matches.courtId,
@@ -494,12 +491,13 @@ export async function publicToday() {
     : [[], [], [], []]
 
   const byId = new Map(today.map((t) => [t.id, t]))
-  // A finished tournament has let go of its courts — the same rule the
-  // organiser's court picker uses.
+  // A finished tournament has let go of its courts for real now — its holds
+  // were truncated when it finished — so there is nothing left to filter out
+  // here except a holder that is not one of today's published tournaments.
   const heldBy = new Map(
     heldRows
-      .filter((h) => byId.get(h.tournamentId)?.status !== 'completed')
-      .map((h) => [h.courtId, h.tournamentId]),
+      .filter((h) => !!h.tournamentId && byId.has(h.tournamentId))
+      .map((h) => [h.courtId, h.tournamentId as string]),
   )
   const liveByCourt = new Map(liveRows.filter((l) => l.courtId).map((l) => [l.courtId!, l]))
   const teamName = new Map<string, string>()

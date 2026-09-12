@@ -1,7 +1,8 @@
 import 'server-only'
-import { and, asc, eq, gte, sql } from 'drizzle-orm'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import { db } from '@/db'
-import { courts, matches, tournamentCourts, tournaments } from '@/db/schema'
+import { courts, matches } from '@/db/schema'
+import { dayStart, holdsBetween } from './courts'
 import { newId } from '@/lib/ids'
 import { venueDayKey } from '@/lib/time'
 import { getVenue } from './tournaments'
@@ -24,21 +25,17 @@ export async function venueCourts() {
       .from(courts)
       .where(and(eq(courts.venueId, venue.id), eq(courts.active, true)))
       .orderBy(asc(courts.sortOrder)),
-    // Who holds each court from today on, so removing one can say who loses it.
-    db
-      .select({ courtId: tournamentCourts.courtId, name: tournaments.name, dayKey: tournamentCourts.dayKey })
-      .from(tournamentCourts)
-      .innerJoin(tournaments, eq(tournaments.id, tournamentCourts.tournamentId))
-      .where(
-        and(
-          gte(tournamentCourts.dayKey, todayKey),
-          sql`${tournaments.deletedAt} is null`,
-          sql`${tournaments.status} not in ('completed', 'archived')`,
-        ),
-      ),
+    // Who has each court from today on, so removing one can say who loses it.
+    // A year is the horizon: a hold further out than that is a data-entry
+    // mistake, not a booking, and it should not keep a court alive forever.
+    holdsBetween(dayStart(todayKey), new Date(dayStart(todayKey).getTime() + 365 * 24 * 60 * 60_000)),
   ])
   const holders = new Map<string, string[]>()
-  for (const h of held) holders.set(h.courtId, [...(holders.get(h.courtId) ?? []), h.name])
+  for (const h of held) {
+    const seen = holders.get(h.courtId) ?? []
+    if (!seen.includes(h.holderName)) seen.push(h.holderName)
+    holders.set(h.courtId, seen)
+  }
   return rows.map((c) => ({ ...c, heldBy: holders.get(c.id) ?? [] }))
 }
 
@@ -108,7 +105,7 @@ export async function removeCourt(courtId: string) {
   if (c.heldBy.length) {
     return {
       ok: false as const,
-      error: `${c.name} belongs to ${c.heldBy.join(' and ')}. Take it off there first, under Schedule & courts.`,
+      error: `${c.name} is spoken for — ${c.heldBy.join(' and ')}. Clear it under “what is on today, and what is free” first.`,
     }
   }
   const remaining = (await venueCourts()).filter((x) => x.id !== courtId).length

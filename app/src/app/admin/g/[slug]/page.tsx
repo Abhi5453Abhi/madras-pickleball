@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import {
   Button,
   Confirm,
+  CourtSwatch,
   Disclosure,
   EmptyState,
   Input,
@@ -16,12 +17,14 @@ import {
 } from '@/components/ui'
 import { requireUser } from '@/lib/auth'
 import { gatePhase, TICK_STALE_AFTER_MIN } from '@/lib/daily-clock'
-import { rupees } from '@/lib/display'
+import { courtsLabel, rupees } from '@/lib/display'
 import { publicName } from '@/lib/display'
 import { venueDate, venueTime } from '@/lib/time'
 import { ensureReady } from '@/server/bootstrap'
+import { freeCourtsBetween } from '@/server/courts'
 import { schedulerHealth } from '@/server/daily-reconcile'
-import { countRoster, getSessionBySlug, payerOptions, roster } from '@/server/sessions'
+import { countRoster, getSessionBySlug, payerOptions, roster, sessionCourts } from '@/server/sessions'
+import { getVenue } from '@/server/tournaments'
 import { Attention, AttentionRow, PRIMARY_LINK, SECONDARY_LINK } from '../../_ui'
 import {
   addPerson,
@@ -33,6 +36,7 @@ import {
   publishGame,
   removePerson,
   runGateNow,
+  setGameCourts,
   setSpots,
 } from './actions'
 import { GameLink, Nudge } from './link-panel'
@@ -97,9 +101,24 @@ export default async function AdminGame(props: PageProps<'/admin/g/[slug]'>) {
   // An attention list that never empties is one the host stops reading.
   const promoted = over ? [] : entries.filter((e) => e.promotedAt && e.state !== 'withdrawn')
   const payers = await payerOptions(s.id)
+
+  // The courts this game has, and everything else at the venue with whoever
+  // has it during these hours — so "Court 3 is free" is visible rather than
+  // guessed at.
+  const venue = await getVenue()
+  const [mine, allCourts] = await Promise.all([
+    sessionCourts(s.id),
+    freeCourtsBetween(s.startsAt, s.endsAt, venue.id),
+  ])
+  const mineIds = new Set(mine.map((c) => c.id))
+  const courtChoices = allCourts.map((c) => ({
+    ...c,
+    mine: mineIds.has(c.id),
+    takenBy: c.takenBy && c.takenBy.sessionId !== s.id ? c.takenBy.holderName : null,
+  }))
   const word = WORDS[s.status] ?? WORDS.draft
 
-  const shareText = `${s.title} — ${venueDate(s.startsAt)} ${venueTime(s.startsAt)}–${venueTime(s.endsAt)}, ${s.courtCount === 1 ? '1 court' : `${s.courtCount} courts`}, ${s.pricePaise > 0 ? rupees(s.pricePaise) : 'free'}. ${counts.taken}/${s.capacity} in.`
+  const shareText = `${s.title} — ${venueDate(s.startsAt)} ${venueTime(s.startsAt)}–${venueTime(s.endsAt)}, ${courtsLabel(mine.map((c) => c.name), s.courtCount)}, ${s.pricePaise > 0 ? rupees(s.pricePaise) : 'free'}. ${counts.taken}/${s.capacity} in.`
   const nudgeText = `${s.title} at ${venueTime(s.startsAt)} — tap to say you’re coming —`
 
   const attentionCount =
@@ -117,7 +136,7 @@ export default async function AdminGame(props: PageProps<'/admin/g/[slug]'>) {
         </div>
         <p className="num mt-1 text-body text-text-2">
           {venueDate(s.startsAt)} · {venueTime(s.startsAt)}–{venueTime(s.endsAt)} ·{' '}
-          {s.courtCount === 1 ? '1 court' : `${s.courtCount} courts`} ·{' '}
+          {courtsLabel(mine.map((c) => c.name), s.courtCount)} ·{' '}
           {s.pricePaise > 0 ? rupees(s.pricePaise) : 'Free'}
         </p>
         <p className="num mt-1 text-meta text-text-3">
@@ -407,6 +426,60 @@ export default async function AdminGame(props: PageProps<'/admin/g/[slug]'>) {
             <Button type="submit" variant="secondary" className="w-full">
               Put them on
             </Button>
+          </form>
+        </section>
+      ) : null}
+
+      {!over ? (
+        <section className="flex flex-col gap-2.5">
+          <SectionHead
+            title="Courts and hours"
+            meta={
+              mine.length
+                ? `${mine.map((c) => c.name).join(', ')} until ${venueTime(s.endsAt)}.`
+                : 'This game has no courts held for it.'
+            }
+          />
+          <form action={setGameCourts} className="flex flex-col gap-3">
+            <input type="hidden" name="slug" value={slug} />
+            <div className="flex flex-wrap gap-2">
+              {courtChoices.map((c) => (
+                <label
+                  key={c.id}
+                  className="tap inline-flex cursor-pointer items-center gap-2 rounded-full border border-line-key bg-paper px-3.5 text-[16px] font-semibold text-text has-checked:border-ink has-checked:bg-ink has-checked:text-white"
+                >
+                  <input
+                    type="checkbox"
+                    name="courts"
+                    value={c.id}
+                    defaultChecked={c.mine}
+                    className="sr-only"
+                  />
+                  <CourtSwatch colorKey={c.colorKey} size="md" />
+                  {c.name}
+                  {c.takenBy ? <span className="font-normal">· {c.takenBy}</span> : null}
+                </label>
+              ))}
+            </div>
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <Label htmlFor="finish">Finishes at</Label>
+                <Input
+                  id="finish"
+                  name="finish"
+                  type="time"
+                  defaultValue={venueTime(s.endsAt)}
+                  className="mt-2"
+                />
+              </div>
+              <Button type="submit" variant="secondary">
+                Save
+              </Button>
+            </div>
+            <p className="text-meta text-text-3">
+              “Can we go till 9:30, Court 3 is free” — this is that. A court somebody else has for
+              these hours is named here and refused on save.
+            </p>
           </form>
         </section>
       ) : null}

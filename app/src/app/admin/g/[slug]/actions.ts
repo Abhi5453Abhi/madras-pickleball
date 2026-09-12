@@ -3,11 +3,13 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
+import { venueDayKey, venueInstant, venueTime } from '@/lib/time'
 import { ensureReady } from '@/server/bootstrap'
 import { runTick } from '@/server/daily-reconcile'
 import {
   cancelSession,
   endSession,
+  extendSession,
   getSessionBySlug,
   joinSession,
   leaveSession,
@@ -19,6 +21,8 @@ import {
   setHidden,
   setPayer,
   setPresent,
+  sessionCourts,
+  setSessionCourts,
   startSession,
 } from '@/server/sessions'
 
@@ -339,4 +343,43 @@ export async function runGateNow(formData: FormData) {
     )
   }
   back(slug, { note: out.applied ? `Done — ${out.applied} change${out.applied === 1 ? '' : 's'}.` : 'Nothing was due.' }, to)
+}
+
+/**
+ * Which courts the game is on, and when it finishes — one form, because on a
+ * Tuesday evening they are one decision. "Anna, can we go till 9:30, Court 3
+ * is free."
+ *
+ * The hours move first. If they are refused, the courts are left exactly as
+ * they were rather than half-applied to a window that did not happen.
+ */
+export async function setGameCourts(formData: FormData) {
+  const user = await requireUser('admin')
+  await ensureReady()
+  const slug = String(formData.get('slug') ?? '')
+  const session = await getSessionBySlug(slug)
+  if (!session) back(slug, { err: 'That game has gone.' })
+
+  const courtIds = formData.getAll('courts').map(String).filter(Boolean)
+  const finish = String(formData.get('finish') ?? '').trim()
+
+  if (finish && finish !== venueTime(session.endsAt)) {
+    // The finish is a time of day; which day it lands on is the day the game
+    // started, unless that would put the end before the start — a game that
+    // runs past midnight is a real Saturday, not a typo.
+    const sameDay = venueInstant(venueDayKey(session.startsAt), finish)
+    if (!sameDay) back(slug, { err: 'That finish time isn’t a time.' })
+    const endsAt = sameDay <= session.startsAt ? new Date(sameDay.getTime() + 24 * 3600_000) : sameDay
+    const moved = await extendSession(session.id, endsAt, user)
+    if (!moved.ok) back(slug, { err: moved.error })
+  }
+
+  const res = await setSessionCourts(session.id, courtIds, user)
+  if (!res.ok) back(slug, { err: res.error })
+  // Named, not counted: the host just picked courts by name and a number back
+  // is not an answer to what they did.
+  const on = await sessionCourts(session.id)
+  back(slug, {
+    note: on.length ? `On ${on.map((c) => c.name).join(' and ')} now.` : 'No courts held for it now.',
+  })
 }

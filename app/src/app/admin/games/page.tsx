@@ -8,7 +8,7 @@ import { ensureReady } from '@/server/bootstrap'
 import { schedulerHealth } from '@/server/daily-reconcile'
 import { allSessions, countRoster, roster } from '@/server/sessions'
 import { Eyebrow } from '../../t/court-card'
-import { PRIMARY_LINK } from '../_ui'
+import { PRIMARY_LINK, SECONDARY_LINK } from '../_ui'
 import { runGateNow } from '../g/[slug]/actions'
 
 /** The host's list of daily games. Drafts included — they are not public yet. */
@@ -46,6 +46,10 @@ export default async function AdminGames() {
   return (
     <div className="flex flex-col gap-6">
       <SectionHead title="Daily games" meta="Open play. Players join with a name and a phone." />
+
+      <Link href="/admin/courts/day" className={SECONDARY_LINK}>
+        What is on today, and what is free
+      </Link>
 
       <Link href="/admin/games/new" className={PRIMARY_LINK}>
         Put a game up

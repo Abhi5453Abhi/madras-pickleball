@@ -1,7 +1,7 @@
 import { cache } from 'react'
 import { and, asc, eq, gte, inArray, isNull, sql } from 'drizzle-orm'
 import { db } from '@/db'
-import { gameSessions, sessionParticipants } from '@/db/schema'
+import { courtHolds, courts, gameSessions, sessionParticipants } from '@/db/schema'
 import { publicName } from '@/lib/display'
 import { gatePhase, type GatePhase } from '@/lib/daily-clock'
 
@@ -21,6 +21,33 @@ import { gatePhase, type GatePhase } from '@/lib/daily-clock'
  * CDN cache.
  */
 
+/**
+ * The court names each of these games is on, in venue order.
+ *
+ * One query for the whole list: the public page is the one the whole club opens
+ * at once, and a join per row is a round trip per row on a serverless host
+ * holding a single connection.
+ */
+async function courtNamesForSessions(ids: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>()
+  if (!ids.length) return out
+  const rows = await db
+    .selectDistinct({
+      sessionId: courtHolds.sessionId,
+      name: courts.name,
+      sortOrder: courts.sortOrder,
+    })
+    .from(courtHolds)
+    .innerJoin(courts, eq(courts.id, courtHolds.courtId))
+    .where(inArray(courtHolds.sessionId, ids))
+    .orderBy(asc(courts.sortOrder))
+  for (const r of rows) {
+    if (!r.sessionId) continue
+    out.set(r.sessionId, [...(out.get(r.sessionId) ?? []), r.name])
+  }
+  return out
+}
+
 /** What the public list shows for one game. */
 export type PublicSession = {
   slug: string
@@ -32,6 +59,13 @@ export type PublicSession = {
   pricePaise: number
   capacity: number
   courtCount: number
+  /**
+   * The courts it is actually on, in venue order. A player standing at the gate
+   * wants to know WHICH court; the count is the one fact they already have.
+   * Read from the holds rather than from `court_count`, because courts can be
+   * swapped mid-evening and a cached number goes stale silently.
+   */
+  courts: string[]
   taken: number
   waiting: number
   full: boolean
@@ -115,7 +149,10 @@ export const publicSessions = cache(async (now: Date = new Date()): Promise<Publ
     .orderBy(asc(gameSessions.startsAt))
     .limit(40)
 
-  const counts = await countsFor(rows.map((r) => r.id))
+  const [counts, courtsBy] = await Promise.all([
+    countsFor(rows.map((r) => r.id)),
+    courtNamesForSessions(rows.map((r) => r.id)),
+  ])
   return rows.map((r) => {
     const c = counts.get(r.id) ?? { taken: 0, waiting: 0 }
     return {
@@ -128,6 +165,7 @@ export const publicSessions = cache(async (now: Date = new Date()): Promise<Publ
       pricePaise: r.pricePaise,
       capacity: r.capacity,
       courtCount: r.courtCount,
+      courts: courtsBy.get(r.id) ?? [],
       taken: c.taken,
       waiting: c.waiting,
       full: c.taken >= r.capacity,
@@ -198,6 +236,7 @@ export const publicSession = cache(
       pricePaise: s.pricePaise,
       capacity: s.capacity,
       courtCount: s.courtCount,
+      courts: (await courtNamesForSessions([s.id])).get(s.id) ?? [],
       notes: s.notes,
       taken,
       waiting,

@@ -4,18 +4,28 @@ import { db, transact } from '@/db'
 import {
   categories,
   courts,
-  courtClosures,
   matchSlots,
   matches,
   players,
   teamPlayers,
   teams,
-  tournamentCourts,
   tournaments,
 } from '@/db/schema'
 import { bumpStreamVersion } from '@/lib/stream'
 import { estimateDay, minutesPerMatch } from '@/lib/estimate'
 import { venueDayKey } from '@/lib/time'
+import {
+  boardDay,
+  courtStateAt,
+  dayEnd,
+  dayStart,
+  holdsAtInstant,
+  holdsBetween,
+  holdsCourtAt,
+  holdsFor,
+  hoursLabelFor,
+  type HoldRow,
+} from './courts'
 import { getVenue } from './tournaments'
 
 /**
@@ -158,7 +168,7 @@ export async function boardData(tournamentId: string): Promise<BoardData> {
   // The first entry is deliberately dropped: getVenue is here only because it
   // throws when the venue was never seeded, which is a setup mistake that
   // should say so rather than render an empty board.
-  const [, tournament, courtRows, closures, rows, teamNameRows, rosterRows, slotRows, elsewhere] =
+  const [, tournament, tournamentHolds, rows, teamNameRows, rosterRows, slotRows, elsewhere] =
     await Promise.all([
       getVenue(),
 
@@ -169,22 +179,10 @@ export async function boardData(tournamentId: string): Promise<BoardData> {
         .limit(1)
         .then((r) => r[0]),
 
-      db
-        .select({
-          id: courts.id,
-          name: courts.name,
-          colorKey: courts.colorKey,
-          sortOrder: courts.sortOrder,
-        })
-        .from(tournamentCourts)
-        .innerJoin(courts, eq(courts.id, tournamentCourts.courtId))
-        .where(and(eq(tournamentCourts.tournamentId, tournamentId), eq(courts.active, true)))
-        .orderBy(courts.sortOrder),
-
-      db
-        .select({ courtId: courtClosures.courtId, reason: courtClosures.reason })
-        .from(courtClosures)
-        .where(and(eq(courtClosures.tournamentId, tournamentId), isNull(courtClosures.until))),
+      // Every hold this tournament has. Which of them are today's, and which
+      // courts are its to use at this minute, is worked out below — a court it
+      // has from nine is not a court it has at eight.
+      holdsFor({ kind: 'tournament', tournamentId }),
 
       db
         .select({
@@ -255,7 +253,19 @@ export async function boardData(tournamentId: string): Promise<BoardData> {
         .where(and(eq(matches.status, 'live'), ne(matches.tournamentId, tournamentId))),
     ])
 
-  const closedByCourt = new Map(closures.map((c) => [c.courtId, c.reason ?? 'Out of action']))
+  // The day the board is about, and the courts it has that day.
+  const asOf = new Date()
+  const todayHolds = boardDay(tournamentHolds, asOf)
+  const holdsByCourt = new Map<string, HoldRow[]>()
+  for (const h of todayHolds) {
+    const list = holdsByCourt.get(h.courtId)
+    if (list) list.push(h)
+    else holdsByCourt.set(h.courtId, [h])
+  }
+  const courtRows = [...holdsByCourt.values()]
+    .map((hs) => ({ id: hs[0].courtId, name: hs[0].courtName, colorKey: hs[0].colorKey, sortOrder: hs[0].sortOrder }))
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+  const stateByCourt = new Map(courtRows.map((c) => [c.id, courtStateAt(holdsByCourt.get(c.id) ?? [], asOf)]))
   const teamNames = new Map(teamNameRows.map((t) => [t.id, t.name]))
   const rosterByMatch = groupRoster(rosterRows)
   const waitingByMatch = waitingLabels(rows, slotRows)
@@ -335,8 +345,8 @@ export async function boardData(tournamentId: string): Promise<BoardData> {
       id: c.id,
       name: c.name,
       colorKey: c.colorKey,
-      closed: closedByCourt.has(c.id),
-      closedReason: closedByCourt.get(c.id) ?? null,
+      closed: !(stateByCourt.get(c.id)?.open ?? false),
+      closedReason: stateByCourt.get(c.id)?.note ?? null,
       live: live ? toBoardMatch(live) : null,
       freeSinceMinutes:
         live || !lastEnded ? null : Math.max(0, Math.floor((now - lastEnded) / 60_000)),
@@ -487,36 +497,14 @@ export async function sendToCourt(matchId: string, courtId: string, opts?: { for
 
   // Four independent checks; the organiser is standing on a court waiting for
   // the answer, so they go out together rather than one hop at a time.
-  const [court, held, closed, busyCourt] = await Promise.all([
+  const [court, held, busyCourt] = await Promise.all([
     db
       .select({ name: courts.name })
       .from(courts)
       .where(eq(courts.id, courtId))
       .limit(1)
       .then((r) => r[0]),
-    db
-      .select({ id: tournamentCourts.id })
-      .from(tournamentCourts)
-      .where(
-        and(
-          eq(tournamentCourts.tournamentId, match.tournamentId),
-          eq(tournamentCourts.courtId, courtId),
-        ),
-      )
-      .limit(1)
-      .then((r) => r[0]),
-    db
-      .select({ id: courtClosures.id, reason: courtClosures.reason })
-      .from(courtClosures)
-      .where(
-        and(
-          eq(courtClosures.courtId, courtId),
-          eq(courtClosures.tournamentId, match.tournamentId),
-          isNull(courtClosures.until),
-        ),
-      )
-      .limit(1)
-      .then((r) => r[0]),
+    holdsCourtAt({ kind: 'tournament', tournamentId: match.tournamentId }, courtId, new Date()),
     db
       .select({ id: matches.id })
       .from(matches)
@@ -526,17 +514,16 @@ export async function sendToCourt(matchId: string, courtId: string, opts?: { for
   ])
 
   if (!court) return { ok: false as const, error: 'That court no longer exists.' }
-  // A match only ever goes onto its own tournament's courts. Enforced here,
-  // not in the screens: the Move list never offers another tournament's
-  // court, but a form field is a wire value and this is the write.
+  // A match only ever goes onto a court this tournament holds AT THIS MOMENT.
+  // Enforced here, not in the screens: the Move list never offers a court that
+  // is not the tournament's, but a form field is a wire value and this is the
+  // write. "At this moment" is the whole of stage 2 in one condition — the
+  // court may be the tournament's at nine and a coaching batch's at five.
   if (!held) {
     return {
       ok: false as const,
-      error: `${court.name} isn’t one of this tournament’s courts — a match only goes on its own tournament’s courts.`,
+      error: await notHeldNow(court.name, courtId, match.tournamentId),
     }
-  }
-  if (closed) {
-    return { ok: false as const, error: `${court.name} is out of action — ${closed.reason ?? 'closed'}.` }
   }
   if (busyCourt) {
     return { ok: false as const, error: `${court.name} already has a match on it.` }
@@ -554,6 +541,14 @@ export async function sendToCourt(matchId: string, courtId: string, opts?: { for
   // is a board that never refreshes. The status is re-asserted in the WHERE
   // because it was read before the transaction opened.
   const placed = await transact(async (tx) => {
+    // Re-asserted inside the transaction, with the hold row locked: between the
+    // read above and this write, the tournament could have finished, the court
+    // could have been taken off it, or a block could have landed. The match
+    // status is re-asserted in the WHERE for the same reason; the hold cannot
+    // be, because it is a different table.
+    if (!(await holdsCourtAt({ kind: 'tournament', tournamentId: match.tournamentId }, courtId, new Date(), tx, true))) {
+      return 'no-hold' as const
+    }
     const rows = await tx
       .update(matches)
       .set({
@@ -566,9 +561,12 @@ export async function sendToCourt(matchId: string, courtId: string, opts?: { for
       .where(and(eq(matches.id, matchId), ne(matches.status, 'live'), eq(matches.resultState, 'none')))
       .returning({ id: matches.id })
     if (rows.length) await bumpStreamVersion(match.tournamentId, tx)
-    return rows.length > 0
+    return rows.length ? ('ok' as const) : ('busy' as const)
   })
-  if (!placed) return { ok: false as const, error: 'This match is already on a court.' }
+  if (placed === 'no-hold') {
+    return { ok: false as const, error: await notHeldNow(court.name, courtId, match.tournamentId) }
+  }
+  if (placed === 'busy') return { ok: false as const, error: 'This match is already on a court.' }
   return { ok: true as const }
 }
 
@@ -678,36 +676,14 @@ export async function moveMatch(matchId: string, courtId: string) {
   }
   if (match.courtId === courtId) return { ok: true as const }
 
-  const [court, held, closed, busyCourt] = await Promise.all([
+  const [court, held, busyCourt] = await Promise.all([
     db
       .select({ name: courts.name })
       .from(courts)
       .where(eq(courts.id, courtId))
       .limit(1)
       .then((r) => r[0]),
-    db
-      .select({ id: tournamentCourts.id })
-      .from(tournamentCourts)
-      .where(
-        and(
-          eq(tournamentCourts.tournamentId, match.tournamentId),
-          eq(tournamentCourts.courtId, courtId),
-        ),
-      )
-      .limit(1)
-      .then((r) => r[0]),
-    db
-      .select({ reason: courtClosures.reason })
-      .from(courtClosures)
-      .where(
-        and(
-          eq(courtClosures.courtId, courtId),
-          eq(courtClosures.tournamentId, match.tournamentId),
-          isNull(courtClosures.until),
-        ),
-      )
-      .limit(1)
-      .then((r) => r[0]),
+    holdsCourtAt({ kind: 'tournament', tournamentId: match.tournamentId }, courtId, new Date()),
     db
       .select({ id: matches.id })
       .from(matches)
@@ -718,20 +694,17 @@ export async function moveMatch(matchId: string, courtId: string) {
 
   if (!court) return { ok: false as const, error: 'That court no longer exists.' }
   if (!held) {
-    return {
-      ok: false as const,
-      error: `${court.name} isn’t one of this tournament’s courts — a match only goes on its own tournament’s courts.`,
-    }
-  }
-  if (closed) {
-    return { ok: false as const, error: `${court.name} is out of action — ${closed.reason ?? 'closed'}.` }
+    return { ok: false as const, error: await notHeldNow(court.name, courtId, match.tournamentId) }
   }
   if (busyCourt) {
     return { ok: false as const, error: `${court.name} already has a match on it.` }
   }
 
-  await transact(async (tx) => {
-    await tx
+  const moved = await transact(async (tx) => {
+    if (!(await holdsCourtAt({ kind: 'tournament', tournamentId: match.tournamentId }, courtId, new Date(), tx, true))) {
+      return 'no-hold' as const
+    }
+    const rows = await tx
       .update(matches)
       .set({
         courtId,
@@ -740,9 +713,42 @@ export async function moveMatch(matchId: string, courtId: string) {
         updatedAt: new Date(),
       })
       .where(and(eq(matches.id, matchId), eq(matches.status, 'live')))
+      .returning({ id: matches.id })
+    // `.returning()` is the test, as everywhere else: the match was read before
+    // the transaction opened and could have come off court since.
+    if (!rows.length) return 'gone' as const
     await bumpStreamVersion(match.tournamentId, tx)
+    return 'ok' as const
   })
+  if (moved === 'no-hold') {
+    return { ok: false as const, error: await notHeldNow(court.name, courtId, match.tournamentId) }
+  }
+  if (moved === 'gone') {
+    return { ok: false as const, error: 'That match came off court while you were looking at it.' }
+  }
   return { ok: true as const }
+}
+
+/**
+ * Why a court is not this tournament's to use at this second.
+ *
+ * Three different situations used to share one sentence about "this
+ * tournament's courts", and only one of them was true: somebody else has it,
+ * the tournament has it but not yet, or nobody has it and it was never taken.
+ * Each gets its own sentence, because each has a different next step.
+ */
+async function notHeldNow(courtName: string, courtId: string, tournamentId: string): Promise<string> {
+  const now = new Date()
+  // The instant query, not the grid-widened one: "who has it right now" must
+  // not name a holder whose hold ended ten minutes ago.
+  const [holder] = await holdsAtInstant(now, [courtId])
+  if (holder && holder.tournamentId !== tournamentId) {
+    return `${courtName} belongs to ${holder.holderName} until ${hoursLabelFor(holder.heldUntil)}.`
+  }
+  const mine = (await holdsFor({ kind: 'tournament', tournamentId })).filter((h) => h.courtId === courtId)
+  const next = mine.filter((h) => h.heldFrom > now).sort((a, b) => a.heldFrom.getTime() - b.heldFrom.getTime())[0]
+  if (next) return `${courtName} is yours from ${hoursLabelFor(next.heldFrom)}, not yet.`
+  return `${courtName} isn’t one of this tournament’s courts — take it under Schedule & courts first.`
 }
 
 export type MoveOption = {
@@ -831,8 +837,21 @@ export type VenueCourt = {
   id: string
   name: string
   colorKey: string
-  /** Who holds it today, running or not. Null: nobody. */
+  /** Who holds it today, running or not. Null: nobody, or somebody who is not a tournament. */
   tournament: VenueTournament | null
+  /**
+   * Who has the court at this minute, whoever that is — a tournament, a daily
+   * game, or nobody because it is blocked. A court is no longer one
+   * tournament's for a whole day, so "not assigned" and "belongs to X" stopped
+   * being the only two states there are.
+   */
+  heldBy: {
+    id: string
+    kind: 'tournament' | 'session' | 'block'
+    name: string
+    slug: string | null
+    until: Date
+  } | null
   closedReason: string | null
   live: BoardMatch | null
   /** What will go on here next, when it is known. */
@@ -919,21 +938,28 @@ export async function venueBoard(): Promise<VenueBoard> {
   ])
 
   const ids = todays.map((t) => t.id)
-  const [heldRows, boards] = await Promise.all([
-    ids.length
-      ? db
-          .select({ tournamentId: tournamentCourts.tournamentId, courtId: tournamentCourts.courtId })
-          .from(tournamentCourts)
-          .where(inArray(tournamentCourts.tournamentId, ids))
-      : Promise.resolve([]),
+  const now = new Date()
+  const todayKey = venueDayKey(now)
+  const [todayHolds, boards] = await Promise.all([
+    holdsBetween(dayStart(todayKey), dayEnd(todayKey)),
     Promise.all(todays.map((t) => (t.status === 'live' ? boardData(t.id) : Promise.resolve(null)))),
   ])
 
+  // Which courts each of today's tournaments has at some point today — the
+  // chips on its row — and, separately, who has each court at this minute.
   const courtIdsBy = new Map<string, string[]>()
-  for (const h of heldRows) {
+  for (const h of todayHolds) {
+    if (!h.tournamentId || !ids.includes(h.tournamentId)) continue
     const list = courtIdsBy.get(h.tournamentId) ?? []
-    list.push(h.courtId)
+    if (!list.includes(h.courtId)) list.push(h.courtId)
     courtIdsBy.set(h.tournamentId, list)
+  }
+  // Filtered to the instant in JS: `holdsBetween` widens its query to the
+  // quarter-hour grid, which is right for "can I book this" and wrong for
+  // "what is on this court right now".
+  const heldNow = new Map<string, HoldRow>()
+  for (const h of todayHolds) {
+    if (h.heldFrom <= now && h.heldUntil > now && !heldNow.has(h.courtId)) heldNow.set(h.courtId, h)
   }
 
   const venueTournaments: VenueTournament[] = todays.map((t, i) => {
@@ -956,15 +982,32 @@ export async function venueBoard(): Promise<VenueBoard> {
     }
   })
 
+  const byId = new Map(venueTournaments.map((t) => [t.id, t]))
   const holder = new Map<string, VenueTournament>()
-  for (const t of venueTournaments) for (const c of t.courtIds) holder.set(c, t)
+  for (const [courtId, h] of heldNow) {
+    const t = h.tournamentId ? byId.get(h.tournamentId) : undefined
+    if (t) holder.set(courtId, t)
+  }
+  // A match that is still being played when its tournament's hours run out is
+  // still a match on a court. Hiding the card — which is what happens when the
+  // only thing that can own a court is a hold — would take four people off the
+  // board while they are standing on it.
+  for (const t of venueTournaments) {
+    for (const c of t.board?.courts ?? []) {
+      if (c.live && !holder.has(c.id)) holder.set(c.id, t)
+    }
+  }
 
   // Per running tournament: what each of its courts is doing and what comes
   // next there, from the same rule the flow places by.
-  const perCourt = new Map<string, Omit<VenueCourt, 'id' | 'name' | 'colorKey' | 'tournament'>>()
+  // Keyed by holder AND court. A court can belong to the morning's tournament
+  // and the afternoon's on the same day now, and a single map keyed by court
+  // let the second one overwrite the first — captioning a live evening match
+  // with the morning tournament's "Your hours ended at 3:00 pm".
+  const perCourt = new Map<string, Omit<VenueCourt, 'id' | 'name' | 'colorKey' | 'tournament' | 'heldBy'>>()
   for (const t of venueTournaments) {
     if (!t.board) continue
-    for (const [courtId, entry] of nextByCourt(t)) perCourt.set(courtId, entry)
+    for (const [courtId, entry] of nextByCourt(t)) perCourt.set(`${t.id}:${courtId}`, entry)
   }
 
   const running = venueTournaments.filter((t) => t.running)
@@ -975,12 +1018,14 @@ export async function venueBoard(): Promise<VenueBoard> {
 
   const venueCourts: VenueCourt[] = courtRows.map((c) => {
     const t = holder.get(c.id) ?? null
-    const entry = perCourt.get(c.id)
+    const entry = t ? perCourt.get(`${t.id}:${c.id}`) : undefined
+    const h = heldNow.get(c.id)
     return {
       id: c.id,
       name: c.name,
       colorKey: c.colorKey,
       tournament: t,
+      heldBy: h ? { id: h.id, kind: h.kind, name: h.holderName, slug: h.holderSlug, until: h.heldUntil } : null,
       closedReason: entry?.closedReason ?? null,
       live: entry?.live ?? null,
       next: entry?.next ?? null,
@@ -991,7 +1036,7 @@ export async function venueBoard(): Promise<VenueBoard> {
   })
 
   return {
-    now: new Date(),
+    now,
     tournaments: venueTournaments,
     courts: venueCourts,
     liveCount: venueCourts.filter((c) => c.live).length,
@@ -1032,7 +1077,7 @@ function couldUseAnotherCourt(board: BoardData) {
  */
 function nextByCourt(t: VenueTournament) {
   const board = t.board!
-  const out = new Map<string, Omit<VenueCourt, 'id' | 'name' | 'colorKey' | 'tournament'>>()
+  const out = new Map<string, Omit<VenueCourt, 'id' | 'name' | 'colorKey' | 'tournament' | 'heldBy'>>()
   const offers = offersForFreeCourts(board)
   const promised = new Set([...offers.values()].map((m) => m.id))
   // Players in a match already promised to a court: two cards must never

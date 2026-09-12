@@ -3,11 +3,11 @@ import { notFound } from 'next/navigation'
 import { Button, Confirm, EmptyState, Input, Label, Meter, Notice, Panel, StatusPill, Tag } from '@/components/ui'
 import { requireUser } from '@/lib/auth'
 import { TICK_STALE_AFTER_MIN } from '@/lib/daily-clock'
-import { rupees } from '@/lib/display'
+import { courtsLabel, rupees } from '@/lib/display'
 import { venueDate, venueTime } from '@/lib/time'
 import { ensureReady } from '@/server/bootstrap'
 import { schedulerHealth } from '@/server/daily-reconcile'
-import { countRoster, getSessionBySlug, roster } from '@/server/sessions'
+import { countRoster, getSessionBySlug, roster, sessionCourts } from '@/server/sessions'
 import { Eyebrow } from '../../../../t/court-card'
 import { SECONDARY_LINK } from '../../../_ui'
 import {
@@ -55,6 +55,7 @@ export default async function Tonight(props: PageProps<'/admin/g/[slug]/tonight'
   const now = new Date()
   const entries = await roster(s.id)
   const counts = countRoster(entries)
+  const courtNames = (await sessionCourts(s.id)).map((c) => c.name)
   const health = await schedulerHealth(now)
 
   const playing = entries.filter((e) => e.state !== 'withdrawn' && e.state !== 'waitlisted')
@@ -75,7 +76,7 @@ export default async function Tonight(props: PageProps<'/admin/g/[slug]/tonight'
         <h1 className="text-title text-text">{s.title}</h1>
         <p className="num mt-1 text-body text-text-2">
           {venueDate(s.startsAt)} · {venueTime(s.startsAt)}–{venueTime(s.endsAt)} ·{' '}
-          {s.courtCount === 1 ? '1 court' : `${s.courtCount} courts`}
+          {courtsLabel(courtNames, s.courtCount)}
         </p>
         <p className="num mt-1 text-meta text-text-3">
           {counts.here} of {counts.taken} here

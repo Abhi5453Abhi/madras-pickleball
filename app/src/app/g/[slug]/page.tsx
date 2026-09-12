@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import { Card, EmptyState, Meter, Notice, Panel, StatusPill, Tag } from '@/components/ui'
-import { rupees } from '@/lib/display'
+import { courtsLabel, rupees } from '@/lib/display'
 import { venueDate, venueTime } from '@/lib/time'
 import { ensureReady } from '@/server/bootstrap'
 import { publicSession, publicSessionVersion } from '@/server/daily-public'
@@ -40,7 +40,7 @@ export default async function GamePage(props: PageProps<'/g/[slug]'>) {
   const closed = over || now >= s.startsAt
   const left = Math.max(0, s.capacity - s.taken)
 
-  const shareText = `${s.title} — ${venueDate(s.startsAt)} ${venueTime(s.startsAt)}–${venueTime(s.endsAt)}, ${s.courtCount === 1 ? '1 court' : `${s.courtCount} courts`}, ${s.pricePaise > 0 ? rupees(s.pricePaise) : 'free'}. ${s.taken}/${s.capacity} in.`
+  const shareText = `${s.title} — ${venueDate(s.startsAt)} ${venueTime(s.startsAt)}–${venueTime(s.endsAt)}, ${courtsLabel(s.courts, s.courtCount)}, ${s.pricePaise > 0 ? rupees(s.pricePaise) : 'free'}. ${s.taken}/${s.capacity} in.`
 
   return (
     <main id="main" className="min-h-dvh bg-ground pb-16">
@@ -92,7 +92,7 @@ export default async function GamePage(props: PageProps<'/g/[slug]'>) {
                 {s.pricePaise > 0 ? rupees(s.pricePaise) : 'Free'}
               </p>
               <p className="text-meta text-text-3">
-                {s.courtCount === 1 ? '1 court' : `${s.courtCount} courts`}
+                {courtsLabel(s.courts, s.courtCount)}
               </p>
             </div>
           </div>

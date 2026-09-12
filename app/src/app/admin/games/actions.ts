@@ -14,8 +14,27 @@ import { createSession } from '@/server/sessions'
  * list while it is being sorted out.
  */
 
-function backToNew(err: string): never {
-  redirect(`/admin/games/new?err=${encodeURIComponent(err)}` as never)
+/**
+ * Back to the form with the words still in it.
+ *
+ * A plain server form is the right shape for this screen — it is typed once at
+ * a desk and a clever form's failure mode is a lost evening — but a redirect
+ * that carries only the error takes the title, both times, the price, the
+ * spots, the notes and the court ticks with it. On the fourth attempt at a
+ * clashing court that is the whole evening retyped.
+ */
+function backToNew(err: string, formData?: FormData): never {
+  const q = new URLSearchParams({ err })
+  if (formData) {
+    for (const key of ['title', 'day', 'from', 'to', 'price', 'capacity', 'notes']) {
+      const v = String(formData.get(key) ?? '')
+      if (v) q.set(key, v)
+    }
+    const courts = formData.getAll('courts').map(String).filter(Boolean)
+    if (courts.length) q.set('courts', courts.join(','))
+    q.set('gate', formData.get('confirmationGate') === 'on' ? 'on' : 'off')
+  }
+  redirect(`/admin/games/new?${q.toString()}` as never)
 }
 
 export async function createGame(formData: FormData) {
@@ -28,7 +47,7 @@ export async function createGame(formData: FormData) {
   const to = String(formData.get('to') ?? '')
   const price = String(formData.get('price') ?? '')
   const capacity = Number(formData.get('capacity'))
-  const courtCount = Number(formData.get('courtCount'))
+  const courtIds = formData.getAll('courts').map(String).filter(Boolean)
   // An unchecked checkbox sends NOTHING, so the test has to be for the value
   // being present. `!== 'off'` made the switch permanently on.
   const gate = formData.get('confirmationGate') === 'on'
@@ -36,14 +55,14 @@ export async function createGame(formData: FormData) {
 
   const startsAt = venueInstant(day, from)
   const endsAtSameDay = venueInstant(day, to)
-  if (!startsAt || !endsAtSameDay) backToNew('Put a date and both times in.')
+  if (!startsAt || !endsAtSameDay) backToNew('Put a date and both times in.', formData)
   // A game that finishes before it starts is one that runs past midnight —
   // "21:00 to 00:30" is a real Saturday, not a typo.
   const endsAt =
     endsAtSameDay <= startsAt ? new Date(endsAtSameDay.getTime() + 24 * 3600_000) : endsAtSameDay
 
   const pricePaise = paiseFromRupeeInput(price)
-  if (pricePaise === null) backToNew('That price isn’t money — a number of rupees, like 300.')
+  if (pricePaise === null) backToNew('That price isn’t money — a number of rupees, like 300.', formData)
 
   const res = await createSession(
     {
@@ -52,13 +71,14 @@ export async function createGame(formData: FormData) {
       endsAt,
       pricePaise,
       capacity: Number.isFinite(capacity) ? capacity : 16,
-      courtCount: Number.isFinite(courtCount) ? courtCount : 1,
+      courtCount: courtIds.length,
+      courtIds,
       confirmationGate: gate,
       notes,
     },
     user,
   )
-  if (!res.ok) backToNew(res.error)
+  if (!res.ok) backToNew(res.error, formData)
 
   revalidatePath('/admin/games')
   redirect(`/admin/g/${res.session.slug}?done=${encodeURIComponent('Game made. Publish it when you’re ready.')}` as never)

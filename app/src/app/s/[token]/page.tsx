@@ -1,12 +1,13 @@
 import Link from 'next/link'
 import { Button, Card, Confirm, Notice, StatusPill } from '@/components/ui'
-import { rupees } from '@/lib/display'
+import { courtsLabel, rupees } from '@/lib/display'
 import { gatePhase } from '@/lib/daily-clock'
 import { venueDate, venueTime } from '@/lib/time'
 import { ensureReady } from '@/server/bootstrap'
-import { resolveSpotToken } from '@/server/sessions'
+import { resolveSpotToken, sessionCourts } from '@/server/sessions'
 import { Masthead } from '../../t/court-card'
-import { confirmMySpot, isSpotOutcome, releaseMySpot, type SpotOutcome } from './actions'
+import { confirmMySpot, releaseMySpot } from './actions'
+import { isSpotOutcome, type SpotOutcome } from './outcome'
 
 /**
  * A player's own spot.
@@ -72,6 +73,9 @@ export default async function SpotPage(props: PageProps<'/s/[token]'>) {
   }
 
   const { participant: p, session: s } = spot
+  // The court names, read live: a spot link is opened at the gate, and which
+  // court is the thing the person standing there does not know.
+  const courtNames = (await sessionCourts(s.id)).map((c) => c.name)
   const now = new Date()
   const word = WORDS[p.state] ?? WORDS.joined
   const gate = gatePhase(s, now)
@@ -96,7 +100,7 @@ export default async function SpotPage(props: PageProps<'/s/[token]'>) {
               <p className="text-title text-text">{p.displayName}</p>
               <p className="num mt-0.5 text-meta text-text-2">
                 {s.pricePaise > 0 ? rupees(s.pricePaise) : 'Free'} ·{' '}
-                {s.courtCount === 1 ? '1 court' : `${s.courtCount} courts`}
+                {courtsLabel(courtNames, s.courtCount)}
               </p>
             </div>
             <StatusPill state={word.tone}>{word.label}</StatusPill>

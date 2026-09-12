@@ -103,7 +103,11 @@ export default async function Home() {
           </Card>
         ) : (
           <p className="text-body text-text-2">
-            Nothing on today. When a tournament is on, every court and every score shows up here.
+            {games.length
+              ? // A games-only evening is a real evening. "Nothing on today"
+                // above a card naming tonight's game was simply false.
+                'No tournament today — there is open play below.'
+              : 'Nothing on today. When a tournament is on, every court and every score shows up here.'}
           </p>
         )}
 

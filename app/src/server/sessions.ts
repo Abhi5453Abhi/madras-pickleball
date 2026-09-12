@@ -16,7 +16,22 @@ import {
   SESSION_POLICY_VERSION,
 } from '@/lib/daily-clock'
 import { bumpSessionVersion } from '@/lib/stream'
+import { venueTime } from '@/lib/time'
 import { checkSpotLookupAllowed, recordTokenAttempt } from '@/lib/rate-limit'
+import {
+  clashSentence,
+  courtNames,
+  courtsHeldBy,
+  CourtTaken,
+  endHoldsAt,
+  isWriteConflict,
+  planFor,
+  releaseHolds,
+  savedAtOnce,
+  setHolds,
+  syncSessionCourtCount,
+  takenNow,
+} from './courts'
 import { getVenue } from './tournaments'
 
 /**
@@ -209,6 +224,12 @@ export type CreateSessionInput = {
   pricePaise: number
   capacity: number
   courtCount: number
+  /**
+   * The courts this game actually has. Given, they are held for its hours and
+   * `courtCount` is derived from them; left out, `courtCount` is a number on a
+   * screen and nothing is reserved — which is all it ever was before stage 2.
+   */
+  courtIds?: string[]
   kind?: 'open_play' | 'booked'
   confirmationGate?: boolean
   notes?: string | null
@@ -247,30 +268,75 @@ export async function createSession(
 
   const venue = await getVenue()
   const bounds = boundariesFor(input.startsAt, input.endsAt, DEFAULT_SESSION_POLICY, now)
+  const wanted = [...new Set((input.courtIds ?? []).filter(Boolean))]
+  const window = { from: input.startsAt, until: input.endsAt }
 
-  const [row] = await db
-    .insert(gameSessions)
-    .values({
-      id: newId('gs'),
-      venueId: venue.id,
-      slug: slugify(title, input.startsAt),
-      title,
-      kind: input.kind ?? 'open_play',
-      status: 'draft',
-      startsAt: input.startsAt,
-      endsAt: input.endsAt,
-      pricePaise: input.pricePaise,
-      capacity: input.capacity,
-      courtCount: input.courtCount,
-      confirmationGate: input.confirmationGate ?? true,
-      confirmOpensAt: bounds.confirmOpensAt,
-      confirmDeadlineAt: bounds.confirmDeadlineAt,
-      autoEndAt: bounds.autoEndAt,
-      policyVersion: SESSION_POLICY_VERSION,
-      notes: input.notes?.trim() || null,
-      createdByUserId: actor.id,
+  if (wanted.length) {
+    // The game does not exist yet, so there is no holder to plan against — but
+    // the question is the same one every save asks: what is left of these hours
+    // on these courts. A game whose hours have entirely gone gets nothing, and
+    // that is worth saying out loud rather than quietly holding none of the
+    // courts it names and reporting success.
+    if (input.endsAt.getTime() <= now.getTime()) {
+      return fail('Those hours have already gone — a court can’t be held in the past.')
+    }
+    const { unplaceable, clashes } = await planFor(null, wanted, [window], now)
+    if (clashes.length) return fail(clashSentence(clashes[0]))
+    if (unplaceable.length) {
+      return fail(`There is nothing left of those hours on ${await courtNames(unplaceable)}.`)
+    }
+  }
+
+  let row: SessionRow
+  try {
+    row = await transact(async (tx) => {
+      const [made] = await tx
+        .insert(gameSessions)
+        .values({
+          id: newId('gs'),
+          venueId: venue.id,
+          slug: slugify(title, input.startsAt),
+          title,
+          kind: input.kind ?? 'open_play',
+          status: 'draft',
+          startsAt: input.startsAt,
+          endsAt: input.endsAt,
+          pricePaise: input.pricePaise,
+          capacity: input.capacity,
+          courtCount: wanted.length || input.courtCount,
+          confirmationGate: input.confirmationGate ?? true,
+          confirmOpensAt: bounds.confirmOpensAt,
+          confirmDeadlineAt: bounds.confirmDeadlineAt,
+          autoEndAt: bounds.autoEndAt,
+          policyVersion: SESSION_POLICY_VERSION,
+          notes: input.notes?.trim() || null,
+          createdByUserId: actor.id,
+        })
+        .returning()
+      if (wanted.length) {
+        await setHolds(
+          tx,
+          { kind: 'session', sessionId: made.id },
+          wanted,
+          [window],
+          { createdByUserId: actor.id },
+          now,
+        )
+        await syncSessionCourtCount(tx, made.id)
+        const [fresh] = await tx
+          .select()
+          .from(gameSessions)
+          .where(eq(gameSessions.id, made.id))
+          .limit(1)
+        return fresh ?? made
+      }
+      return made
     })
-    .returning()
+  } catch (e) {
+    if (e instanceof CourtTaken) return fail(takenNow)
+    if (isWriteConflict(e)) return fail(savedAtOnce)
+    throw e
+  }
 
   await recordAudit({
     userId: actor.id,
@@ -294,6 +360,8 @@ async function transition(
   sessionId: string,
   from: readonly SessionRow['status'][],
   set: Partial<typeof gameSessions.$inferInsert>,
+  /** Runs in the same transaction, only when the transition actually happened. */
+  alsoInTx?: (tx: Tx) => Promise<void>,
 ): Promise<boolean> {
   return transact(async (tx) => {
     const rows = await tx
@@ -301,7 +369,10 @@ async function transition(
       .set({ ...set, updatedAt: new Date() })
       .where(and(eq(gameSessions.id, sessionId), inArray(gameSessions.status, [...from])))
       .returning({ id: gameSessions.id })
-    if (rows.length) await bumpSessionVersion(sessionId, tx)
+    if (rows.length) {
+      if (alsoInTx) await alsoInTx(tx)
+      await bumpSessionVersion(sessionId, tx)
+    }
     return rows.length > 0
   })
 }
@@ -326,23 +397,36 @@ export async function startSession(sessionId: string, actor: { id: string; usern
  * there is.
  */
 export async function endSession(sessionId: string, actor: { id: string; username: string }, now: Date = new Date()) {
-  const ok = await transition(sessionId, ['open', 'live'], {
-    status: 'ended',
-    endedAt: now,
-    endedByUserId: actor.id,
-    lockAt: lockAtFor(now),
-  })
+  // The courts go back to the venue at the moment the game ended, not at the
+  // moment it was scheduled to: a game that wraps up at half eight frees the
+  // court for the nine o'clock.
+  const ok = await transition(
+    sessionId,
+    ['open', 'live'],
+    { status: 'ended', endedAt: now, endedByUserId: actor.id, lockAt: lockAtFor(now) },
+    async (tx) => {
+      await endHoldsAt(tx, { kind: 'session', sessionId }, now)
+      await syncSessionCourtCount(tx, sessionId)
+    },
+  )
   if (!ok) return fail('That game has already finished.')
   await recordAudit({ userId: actor.id, actorLabel: actor.username, action: 'session.ended', entity: 'game_session', entityId: sessionId })
   return { ok: true as const }
 }
 
 export async function cancelSession(sessionId: string, reason: string, actor: { id: string; username: string }) {
-  const ok = await transition(sessionId, ['draft', 'open', 'live'], {
-    status: 'cancelled',
-    cancelledAt: new Date(),
-    cancelReason: reason.trim().slice(0, 200) || null,
-  })
+  const now = new Date()
+  // Called off is not finished: the courts were never used, so they go back
+  // whole rather than truncated, and the evening is free for something else.
+  const ok = await transition(
+    sessionId,
+    ['draft', 'open', 'live'],
+    { status: 'cancelled', cancelledAt: now, cancelReason: reason.trim().slice(0, 200) || null },
+    async (tx) => {
+      await releaseHolds(tx, { kind: 'session', sessionId })
+      await syncSessionCourtCount(tx, sessionId)
+    },
+  )
   if (!ok) return fail('That game has finished — it can’t be called off now.')
   await recordAudit({
     userId: actor.id,
@@ -1118,7 +1202,13 @@ export async function markAutoEnded(tx: Tx, sessionId: string, at: Date) {
     .set({ status: 'ended', endedAt: at, lockAt: lockAtFor(at), updatedAt: new Date() })
     .where(and(eq(gameSessions.id, sessionId), inArray(gameSessions.status, ['open', 'live'])))
     .returning({ id: gameSessions.id })
-  if (rows.length) await bumpSessionVersion(sessionId, tx)
+  if (rows.length) {
+    // Truncated to the scheduled end, not to now: a tick that runs a week late
+    // must not claim the court was held for a week.
+    await endHoldsAt(tx, { kind: 'session', sessionId }, at)
+    await syncSessionCourtCount(tx, sessionId)
+    await bumpSessionVersion(sessionId, tx)
+  }
   return rows.length > 0
 }
 
@@ -1390,6 +1480,8 @@ export async function rescheduleSession(
     endsAt: Date
     pricePaise: number
     courtCount: number
+    /** Left out: the courts it already has, moved to the new hours. */
+    courtIds?: string[]
     title: string
     notes: string | null
     confirmationGate: boolean
@@ -1402,42 +1494,72 @@ export async function rescheduleSession(
   if (price) return price
 
   const bounds = boundariesFor(input.startsAt, input.endsAt, DEFAULT_SESSION_POLICY, now)
-  const rows = await transact(async (tx) => {
-    const r = await tx
-      .update(gameSessions)
-      .set({
-        title: input.title.trim().slice(0, 80),
-        startsAt: input.startsAt,
-        endsAt: input.endsAt,
-        pricePaise: input.pricePaise,
-        courtCount: input.courtCount,
-        notes: input.notes?.trim() || null,
-        confirmationGate: input.confirmationGate,
-        confirmOpensAt: bounds.confirmOpensAt,
-        confirmDeadlineAt: bounds.confirmDeadlineAt,
-        autoEndAt: bounds.autoEndAt,
-        policyVersion: SESSION_POLICY_VERSION,
-        updatedAt: now,
-      })
-      .where(and(eq(gameSessions.id, sessionId), inArray(gameSessions.status, ['draft', 'open'])))
-      .returning({ id: gameSessions.id })
-    if (r.length) {
-      // The boundaries just moved, so any claim the reconciler holds against
-      // the OLD schedule refers to a moment that no longer exists. Left in
-      // place, a new deadline that happens to land on an already-claimed
-      // instant would be treated as done and the gate would never fire.
-      await tx
-        .delete(sessionScheduledActions)
-        .where(
-          and(
-            eq(sessionScheduledActions.sessionId, sessionId),
-            gte(sessionScheduledActions.boundaryAt, now),
-          ),
-        )
-      await bumpSessionVersion(sessionId, tx)
+  const window = { from: input.startsAt, until: input.endsAt }
+  const holding = await courtsHeldBy({ kind: 'session', sessionId })
+  const wanted = input.courtIds ? [...new Set(input.courtIds.filter(Boolean))] : holding.map((c) => c.id)
+  if (wanted.length) {
+    const { unplaceable, clashes } = await planFor({ kind: 'session', sessionId }, wanted, [window], now)
+    if (clashes.length) return fail(clashSentence(clashes[0]))
+    if (unplaceable.length) {
+      return fail(`There is nothing left of those hours on ${await courtNames(unplaceable)}.`)
     }
-    return r
-  })
+  }
+
+  let rows: { id: string }[]
+  try {
+    rows = await transact(async (tx) => {
+      const r = await tx
+        .update(gameSessions)
+        .set({
+          title: input.title.trim().slice(0, 80),
+          startsAt: input.startsAt,
+          endsAt: input.endsAt,
+          pricePaise: input.pricePaise,
+          courtCount: wanted.length || input.courtCount,
+          notes: input.notes?.trim() || null,
+          confirmationGate: input.confirmationGate,
+          confirmOpensAt: bounds.confirmOpensAt,
+          confirmDeadlineAt: bounds.confirmDeadlineAt,
+          autoEndAt: bounds.autoEndAt,
+          policyVersion: SESSION_POLICY_VERSION,
+          updatedAt: now,
+        })
+        .where(and(eq(gameSessions.id, sessionId), inArray(gameSessions.status, ['draft', 'open'])))
+        .returning({ id: gameSessions.id })
+      if (r.length) {
+        // The boundaries just moved, so any claim the reconciler holds against
+        // the OLD schedule refers to a moment that no longer exists. Left in
+        // place, a new deadline that happens to land on an already-claimed
+        // instant would be treated as done and the gate would never fire.
+        await tx
+          .delete(sessionScheduledActions)
+          .where(
+            and(
+              eq(sessionScheduledActions.sessionId, sessionId),
+              gte(sessionScheduledActions.boundaryAt, now),
+            ),
+          )
+        // The courts move with the hours. A game pushed an hour later that
+        // keeps its old hold would hold a court it is not on and leave the one
+        // it is on unheld.
+        await setHolds(
+          tx,
+          { kind: 'session', sessionId },
+          wanted,
+          wanted.length ? [window] : [],
+          { createdByUserId: actor.id },
+          now,
+        )
+        await syncSessionCourtCount(tx, sessionId)
+        await bumpSessionVersion(sessionId, tx)
+      }
+      return r
+    })
+  } catch (e) {
+    if (e instanceof CourtTaken) return fail(takenNow)
+    if (isWriteConflict(e)) return fail(savedAtOnce)
+    throw e
+  }
   if (!rows.length) return fail('That game has already started — it can’t be moved now.')
   await recordAudit({
     userId: actor.id,
@@ -1448,6 +1570,194 @@ export async function rescheduleSession(
     after: { startsAt: input.startsAt, endsAt: input.endsAt, pricePaise: input.pricePaise },
   })
   return { ok: true as const }
+}
+
+/**
+ * Change which courts a game is on, without touching its hours.
+ *
+ * "Court 3 is free, take it" happens mid-evening, on a game that is already
+ * running, and it must not require calling the game off and making another.
+ */
+export async function setSessionCourts(
+  sessionId: string,
+  courtIds: string[],
+  actor: { id: string; username: string },
+) {
+  const [s] = await db
+    .select({
+      id: gameSessions.id,
+      status: gameSessions.status,
+      startsAt: gameSessions.startsAt,
+      endsAt: gameSessions.endsAt,
+    })
+    .from(gameSessions)
+    .where(eq(gameSessions.id, sessionId))
+    .limit(1)
+  if (!s) return fail('That game has gone.')
+  if (s.status === 'ended' || s.status === 'locked' || s.status === 'cancelled') {
+    return fail('That game has finished — its courts are already back with the venue.')
+  }
+
+  const wanted = [...new Set(courtIds.filter(Boolean))]
+  const window = { from: s.startsAt, until: s.endsAt }
+  const now = new Date()
+  if (wanted.length) {
+    const { unplaceable, clashes } = await planFor({ kind: 'session', sessionId }, wanted, [window], now)
+    if (clashes.length) return fail(clashSentence(clashes[0]))
+    if (unplaceable.length) {
+      return fail(
+        `There is nothing left of this game’s hours on ${await courtNames(unplaceable)} — it finishes at ${venueTime(s.endsAt)}.`,
+      )
+    }
+  }
+
+  let held: string[] | null
+  try {
+    held = await transact(async (tx) => {
+      // The status was read outside the transaction. Re-asserted here so this
+      // serialises against the reconciler ending the game: without it, a save
+      // that started a moment earlier re-took courts for a game that had just
+      // ended, and nothing would ever have released them.
+      const [still] = await tx
+        .update(gameSessions)
+        .set({ updatedAt: now })
+        .where(
+          and(eq(gameSessions.id, sessionId), inArray(gameSessions.status, ['draft', 'open', 'live'])),
+        )
+        .returning({ id: gameSessions.id })
+      if (!still) return null
+      const out = await setHolds(
+        tx,
+        { kind: 'session', sessionId },
+        wanted,
+        wanted.length ? [window] : [],
+        { createdByUserId: actor.id },
+        now,
+      )
+      await syncSessionCourtCount(tx, sessionId)
+      await bumpSessionVersion(sessionId, tx)
+      return out
+    })
+  } catch (e) {
+    if (e instanceof CourtTaken) return fail(takenNow)
+    if (isWriteConflict(e)) return fail(savedAtOnce)
+    throw e
+  }
+  if (held === null) {
+    return fail('That game has finished — its courts are already back with the venue.')
+  }
+
+  await recordAudit({
+    userId: actor.id,
+    actorLabel: actor.username,
+    action: 'session.courts',
+    entity: 'game_session',
+    entityId: sessionId,
+    after: { courtIds: held },
+  })
+  return { ok: true as const, count: held.length }
+}
+
+/**
+ * "Can we go till 9:30?" — move the finish, on a game that is open or already
+ * running, and move its courts with it.
+ *
+ * Not `rescheduleSession`: that one refuses a live game, and rightly, because
+ * moving the START of a game people are already playing is a different and
+ * worse thing than letting it run on. A draft is allowed here too — the
+ * ordinary order is make it, fix the hours, then publish, and refusing that
+ * with "that game has finished" was a sentence about a game that had not begun.
+ */
+export async function extendSession(
+  sessionId: string,
+  endsAt: Date,
+  actor: { id: string; username: string },
+  now: Date = new Date(),
+) {
+  if (!(endsAt instanceof Date) || Number.isNaN(endsAt.getTime())) return fail('That finish time isn’t a time.')
+
+  const [s] = await db
+    .select({
+      status: gameSessions.status,
+      startsAt: gameSessions.startsAt,
+      endsAt: gameSessions.endsAt,
+    })
+    .from(gameSessions)
+    .where(eq(gameSessions.id, sessionId))
+    .limit(1)
+  if (!s) return fail('That game has gone.')
+  if (s.status !== 'draft' && s.status !== 'open' && s.status !== 'live') {
+    return fail('That game has finished — its hours can’t be changed now.')
+  }
+  if (endsAt <= s.startsAt) return fail('It has to finish after it starts.')
+  if (endsAt.getTime() - s.startsAt.getTime() > 12 * 3600_000) return fail('Twelve hours is the longest a game can run.')
+
+  const holding = await courtsHeldBy({ kind: 'session', sessionId })
+  const window = { from: s.startsAt, until: endsAt }
+  const courtIds = holding.map((c) => c.id)
+  if (courtIds.length) {
+    const { clashes } = await planFor({ kind: 'session', sessionId }, courtIds, [window], now)
+    if (clashes.length) return fail(clashSentence(clashes[0]))
+  }
+
+  const bounds = boundariesFor(s.startsAt, endsAt, DEFAULT_SESSION_POLICY, now)
+  let moved: { id: string }[]
+  try {
+    moved = await transact(async (tx) => {
+      const r = await tx
+        .update(gameSessions)
+        .set({ endsAt, autoEndAt: bounds.autoEndAt, updatedAt: now })
+        .where(and(eq(gameSessions.id, sessionId), inArray(gameSessions.status, ['draft', 'open', 'live'])))
+        .returning({ id: gameSessions.id })
+      if (r.length) {
+        // The auto-end boundary moved, so the reconciler's claim on the old one
+        // is a claim on a moment that no longer exists.
+        await tx
+          .delete(sessionScheduledActions)
+          .where(
+            and(
+              eq(sessionScheduledActions.sessionId, sessionId),
+              eq(sessionScheduledActions.kind, 'auto_end'),
+              gte(sessionScheduledActions.boundaryAt, now),
+            ),
+          )
+        if (courtIds.length) {
+          await setHolds(
+            tx,
+            { kind: 'session', sessionId },
+            courtIds,
+            [window],
+            { createdByUserId: actor.id },
+            now,
+          )
+          await syncSessionCourtCount(tx, sessionId)
+        }
+        await bumpSessionVersion(sessionId, tx)
+      }
+      return r
+    })
+  } catch (e) {
+    if (e instanceof CourtTaken) return fail(takenNow)
+    if (isWriteConflict(e)) return fail(savedAtOnce)
+    throw e
+  }
+  if (!moved.length) return fail('That game has finished — its hours can’t be changed now.')
+
+  await recordAudit({
+    userId: actor.id,
+    actorLabel: actor.username,
+    action: 'session.extended',
+    entity: 'game_session',
+    entityId: sessionId,
+    before: { endsAt: s.endsAt },
+    after: { endsAt },
+  })
+  return { ok: true as const }
+}
+
+/** The courts a game is on, in venue order. */
+export async function sessionCourts(sessionId: string) {
+  return courtsHeldBy({ kind: 'session', sessionId })
 }
 
 /** Who can be picked as a guest's payer: everyone holding a seat. */

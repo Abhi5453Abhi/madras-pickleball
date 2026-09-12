@@ -11,10 +11,10 @@ import {
   type VenueCourt,
   type VenueTournament,
 } from '@/server/board'
-import { addCourtFromBoard, putOnCourt, resumeFromBoard } from './actions'
+import { addCourtFromBoard, giveCourtBack, putOnCourt, resumeFromBoard } from './actions'
 import { BoardRefresh } from './refresh'
 import { finishEventAction } from '../t/[slug]/hub-actions'
-import { PRIMARY_LINK } from '../_ui'
+import { PRIMARY_LINK, SECONDARY_LINK } from '../_ui'
 
 /**
  * The one screen you look at while it's all happening — every court in the
@@ -51,7 +51,7 @@ const QUIET_BUTTON =
 
 export default async function LiveBoardPage(props: PageProps<'/admin/live'>) {
   await requireUser('admin')
-  const { err } = await props.searchParams
+  const { err, note } = await props.searchParams
   const [board, version] = await Promise.all([venueBoard(), venueVersion()])
   const running = board.tournaments.filter((t) => t.running)
 
@@ -86,6 +86,7 @@ export default async function LiveBoardPage(props: PageProps<'/admin/live'>) {
           {String(err)}
         </Notice>
       ) : null}
+      {note ? <Notice tone="done">{String(note)}</Notice> : null}
 
       {running.length ? <Strip tournaments={running} /> : null}
 
@@ -123,7 +124,9 @@ export default async function LiveBoardPage(props: PageProps<'/admin/live'>) {
           </form>
         ))}
 
-      {running.length === 0 ? (
+      {/* A games-only night is a real night. Saying "nothing on court" above
+          two cards that name a game on two courts is simply false. */}
+      {running.length === 0 && !board.courts.some((c) => c.heldBy) ? (
         <Notice tone="info" title="Nothing on court yet">
           Start a tournament from its page and its first matches go straight onto its courts.
         </Notice>
@@ -134,6 +137,10 @@ export default async function LiveBoardPage(props: PageProps<'/admin/live'>) {
           <CourtCard key={court.id} court={court} board={board} />
         ))}
       </div>
+
+      <Link href="/admin/courts/day" className={SECONDARY_LINK}>
+        What is on today, and what is free
+      </Link>
 
       <MoreLinks tournaments={running} />
     </div>
@@ -162,6 +169,10 @@ function Strip({ tournaments }: { tournaments: VenueTournament[] }) {
 
 function CourtCard({ court, board }: { court: VenueCourt; board: VenueBoard }) {
   const t = court.tournament
+  // A court is not one tournament's for a whole day any more, so "not assigned"
+  // stopped being the only other state. A game or a coaching batch has it, and
+  // the card says so and says until when.
+  if (!t && court.heldBy) return <HeldCard court={court} held={court.heldBy} />
   if (!t) return <UnassignedCard court={court} board={board} />
   if (!t.running) return <NotStartedCard court={court} tournament={t} />
 
@@ -182,10 +193,12 @@ function CourtCard({ court, board }: { court: VenueCourt; board: VenueBoard }) {
         </p>
       ) : null}
 
+      {/* Not "out of action": the reason a court is unavailable is now most
+          often that the tournament's own hours have not started or have ended,
+          and "out of action — Yours from 6:00 pm" is a sentence about a court
+          in perfect condition. The reason says it all by itself. */}
       {court.closedReason ? (
-        <p className="bg-sunken px-4 py-2 text-meta font-semibold text-text-2">
-          Out of action — {court.closedReason}
-        </p>
+        <p className="bg-sunken px-4 py-2 text-meta font-semibold text-text-2">{court.closedReason}</p>
       ) : null}
 
       <div className={HEAD}>
@@ -277,6 +290,49 @@ function NextLine({ court }: { court: VenueCourt }) {
       Next here: <b className="font-semibold text-text">{head}</b>
       {rest.length ? ` · ${rest.join(' · ')}` : ''}
     </p>
+  )
+}
+
+/** A court somebody who is not a tournament has: a daily game, or a block. */
+function HeldCard({
+  court,
+  held,
+}: {
+  court: VenueCourt
+  held: NonNullable<VenueCourt['heldBy']>
+}) {
+  const blocked = held.kind === 'block'
+  return (
+    <article data-court className={clsx(CARD, blocked && 'opacity-80')}>
+      <div className={HEAD}>
+        <CourtSwatch colorKey={court.colorKey} size="md" />
+        <span className={EYEBROW}>{court.name}</span>
+        <span className="ml-auto text-right text-meta text-text-3">
+          {blocked ? 'Out of action' : 'Game'}
+        </span>
+      </div>
+      <div className="px-4 pt-1 pb-4">
+        <p className="text-row text-text">
+          {held.slug && !blocked ? (
+            <Link href={`/admin/g/${held.slug}` as never} className="text-link">
+              {held.name}
+            </Link>
+          ) : (
+            held.name
+          )}
+        </p>
+        <p className="num mt-0.5 text-meta text-text-3">until {venueTime(held.until)}</p>
+        {/* The host is standing in front of the court. Making them go to
+            Settings → Courts → the day view to give it back is three screens
+            away from where they are. */}
+        {blocked ? (
+          <form action={giveCourtBack} className="mt-3">
+            <input type="hidden" name="holdId" value={held.id} />
+            <button className={`${QUIET_BUTTON} w-full`}>Give {court.name} back</button>
+          </form>
+        ) : null}
+      </div>
+    </article>
   )
 }
 

@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { ensureReady } from '@/server/bootstrap'
 import { confirmSpot, leaveSession, resolveSpotToken } from '@/server/sessions'
+import type { SpotOutcome } from './outcome'
 
 /**
  * The two things a player can do to their own spot, from a link with no login.
@@ -12,33 +13,9 @@ import { confirmSpot, leaveSession, resolveSpotToken } from '@/server/sessions'
  * from a hidden field — a participation id in a form is a wire value and proves
  * nothing about who is holding the phone.
  *
- * What comes back is a CODE, not a sentence. This page is reached from links
- * forwarded through WhatsApp, and a query parameter that renders verbatim into
- * a bordered notice is a message box anybody can put words into.
+ * What comes back is a CODE, not a sentence — see `./outcome`, which holds the
+ * codes because a `'use server'` module may only export async functions.
  */
-
-export type SpotOutcome =
-  | 'confirmed'
-  | 'released'
-  | 'released-promoted'
-  | 'gone'
-  | 'over'
-  | 'started'
-  | 'nothing'
-
-const CODES = new Set<SpotOutcome>([
-  'confirmed',
-  'released',
-  'released-promoted',
-  'gone',
-  'over',
-  'started',
-  'nothing',
-])
-
-export function isSpotOutcome(v: unknown): v is SpotOutcome {
-  return typeof v === 'string' && CODES.has(v as SpotOutcome)
-}
 
 function back(token: string, code: SpotOutcome): never {
   revalidatePath(`/s/${token}`)

@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { EmptyState, Panel, StatusPill, Tag } from '@/components/ui'
-import { rupees } from '@/lib/display'
+import { courtsLabel, rupees } from '@/lib/display'
 import { venueDate, venueTime } from '@/lib/time'
 import { ensureReady } from '@/server/bootstrap'
 import { publicSessions, publicSessionsVersion, type PublicSession } from '@/server/daily-public'
@@ -86,7 +86,7 @@ export default async function GamesPage() {
                             </p>
                             <p className="num mt-0.5 text-meta text-text-2">
                               {venueTime(s.startsAt)}–{venueTime(s.endsAt)} ·{' '}
-                              {s.courtCount === 1 ? '1 court' : `${s.courtCount} courts`} ·{' '}
+                              {courtsLabel(s.courts, s.courtCount)} ·{' '}
                               {s.pricePaise > 0 ? rupees(s.pricePaise) : 'Free'}
                             </p>
                             <p className="mt-1 flex flex-wrap items-center gap-1.5">

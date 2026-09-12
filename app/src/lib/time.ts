@@ -11,6 +11,13 @@ const timeFmt = new Intl.DateTimeFormat('en-IN', {
   hour12: false,
 })
 
+const clockFmt = new Intl.DateTimeFormat('en-IN', {
+  timeZone: VENUE_TZ,
+  hour: 'numeric',
+  minute: '2-digit',
+  hour12: true,
+})
+
 const dateFmt = new Intl.DateTimeFormat('en-IN', {
   timeZone: VENUE_TZ,
   weekday: 'short',
@@ -28,6 +35,22 @@ const dayKeyFmt = new Intl.DateTimeFormat('en-CA', {
 /** "16:34" in venue time. */
 export function venueTime(d: Date | string): string {
   return timeFmt.format(typeof d === 'string' ? new Date(d) : d)
+}
+
+/**
+ * "3:00 pm" in venue time — how this app says a time inside a sentence, where
+ * venueTime's "15:00" belongs to a grid or a range.
+ *
+ * Midnight and noon get their names. A court held "till 12:00 am" reads as an
+ * early morning nobody meant, and on the day view a court free "06:00–00:00"
+ * reads as a range that ends before it starts.
+ */
+export function venueClock(d: Date | string): string {
+  const at = typeof d === 'string' ? new Date(d) : d
+  const hhmm = venueTime(at)
+  if (hhmm === '00:00') return 'midnight'
+  if (hhmm === '12:00') return 'noon'
+  return clockFmt.format(at)
 }
 
 /** "Sun, 14 Sep" in venue time. */
@@ -95,4 +118,25 @@ export function venueInstant(dayKey: string, hhmm: string): Date | null {
 /** "19:00" in venue time — what a time input wants back. */
 export function venueTimeValue(d: Date): string {
   return venueTime(d)
+}
+
+/**
+ * "19:00" → 1140, minutes from the start of a venue day. Null for anything
+ * that is not a time, so a hand-typed form value can be checked rather than
+ * silently becoming NaN.
+ */
+export function minutesOfDay(hhmm: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim())
+  if (!m) return null
+  const h = Number(m[1])
+  const min = Number(m[2])
+  if (h > 24 || min > 59 || (h === 24 && min !== 0)) return null
+  return h * 60 + min
+}
+
+/** 1140 → "19:00", what a time input wants. */
+export function hhmmFromMinutes(min: number): string {
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
 }

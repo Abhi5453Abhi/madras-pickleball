@@ -77,3 +77,19 @@ export function paiseFromRupeeInput(raw: string): number | null {
 export function spotsLabel(taken: number, capacity: number): string {
   return `${taken}/${capacity}`
 }
+
+/**
+ * "Court 3" / "Courts 3 and 4" / "2 courts".
+ *
+ * Names when we know them, a count when we do not — a game seeded or made
+ * before courts were real has a number and nothing else, and "0 courts" is
+ * worse than saying nothing.
+ */
+export function courtsLabel(names: readonly string[], count: number): string {
+  if (names.length === 1) return names[0]
+  if (names.length > 1) {
+    const short = names.map((n) => n.replace(/^Court\s+/i, ''))
+    return `Courts ${short.slice(0, -1).join(', ')} and ${short[short.length - 1]}`
+  }
+  return count === 1 ? '1 court' : `${count} courts`
+}
