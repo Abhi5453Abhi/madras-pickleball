@@ -152,6 +152,59 @@ Correct, if nobody was ticked off. The host taps who turned up, and anybody who 
 off by the time the night closed is marked away, which produces no charge. Failing to charge is
 recoverable; charging sixteen people who were not there is not.
 
+## The money
+
+Nothing is charged until the night closes. The gate moves a game to `locked` about
+45 minutes after it ends, turns everybody ticked off into "played", and writes one charge per
+person in the same transaction. Anybody not ticked off is marked away and is not charged.
+
+**Before it locks**, the Tonight screen shows what each person is about to be charged and what
+the night comes to. That number and the charge written afterwards come from the same function,
+so what the screen promised is what gets billed. This is the window to fix a price, a payer or
+an attendance tick — all three are refused once the night is locked.
+
+**After it locks**, the game's own screen grows a Money section: who owes what, take the money,
+correct it, waive it. `/admin/money` is the day's tally — cash on its own line, everything else
+on theirs, credits separate again — and below it, everybody who owes anything at the venue,
+longest waiting first.
+
+### A charge is never edited
+
+Not by anybody, not from anywhere. The amount, the reason and the time are what we said on the
+night, and they stay. Everything that happens afterwards is a new row with a sign on it:
+
+- **Charged the wrong amount** → *Correct it*. Type what it should be. If money has already
+  landed on that charge, the app takes the payment back off first, in its own row, then posts
+  the correction, then spreads whatever came loose over whatever else that person owes. What is
+  left sits on their account and shows on their line.
+- **Not charging them at all** → *Waive it*, with a reason. Only before anything has been paid
+  towards it; after that it is a correction.
+- **Giving up on a debt** → write it off. A recorded decision with your name on it, never a
+  deletion, and never automatic.
+- **They paid too much** → the extra stays on their account and lands on their next charge by
+  itself. Send it back instead with a refund, against the payment it came from.
+
+### Taking money at the desk
+
+Tapping *Take the money* claims those charges first, then records the payment, then lets go —
+all so that two phones at the same desk cannot both take the same ₹300. If the second one
+tries, it says somebody else is collecting that right now, and nothing is taken twice.
+
+An amount can be typed in if they are paying part of it. Blank means the whole thing.
+
+### The books disagree with the rows
+
+`/admin/money` shows a red notice if any of the running totals stop matching the rows they
+summarise. It should never appear. If it does: **do not correct anything by hand** — the ids in
+the notice say which rows, and the totals can be rebuilt from the rows, which are the truth.
+Note what you last did before it appeared, because that is the bug.
+
+### Who can see money
+
+Organisers, and only on organiser screens. Nothing a player can open shows a balance, a charge
+or a payment — the public game page shows the price and nothing else. That stays true until
+players have verified phones and their own device sessions.
+
 ## Courts — who has what, and when
 
 `/admin/courts/day` is the one screen that answers it: every court, hour by hour, what is

@@ -4,11 +4,13 @@ import { Button, Confirm, EmptyState, Input, Label, Meter, Notice, Panel, Status
 import { requireUser } from '@/lib/auth'
 import { TICK_STALE_AFTER_MIN } from '@/lib/daily-clock'
 import { courtsLabel, rupees } from '@/lib/display'
-import { venueDate, venueTime } from '@/lib/time'
+import { venueClock, venueDate, venueTime } from '@/lib/time'
 import { ensureReady } from '@/server/bootstrap'
 import { schedulerHealth } from '@/server/daily-reconcile'
+import { effectivePrice, provisionalFor, sessionMoney } from '@/server/money'
 import { countRoster, getSessionBySlug, roster, sessionCourts } from '@/server/sessions'
 import { Eyebrow } from '../../../../t/court-card'
+import { chargeWords } from '../../../_money'
 import { SECONDARY_LINK } from '../../../_ui'
 import {
   addPerson,
@@ -68,7 +70,116 @@ export default async function Tonight(props: PageProps<'/admin/g/[slug]/tonight'
   const closedOff = locked || cancelled
   const toTick = playing.filter((e) => e.state === 'joined' || e.state === 'confirmed').length
   const staleGate = health.ageMinutes === null || health.ageMinutes > TICK_STALE_AFTER_MIN
-  const takings = counts.here * s.pricePaise
+
+  /**
+   * The money column — m6 before the lock, the real charge after it.
+   *
+   * Before the lock this is `provisionalFor`, which is the same `effectivePrice`
+   * the lock itself uses. The screen that promises an amount and the code that
+   * writes the charge must agree, or the app's own screen becomes the evidence
+   * in the dispute it was built to prevent — so neither of them multiplies a
+   * head count by a price here.
+   */
+  const money = locked ? await sessionMoney(s.id) : null
+  const provisional = locked
+    ? null
+    : provisionalFor(
+        s,
+        entries.map((e) => ({ ...e, displayName: e.name })),
+      )
+
+  const moneyWords = new Map<string, string>()
+  if (money) {
+    for (const [participationId, c] of money) moneyWords.set(participationId, chargeWords(c))
+  } else if (provisional) {
+    for (const l of provisional.lines) {
+      moneyWords.set(
+        l.participationId,
+        l.paise === 0 && l.source === 'session' ? 'free' : `${rupees(l.paise)}${l.note ? ` · ${l.note}` : ''}`,
+      )
+    }
+    /**
+     * Everybody else still on the list gets what they WILL owe.
+     *
+     * This is the screen whose whole job is ticking people off, and "nothing to
+     * pay" beside fourteen names who have simply not been tapped yet is the
+     * screen arguing against its own purpose. The price comes from
+     * `effectivePrice` — the one place it is decided — and never from
+     * multiplying the game's price here.
+     */
+    for (const e of playing) {
+      if (moneyWords.has(e.id) || e.state === 'absent') continue
+      const price = effectivePrice(s, e)
+      const free = price.paise === 0 && price.source === 'session'
+      moneyWords.set(
+        e.id,
+        free ? 'free' : `${rupees(price.paise)} when ticked off${price.note ? ` · ${price.note}` : ''}`,
+      )
+    }
+  }
+
+  /**
+   * What the night came to, and what became of it.
+   *
+   * Charged, settled, waived, written off and still owed are five separate
+   * facts and they add up: a night where every charge was waived used to read
+   * "₹4,800 charged · all settled", which is the opposite of what happened.
+   * Nothing was settled; ₹4,800 was given away, and the line has to say so.
+   */
+  let chargedPaise = 0
+  let settledPaise = 0
+  let waivedPaise = 0
+  let writtenOffPaise = 0
+  let stillOwedPaise = 0
+  if (money) {
+    for (const c of money.values()) {
+      chargedPaise += c.amountPaise + c.adjustPaise
+      settledPaise += c.appliedPaise
+      if (c.state === 'waived') waivedPaise += c.duePaise
+      else if (c.state === 'written_off') writtenOffPaise += c.duePaise
+      else stillOwedPaise += c.duePaise
+    }
+  }
+
+  const outcome = [
+    settledPaise > 0 ? `${rupees(settledPaise)} settled` : null,
+    waivedPaise > 0 ? `${rupees(waivedPaise)} waived` : null,
+    writtenOffPaise > 0 ? `${rupees(writtenOffPaise)} written off` : null,
+    stillOwedPaise > 0 ? `${rupees(stillOwedPaise)} still owed` : null,
+  ].filter((w): w is string => w !== null)
+
+  const provisionalPaise = provisional?.totalPaise ?? 0
+  const moneyLine = money
+    ? [`${rupees(chargedPaise)} charged`, ...(outcome.length ? outcome : ['nothing to collect'])].join(' · ')
+    : `${rupees(s.pricePaise)} a head · ${rupees(provisionalPaise)} so far`
+  const anyMoney = s.pricePaise > 0 || chargedPaise > 0 || provisionalPaise > 0
+
+  /**
+   * When it locks, from the row and only from the row.
+   *
+   * `lockAt` is written when the game ends, so before that there is no clock
+   * time to show and the honest sentence has no number in it. Adding 45 minutes
+   * to the finish here would put a time on screen that the reconciler has never
+   * agreed to and that a rescheduled finish would silently move.
+   *
+   * `venueClock`, not `venueTime`: this is a time inside a sentence, and a
+   * night that locks at midnight should say so.
+   *
+   * A lock time that has been and gone is not a promise any more. Left as
+   * "Locks at 9:45 pm" it sat there all night, on the same screen already
+   * warning that the gate was not running — two lines contradicting each other,
+   * and the wrong one is the reassuring one.
+   */
+  const lockOverdue = !locked && !cancelled && s.lockAt !== null && s.lockAt <= now
+  const lockWords = cancelled
+    ? null
+    : locked
+      ? 'Closed. What everyone owes is fixed now.'
+      : lockOverdue && s.lockAt
+        ? `It should have closed at ${venueClock(s.lockAt)} and hasn’t. Nobody is charged until the gate runs — run it below.`
+        : s.lockAt
+          ? `Locks at ${venueClock(s.lockAt)} — until then all of this can still change.`
+          : 'Locking about 45 minutes after the game ends.'
 
   return (
     <div className="flex flex-col gap-5">
@@ -80,8 +191,11 @@ export default async function Tonight(props: PageProps<'/admin/g/[slug]/tonight'
         </p>
         <p className="num mt-1 text-meta text-text-3">
           {counts.here} of {counts.taken} here
-          {s.pricePaise > 0 ? ` · ${rupees(s.pricePaise)} a head · ${rupees(takings)} so far` : ' · free'}
+          {anyMoney ? ` · ${moneyLine}` : ' · free'}
         </p>
+        {lockWords ? (
+          <p className={lockOverdue ? 'mt-1 text-meta text-alert' : 'mt-1 text-meta text-text-3'}>{lockWords}</p>
+        ) : null}
         <Meter
           className="mt-2"
           done={counts.here}
@@ -189,9 +303,11 @@ export default async function Tonight(props: PageProps<'/admin/g/[slug]/tonight'
                         ) : null}
                       </p>
                       <p className="num mt-0.5 text-meta text-text-3">
-                        {/* The money column exists from the first night so the
-                            screen is not relaid out when billing arrives. */}
-                        {away ? '—' : s.pricePaise > 0 ? rupees(s.pricePaise) : 'free'}
+                        {/* Somebody away, or not yet ticked off, has no line in
+                            the provisional and no charge after the lock — so
+                            the column says so rather than showing a price they
+                            are not going to be asked for. */}
+                        {moneyWords.get(e.id) ?? 'nothing to pay'}
                         {e.state === 'joined' ? ' · not confirmed' : ''}
                       </p>
                     </div>
@@ -381,6 +497,10 @@ export default async function Tonight(props: PageProps<'/admin/g/[slug]/tonight'
 
       <Link href={`/admin/g/${slug}` as never} className={SECONDARY_LINK}>
         Back to the game
+      </Link>
+
+      <Link href="/admin/money" className={SECONDARY_LINK}>
+        The day’s money
       </Link>
     </div>
   )

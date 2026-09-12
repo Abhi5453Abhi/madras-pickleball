@@ -17,19 +17,22 @@ import {
 } from '@/components/ui'
 import { requireUser } from '@/lib/auth'
 import { gatePhase, TICK_STALE_AFTER_MIN } from '@/lib/daily-clock'
-import { courtsLabel, rupees } from '@/lib/display'
-import { publicName } from '@/lib/display'
+import { courtsLabel, publicName, rupees, rupeesPlain } from '@/lib/display'
 import { venueDate, venueTime } from '@/lib/time'
 import { ensureReady } from '@/server/bootstrap'
 import { freeCourtsBetween } from '@/server/courts'
 import { schedulerHealth } from '@/server/daily-reconcile'
+import { sessionMoney, type SessionCharge } from '@/server/money'
 import { countRoster, getSessionBySlug, payerOptions, roster, sessionCourts } from '@/server/sessions'
 import { getVenue } from '@/server/tournaments'
+import { chargeWords } from '../../_money'
 import { Attention, AttentionRow, PRIMARY_LINK, SECONDARY_LINK } from '../../_ui'
 import {
   addPerson,
   cancelGame,
   changePayer,
+  clearPrice,
+  correctMoney,
   hidePerson,
   newSpotLink,
   openMoreSpots,
@@ -37,7 +40,10 @@ import {
   removePerson,
   runGateNow,
   setGameCourts,
+  setPrice,
   setSpots,
+  takeMoney,
+  waiveMoney,
 } from './actions'
 import { GameLink, Nudge } from './link-panel'
 
@@ -87,6 +93,10 @@ export default async function AdminGame(props: PageProps<'/admin/g/[slug]'>) {
 
   const now = new Date()
   const over = s.status === 'ended' || s.status === 'locked' || s.status === 'cancelled'
+  // Wider than `over` on purpose: the 45 minutes between the finish and the
+  // lock is exactly when a host notices the coach was about to be billed, and
+  // it is the last moment an override can still reach the charge.
+  const priceable = s.status !== 'locked' && s.status !== 'cancelled'
   const entries = await roster(s.id)
   const counts = countRoster(entries)
   const health = await schedulerHealth(now)
@@ -110,6 +120,22 @@ export default async function AdminGame(props: PageProps<'/admin/g/[slug]'>) {
     sessionCourts(s.id),
     freeCourtsBetween(s.startsAt, s.endsAt, venue.id),
   ])
+  // What the night actually billed, once it is a fact. Read only when it is
+  // one: before the lock there are no charges, and the provisional amount lives
+  // on the Tonight screen where the host is still able to change it.
+  const money = s.status === 'locked' ? await sessionMoney(s.id) : null
+  const charged = onList
+    .map((e) => ({ e, c: money?.get(e.id) }))
+    .filter((r): r is { e: (typeof onList)[number]; c: SessionCharge } => !!r.c)
+  const owing = charged.filter((r) => r.c.state === 'locked' && r.c.duePaise > 0)
+  const settled = charged.filter((r) => !(r.c.state === 'locked' && r.c.duePaise > 0))
+  const owedPaise = owing.reduce((n, r) => n + r.c.duePaise, 0)
+  // "Settled", not "in": `appliedPaise` counts a charge closed by a credit, and
+  // a credit never went near the drawer. The day-end tally is where money that
+  // actually arrived is split by how it arrived; this line only says how much
+  // of the night stopped being owed.
+  const settledPaise = charged.reduce((n, r) => n + r.c.appliedPaise, 0)
+
   const mineIds = new Set(mine.map((c) => c.id))
   const courtChoices = allCourts.map((c) => ({
     ...c,
@@ -246,6 +272,184 @@ export default async function AdminGame(props: PageProps<'/admin/g/[slug]'>) {
         </Link>
       ) : null}
 
+      {/* m1, m2, m3 — only once the night is locked, because until then there
+          is no charge to take, correct or waive, and a screen that offers all
+          three against a number that can still move is a screen that takes
+          money for a night somebody may yet be marked away from. */}
+      {money ? (
+        <section className="flex flex-col gap-2.5">
+          <SectionHead
+            title="Money"
+            meta={
+              owedPaise > 0
+                ? `${rupees(owedPaise)} still to collect · ${rupees(settledPaise)} settled`
+                : `Nothing outstanding · ${rupees(settledPaise)} settled`
+            }
+          />
+
+          {charged.length === 0 ? (
+            <EmptyState title="Nothing was charged">
+              <p>Nobody was ticked off as having played, so this night billed no one.</p>
+            </EmptyState>
+          ) : owing.length === 0 ? (
+            <EmptyState title="Everybody has settled">
+              <p>Every charge for this night is paid, waived or written off.</p>
+            </EmptyState>
+          ) : (
+            <Panel>
+              <ul className="divide-y divide-line">
+                {owing.map(({ e, c }) => {
+                  const who = entries.find((x) => x.playerId === c.payerPlayerId)?.name ?? e.name
+                  const part = c.appliedPaise > 0
+                  return (
+                    <li key={c.chargeId} className="flex flex-col gap-2.5 px-4 py-3.5">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-row text-text">
+                            {who}
+                            {c.payerPlayerId !== e.playerId ? (
+                              <span className="ml-1.5 text-meta text-text-3">for {e.name}</span>
+                            ) : null}
+                          </p>
+                          <p className="num mt-0.5 text-meta text-text-3">
+                            {rupees(c.amountPaise + c.adjustPaise)} charged
+                            {c.appliedPaise > 0 ? ` · ${rupees(c.appliedPaise)} paid` : ''}
+                            {c.priceSource === 'override' && c.priceNote ? ` · ${c.priceNote}` : ''}
+                          </p>
+                        </div>
+                        <span className="num text-section text-text">{rupees(c.duePaise)}</span>
+                        <StatusPill state={part ? 'waiting' : 'alert'}>
+                          {part ? 'Part paid' : 'Unpaid'}
+                        </StatusPill>
+                      </div>
+
+                      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                        <Confirm
+                          className="sm:flex-1"
+                          label="Take the money"
+                          question={`${rupees(c.duePaise)} from ${who}?`}
+                          detail="It is recorded the moment you tap. Cash has to match the drawer and a venue QR has to match the venue’s own statement, so they are never one number."
+                        >
+                          {/* One form, two submits: the amount and how it came
+                              in are the same act, and ₹200 of a ₹300 bill is
+                              the ordinary Tuesday, not the exotic one. */}
+                          <form action={takeMoney} className="flex flex-col gap-2.5">
+                            <input type="hidden" name="slug" value={slug} />
+                            <input type="hidden" name="participantId" value={e.id} />
+                            <div>
+                              <Label htmlFor={`take-${c.chargeId}`}>
+                                How much{' '}
+                                <span className="font-normal text-text-3">
+                                  · leave it empty for all {rupees(c.duePaise)}
+                                </span>
+                              </Label>
+                              <Input
+                                id={`take-${c.chargeId}`}
+                                name="amount"
+                                inputMode="decimal"
+                                className="mt-2"
+                                placeholder={rupeesPlain(c.duePaise)}
+                              />
+                            </div>
+                            <div className="flex flex-col gap-2 sm:flex-row">
+                              <Button type="submit" name="method" value="cash" className="w-full sm:flex-1">
+                                Cash
+                              </Button>
+                              <Button
+                                type="submit"
+                                name="method"
+                                value="venue_qr"
+                                variant="secondary"
+                                className="w-full sm:flex-1"
+                              >
+                                Venue QR
+                              </Button>
+                            </div>
+                          </form>
+                        </Confirm>
+
+                        <CorrectIt
+                          slug={slug}
+                          participantId={e.id}
+                          who={who}
+                          nowPaise={c.amountPaise + c.adjustPaise}
+                        />
+
+                        {c.appliedPaise === 0 ? (
+                          <Confirm
+                            className="sm:flex-1"
+                            label="Waive it"
+                            question={`${who} isn’t charged for this night?`}
+                            detail="Only while nothing has been paid onto it. The charge closes with your reason beside your name — it is never deleted."
+                          >
+                            <form action={waiveMoney} className="flex flex-col gap-2.5">
+                              <input type="hidden" name="slug" value={slug} />
+                              <input type="hidden" name="participantId" value={e.id} />
+                              <Input
+                                name="reason"
+                                required
+                                maxLength={200}
+                                aria-label={`Why ${who} isn’t charged`}
+                                placeholder="Came for ten minutes"
+                              />
+                              <Button type="submit" variant="secondary" className="w-full">
+                                Waive it
+                              </Button>
+                            </form>
+                          </Confirm>
+                        ) : null}
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            </Panel>
+          )}
+
+          {/* A settled charge is exactly the one SPEC-v4 §4 works through: she
+              paid, and it turns out she shouldn't have. Correcting it has to be
+              reachable, or the worked example has no screen. */}
+          {settled.length > 0 ? (
+            <Disclosure summary="Settled" meta={`${settled.length} ${settled.length === 1 ? 'charge' : 'charges'}`}>
+              <ul className="divide-y divide-line rounded-control border border-line bg-paper">
+                {settled.map(({ e, c }) => {
+                  const who = entries.find((x) => x.playerId === c.payerPlayerId)?.name ?? e.name
+                  return (
+                    <li key={c.chargeId} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-3">
+                      <div className="min-w-0 sm:flex-1">
+                        <p className="text-row text-text-2">
+                          {who}
+                          {c.payerPlayerId !== e.playerId ? (
+                            <span className="ml-1.5 text-meta text-text-3">for {e.name}</span>
+                          ) : null}
+                        </p>
+                        {/* The same words the Tonight screen uses, from the
+                            same function — a ₹0 coach charge was never "paid",
+                            it was free, and the two screens must not disagree
+                            about that in front of the coach. */}
+                        <p className="num mt-0.5 text-meta text-text-3">{chargeWords(c)}</p>
+                      </div>
+                      {c.state === 'locked' ? (
+                        <CorrectIt
+                          slug={slug}
+                          participantId={e.id}
+                          who={who}
+                          nowPaise={c.amountPaise + c.adjustPaise}
+                        />
+                      ) : null}
+                    </li>
+                  )
+                })}
+              </ul>
+            </Disclosure>
+          ) : null}
+
+          <Link href="/admin/money" className={SECONDARY_LINK}>
+            The day’s money
+          </Link>
+        </section>
+      ) : null}
+
       <section id="roster" className="flex flex-col gap-2.5">
         <SectionHead
           title="Who’s in"
@@ -270,6 +474,12 @@ export default async function AdminGame(props: PageProps<'/admin/g/[slug]'>) {
                       <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-meta text-text-3">
                         <span className="num">{e.phone ?? 'no number'}</span>
                         {e.hideFromPublic ? <Tag>Hidden</Tag> : null}
+                        {e.priceOverridePaise !== null ? (
+                          <Tag tone="accent">
+                            <span className="num">{rupees(e.priceOverridePaise)}</span>
+                            {e.priceNote ? ` · ${e.priceNote}` : ''}
+                          </Tag>
+                        ) : null}
                         {e.isGuest && e.invitedByPlayerId ? (
                           <span>
                             paid for by{' '}
@@ -297,51 +507,108 @@ export default async function AdminGame(props: PageProps<'/admin/g/[slug]'>) {
                         </Confirm>
                       ) : null}
                     </div>
-                    {!over ? (
+                    {priceable ? (
                       <details className="group w-full sm:w-auto">
                         <summary className="tap flex items-center justify-center rounded-control border border-line-key bg-paper px-3.5 text-[16px] font-semibold text-text-2">
                           More
                         </summary>
                         <div className="mt-2 flex flex-col gap-2.5 rounded-control border border-line-strong bg-sunken p-3.5">
-                          <form action={newSpotLink} className="flex flex-col gap-2">
+                          {/* The rest of More is unchanged: the list itself
+                              stops moving once the game is over. */}
+                          {!over ? (
+                            <>
+                              <form action={newSpotLink} className="flex flex-col gap-2">
+                                <input type="hidden" name="slug" value={slug} />
+                                <input type="hidden" name="participantId" value={e.id} />
+                                <Button type="submit" variant="secondary" className="w-full">
+                                  Give them a new link
+                                </Button>
+                              </form>
+                              <form action={hidePerson} className="flex flex-col gap-2">
+                                <input type="hidden" name="slug" value={slug} />
+                                <input type="hidden" name="participantId" value={e.id} />
+                                <input type="hidden" name="hidden" value={e.hideFromPublic ? 'off' : 'on'} />
+                                <Button type="submit" variant="secondary" className="w-full">
+                                  {e.hideFromPublic ? 'Show their name publicly' : 'Keep their name off the list'}
+                                </Button>
+                              </form>
+                              {payers.length > 1 ? (
+                                <form action={changePayer} className="flex flex-col gap-2">
+                                  <input type="hidden" name="slug" value={slug} />
+                                  <input type="hidden" name="participantId" value={e.id} />
+                                  <label className="block text-meta text-text-2" htmlFor={`payer-${e.id}`}>
+                                    Who pays for this one
+                                  </label>
+                                  <select
+                                    id={`payer-${e.id}`}
+                                    name="payerPlayerId"
+                                    defaultValue={e.payerPlayerId}
+                                    className="tap w-full rounded-control border border-line-key bg-paper px-3.5 text-body text-text focus:border-link focus:ring-2 focus:ring-link/25 focus:outline-none"
+                                  >
+                                    <option value={e.playerId}>{e.name} — themselves</option>
+                                    {payers
+                                      .filter((o) => o.playerId !== e.playerId)
+                                      .map((o) => (
+                                        <option key={o.playerId} value={o.playerId}>
+                                          {o.name}
+                                        </option>
+                                      ))}
+                                  </select>
+                                  <Button type="submit" variant="secondary" className="w-full">
+                                    Change who pays
+                                  </Button>
+                                </form>
+                              ) : null}
+                            </>
+                          ) : null}
+                          {/* m5 — on this night's participation, never on the
+                              player: a coach who turns up on Sunday to play
+                              should pay. The note is not optional, because a ₹0
+                              charge with no reason reads in the ledger exactly
+                              like a billing bug. */}
+                          <form action={setPrice} className="flex flex-col gap-2">
                             <input type="hidden" name="slug" value={slug} />
                             <input type="hidden" name="participantId" value={e.id} />
+                            <label className="block text-meta text-text-2" htmlFor={`price-${e.id}`}>
+                              What this one pays
+                            </label>
+                            <div className="flex gap-2">
+                              <div className="w-24 shrink-0">
+                                <Input
+                                  id={`price-${e.id}`}
+                                  name="amount"
+                                  required
+                                  inputMode="decimal"
+                                  defaultValue={
+                                    e.priceOverridePaise === null ? '' : rupeesPlain(e.priceOverridePaise)
+                                  }
+                                  placeholder={rupeesPlain(s.pricePaise)}
+                                />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <Input
+                                  name="note"
+                                  required
+                                  maxLength={120}
+                                  defaultValue={e.priceNote ?? ''}
+                                  placeholder="Coach"
+                                  aria-label={`Why ${e.name} pays that`}
+                                />
+                              </div>
+                            </div>
                             <Button type="submit" variant="secondary" className="w-full">
-                              Give them a new link
+                              Set their price
                             </Button>
+                            <span className="text-meta text-text-3">
+                              Both together, always — the amount and the reason go onto the charge.
+                            </span>
                           </form>
-                          <form action={hidePerson} className="flex flex-col gap-2">
-                            <input type="hidden" name="slug" value={slug} />
-                            <input type="hidden" name="participantId" value={e.id} />
-                            <input type="hidden" name="hidden" value={e.hideFromPublic ? 'off' : 'on'} />
-                            <Button type="submit" variant="secondary" className="w-full">
-                              {e.hideFromPublic ? 'Show their name publicly' : 'Keep their name off the list'}
-                            </Button>
-                          </form>
-                          {payers.length > 1 ? (
-                            <form action={changePayer} className="flex flex-col gap-2">
+                          {e.priceOverridePaise !== null ? (
+                            <form action={clearPrice} className="flex flex-col gap-2">
                               <input type="hidden" name="slug" value={slug} />
                               <input type="hidden" name="participantId" value={e.id} />
-                              <label className="block text-meta text-text-2" htmlFor={`payer-${e.id}`}>
-                                Who pays for this one
-                              </label>
-                              <select
-                                id={`payer-${e.id}`}
-                                name="payerPlayerId"
-                                defaultValue={e.payerPlayerId}
-                                className="tap w-full rounded-control border border-line-key bg-paper px-3.5 text-body text-text focus:border-link focus:ring-2 focus:ring-link/25 focus:outline-none"
-                              >
-                                <option value={e.playerId}>{e.name} — themselves</option>
-                                {payers
-                                  .filter((o) => o.playerId !== e.playerId)
-                                  .map((o) => (
-                                    <option key={o.playerId} value={o.playerId}>
-                                      {o.name}
-                                    </option>
-                                  ))}
-                              </select>
                               <Button type="submit" variant="secondary" className="w-full">
-                                Change who pays
+                                Back to {s.pricePaise > 0 ? rupees(s.pricePaise) : 'free'}
                               </Button>
                             </form>
                           ) : null}
@@ -547,5 +814,65 @@ export default async function AdminGame(props: PageProps<'/admin/g/[slug]'>) {
         All games
       </Link>
     </div>
+  )
+}
+
+/**
+ * Correcting one charge — the same form for one that is still owed and one that
+ * has already been paid, because the hard case is the paid one.
+ *
+ * The host types what it SHOULD be rather than the difference: at the desk the
+ * known number is "it should have been ₹150". The action reads what it is now
+ * back from the database and works out the correction itself, so a screen that
+ * is one correction old cannot post a delta from a stale number.
+ */
+function CorrectIt({
+  slug,
+  participantId,
+  who,
+  nowPaise,
+}: {
+  slug: string
+  participantId: string
+  who: string
+  nowPaise: number
+}) {
+  return (
+    <Confirm
+      className="sm:flex-1"
+      label="Correct it"
+      question={`What should ${who} be charged for this night?`}
+      detail="The charge itself never changes — this puts a signed correction beside it with your name on the reason. Anything already paid that is no longer owed goes back onto their account."
+    >
+      <form action={correctMoney} className="flex flex-col gap-2.5">
+        <input type="hidden" name="slug" value={slug} />
+        <input type="hidden" name="participantId" value={participantId} />
+        <div>
+          <Label htmlFor={`fix-${participantId}`}>What it should be</Label>
+          <Input
+            id={`fix-${participantId}`}
+            name="amount"
+            required
+            inputMode="decimal"
+            className="mt-2"
+            defaultValue={rupeesPlain(nowPaise)}
+          />
+        </div>
+        <div>
+          <Label htmlFor={`why-${participantId}`}>Why</Label>
+          <Input
+            id={`why-${participantId}`}
+            name="reason"
+            required
+            maxLength={200}
+            className="mt-2"
+            placeholder="Left at half time"
+          />
+        </div>
+        <Button type="submit" variant="secondary" className="w-full">
+          Correct it
+        </Button>
+      </form>
+    </Confirm>
   )
 }

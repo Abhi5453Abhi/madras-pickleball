@@ -3,9 +3,18 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
+import { paiseFromRupeeInput, rupees } from '@/lib/display'
 import { venueDayKey, venueInstant, venueTime } from '@/lib/time'
 import { ensureReady } from '@/server/bootstrap'
 import { runTick } from '@/server/daily-reconcile'
+import {
+  collectAtDesk,
+  correctCharge,
+  openChargesFor,
+  sessionMoney,
+  waiveCharge,
+  type Method,
+} from '@/server/money'
 import {
   cancelSession,
   endSession,
@@ -19,6 +28,7 @@ import {
   seatFromWaitlist,
   setCapacity,
   setHidden,
+  setParticipantPrice,
   setPayer,
   setPresent,
   sessionCourts,
@@ -47,6 +57,10 @@ function back(slug: string, q?: { note?: string; err?: string }, to: 'game' | 't
       : ''
   revalidatePath(`/admin/g/${slug}`, 'layout')
   revalidatePath('/admin/games')
+  // The day-end tally is one tap from both money screens and reads the same
+  // rows these commands just moved. Left stale it shows yesterday's takings
+  // straight after a collection.
+  revalidatePath('/admin/money')
   redirect(`${base}${qs}` as never)
 }
 
@@ -312,6 +326,226 @@ export async function changePayer(formData: FormData) {
   if (!found) back(slug, { err: 'That spot has gone.' })
   const res = await setPayer(participantId, payerPlayerId, user)
   back(slug, res.ok ? { note: 'Changed who pays for that one.' } : { err: res.error })
+}
+
+/**
+ * What one person pays tonight, when it is not the game's price — m5.
+ *
+ * The amount and the note are one fact and the database says so, so the parse
+ * and the missing-note both come back as sentences rather than as a 500 on a
+ * check constraint. The amount is read with `paiseFromRupeeInput` for the same
+ * reason every other amount is: money is integer paise, and a form field is a
+ * string somebody typed.
+ */
+export async function setPrice(formData: FormData) {
+  const user = await requireUser('admin')
+  await ensureReady()
+  const slug = String(formData.get('slug') ?? '')
+  const participantId = String(formData.get('participantId') ?? '')
+  const raw = String(formData.get('amount') ?? '').trim()
+  const note = String(formData.get('note') ?? '').trim().slice(0, 120)
+
+  const found = await own(slug, participantId)
+  if (!found) back(slug, { err: 'That spot has gone.' })
+
+  const paise = paiseFromRupeeInput(raw)
+  if (!raw || paise === null) back(slug, { err: 'That isn’t an amount. Put it in rupees — 0, or 150.' })
+  if (!note) back(slug, { err: 'Say why they pay a different price — it goes on the charge.' })
+
+  const res = await setParticipantPrice(participantId, paise, note, user)
+  back(
+    slug,
+    res.ok ? { note: `${found.entry.name} pays ${rupees(paise)} tonight — ${note}.` } : { err: res.error },
+  )
+}
+
+/** Back to the game's own price. The note goes with the amount, always. */
+export async function clearPrice(formData: FormData) {
+  const user = await requireUser('admin')
+  await ensureReady()
+  const slug = String(formData.get('slug') ?? '')
+  const participantId = String(formData.get('participantId') ?? '')
+  const found = await own(slug, participantId)
+  if (!found) back(slug, { err: 'That spot has gone.' })
+  const res = await setParticipantPrice(participantId, null, null, user)
+  back(slug, res.ok ? { note: `${found.entry.name} pays the game’s price again.` } : { err: res.error })
+}
+
+/** The two ways a host takes money at a desk. Anything else is not a desk. */
+const DESK_METHODS: readonly Method[] = ['cash', 'venue_qr']
+
+/**
+ * The charge this night raised for the spot the form named, and whose it is.
+ *
+ * Nothing below takes a charge id off the wire. `own()` proves the
+ * participation belongs to this game, and `sessionMoney` turns it into the one
+ * charge that participation earned — a hidden input proves neither, and a
+ * charge id is the field where getting it wrong means taking somebody else's
+ * money.
+ */
+async function chargeFor(slug: string, participantId: string) {
+  const found = await own(slug, participantId)
+  if (!found) return null
+  const line = (await sessionMoney(found.session.id)).get(participantId)
+  if (!line) return null
+  // Labelled by whoever pays, who is not always whoever played.
+  const payer = (await roster(found.session.id)).find((r) => r.playerId === line.payerPlayerId)
+  return { ...found, line, who: payer?.name ?? found.entry.name }
+}
+
+/**
+ * Money across the desk — m2.
+ *
+ * `openChargesFor` is re-read rather than trusted from the render: the row on
+ * the host's screen was drawn before the other host's phone may have taken the
+ * same ₹300. `collectAtDesk` then does it behind the reservation, so the second
+ * tap is refused with a sentence rather than collected twice.
+ */
+export async function takeMoney(formData: FormData) {
+  const user = await requireUser('admin')
+  await ensureReady()
+  const slug = String(formData.get('slug') ?? '')
+  const participantId = String(formData.get('participantId') ?? '')
+  const rawAmount = String(formData.get('amount') ?? '').trim()
+
+  // Never defaulted. `cash` is the one line that has to match counted notes at
+  // the end of the night, so a method this app does not recognise must not be
+  // quietly filed there — it is refused and nothing is taken.
+  const method = DESK_METHODS.find((m) => m === String(formData.get('method') ?? ''))
+  if (!method) back(slug, { err: 'Say whether that was cash or the venue QR. Nothing was taken.' })
+
+  const asked = rawAmount ? paiseFromRupeeInput(rawAmount) : null
+  if (rawAmount && asked === null) {
+    back(slug, { err: 'That isn’t an amount. Put it in rupees — 200 — or leave it empty to take the lot.' })
+  }
+  if (asked !== null && asked <= 0) {
+    back(slug, { err: 'Put in an amount above zero, or leave it empty to take the lot. Nothing was taken.' })
+  }
+
+  const found = await chargeFor(slug, participantId)
+  if (!found) back(slug, { err: 'There is no charge for that spot on this night.' })
+
+  const open = (await openChargesFor(found.line.payerPlayerId, found.session.venueId)).find(
+    (c) => c.id === found.line.chargeId,
+  )
+  if (!open) back(slug, { err: `There is nothing left to take from ${found.who} for this night.` })
+  if (asked !== null && asked > open.duePaise) {
+    back(slug, {
+      err: `That is more than ${found.who} owes for this night. ${rupees(open.duePaise)} is the most you can take here.`,
+    })
+  }
+
+  const res = await collectAtDesk({
+    playerId: found.line.payerPlayerId,
+    venueId: found.session.venueId,
+    chargeIds: [open.id],
+    method,
+    amountPaise: asked ?? undefined,
+    actor: { userId: user.id, label: user.username },
+    // Written inside the same transaction as the payment, so "money moved" and
+    // "this host moved it" are one fact that either both happened or neither
+    // did. The payment's own row carries its id; what this adds is the human.
+    audit: {
+      action: 'money.collected',
+      entity: 'charge',
+      entityId: open.id,
+      before: { duePaise: open.duePaise },
+      after: { method, askedPaise: asked },
+    },
+  })
+  if (!res.ok) back(slug, { err: res.error })
+
+  const left = open.duePaise - res.allocatedPaise
+  back(slug, {
+    note:
+      res.leftOverPaise > 0
+        ? `${rupees(res.allocatedPaise)} from ${found.who} — ${rupees(res.leftOverPaise)} is sitting on their account.`
+        : left > 0
+          ? `${rupees(res.allocatedPaise)} from ${found.who} — ${rupees(left)} still to come for this night.`
+          : `${rupees(res.allocatedPaise)} from ${found.who}.`,
+  })
+}
+
+/**
+ * Correct what somebody owes — m3.
+ *
+ * The host types what it SHOULD be, not the difference: at the desk the known
+ * number is "it should have been ₹150", and asking for a signed delta is asking
+ * them to do the arithmetic the machine is for. What it is now is read back
+ * here rather than carried in the form, so a screen that is one correction old
+ * cannot post a delta computed from a stale number.
+ */
+export async function correctMoney(formData: FormData) {
+  const user = await requireUser('admin')
+  await ensureReady()
+  const slug = String(formData.get('slug') ?? '')
+  const participantId = String(formData.get('participantId') ?? '')
+  const raw = String(formData.get('amount') ?? '').trim()
+  const reason = String(formData.get('reason') ?? '').trim().slice(0, 200)
+
+  const found = await chargeFor(slug, participantId)
+  if (!found) back(slug, { err: 'There is no charge for that spot on this night.' })
+
+  const target = paiseFromRupeeInput(raw)
+  if (!raw || target === null) back(slug, { err: 'That isn’t an amount. Put it in rupees — 0, or 150.' })
+
+  // The net as this action just read it, sent along so the domain can refuse
+  // the delta if the charge moved between the read and the write. Without it
+  // two hosts correcting the same charge in the same second both post a delta
+  // computed from the same stale number and the charge ends up at neither.
+  const nowPaise = found.line.amountPaise + found.line.adjustPaise
+  const res = await correctCharge({
+    chargeId: found.line.chargeId,
+    deltaPaise: target - nowPaise,
+    expectedNetPaise: nowPaise,
+    reason,
+    actor: { userId: user.id, label: user.username },
+    audit: {
+      action: 'money.corrected',
+      entity: 'charge',
+      entityId: found.line.chargeId,
+      reason,
+      before: { paise: nowPaise },
+      after: { paise: target, deltaPaise: target - nowPaise },
+    },
+  })
+  if (!res.ok) back(slug, { err: res.error })
+
+  const owes =
+    res.duePaise > 0 ? `owes ${rupees(res.duePaise)} for this night` : 'owes nothing for this night now'
+  back(slug, {
+    note:
+      res.freedPaise > 0
+        ? `${found.who} ${owes} — ${rupees(res.freedPaise)} of what they had paid came back off it.`
+        : `${found.who} ${owes}.`,
+  })
+}
+
+/** The host decides not to charge it at all — only while nothing has settled it. */
+export async function waiveMoney(formData: FormData) {
+  const user = await requireUser('admin')
+  await ensureReady()
+  const slug = String(formData.get('slug') ?? '')
+  const participantId = String(formData.get('participantId') ?? '')
+  const reason = String(formData.get('reason') ?? '').trim().slice(0, 200)
+
+  const found = await chargeFor(slug, participantId)
+  if (!found) back(slug, { err: 'There is no charge for that spot on this night.' })
+
+  const res = await waiveCharge({
+    chargeId: found.line.chargeId,
+    reason,
+    actor: { userId: user.id, label: user.username },
+    audit: {
+      action: 'money.waived',
+      entity: 'charge',
+      entityId: found.line.chargeId,
+      reason,
+      before: { paise: found.line.amountPaise + found.line.adjustPaise },
+    },
+  })
+  if (!res.ok) back(slug, { err: res.error })
+  back(slug, { note: `${found.who} isn’t being charged for this night. The reason is on the record.` })
 }
 
 /**

@@ -72,6 +72,11 @@ export async function seedVenue(db: TestDb['handle']) {
 /**
  * Between tests: everything this feature touches, nothing it does not.
  *
+ * The money tables are named rather than left to `cascade` from `players`: it
+ * would reach them, but a list that says what it clears is the one somebody
+ * can check. TRUNCATE does not fire the no-delete trigger on those tables,
+ * which is why a test can still start from nothing.
+ *
  * `venues` and `users` are deliberately NOT in the list — nothing references
  * them in a way `cascade` would reach, so they survive, and the venue and the
  * organiser are seeded once in `beforeAll` rather than re-inserted into a table
@@ -79,6 +84,8 @@ export async function seedVenue(db: TestDb['handle']) {
  */
 export async function truncate(db: TestDb['handle']) {
   await db.execute(
-    sql`truncate table session_scheduled_actions, session_participants, game_sessions, scheduler_runs, audit_log, token_attempts, players cascade`,
+    sql`truncate table session_scheduled_actions, session_participants, game_sessions, scheduler_runs, audit_log, token_attempts, players,
+        charges, charge_adjustments, charge_applications, payments, credits, refunds,
+        collection_attempts, collection_attempt_charges, webhook_events cascade`,
   )
 }

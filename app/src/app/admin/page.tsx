@@ -64,6 +64,17 @@ export default async function AdminHome(props: PageProps<'/admin'>) {
         </span>
       </Link>
 
+      {/* What came in, split by how it came in, and who is still short. */}
+      <Link
+        href="/admin/money"
+        className="tap flex items-center justify-between gap-3 rounded-control border border-line-key bg-paper px-4 text-[16px] font-semibold text-text"
+      >
+        The day’s money
+        <span aria-hidden className="text-text-3">
+          &rsaquo;
+        </span>
+      </Link>
+
       {nothing ? (
         <div className="relative overflow-hidden rounded-card border border-line-strong bg-paper p-6 shadow-card">
           <CourtMark className="pointer-events-none absolute -right-6 -bottom-8 size-40 text-ink opacity-[0.05]" />

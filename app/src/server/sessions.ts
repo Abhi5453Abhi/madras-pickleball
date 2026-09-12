@@ -32,6 +32,7 @@ import {
   syncSessionCourtCount,
   takenNow,
 } from './courts'
+import { raiseSessionCharges } from './money'
 import { getVenue } from './tournaments'
 
 /**
@@ -121,6 +122,9 @@ export type RosterEntry = {
   isGuest: boolean
   source: 'self' | 'host'
   hideFromPublic: boolean
+  /** What this one person pays tonight, when it is not the game's price (m5). */
+  priceOverridePaise: number | null
+  priceNote: string | null
   joinedAt: Date
   confirmedAt: Date | null
   promotedAt: Date | null
@@ -153,6 +157,8 @@ export async function roster(sessionId: string): Promise<RosterEntry[]> {
       isGuest: sessionParticipants.isGuest,
       source: sessionParticipants.source,
       hideFromPublic: sessionParticipants.hideFromPublic,
+      priceOverridePaise: sessionParticipants.priceOverridePaise,
+      priceNote: sessionParticipants.priceNote,
       joinedAt: sessionParticipants.joinedAt,
       confirmedAt: sessionParticipants.confirmedAt,
       promotedAt: sessionParticipants.promotedAt,
@@ -440,10 +446,20 @@ export async function cancelSession(sessionId: string, reason: string, actor: { 
 }
 
 /**
- * Freeze the night. `checked_in` becomes `played`; anyone who held a spot and
- * was never ticked off becomes `absent`, which produces **no** session charge
- * when stage 3 arrives — they did not play, so they do not owe the session fee.
- * Anyone still on the waitlist never got a spot and is withdrawn.
+ * Freeze the night, and raise the money.
+ *
+ * `checked_in` becomes `played`; anyone who held a spot and was never ticked
+ * off becomes `absent`, which produces **no** session charge — they did not
+ * play, so they do not owe the session fee. Anyone still on the waitlist never
+ * got a spot and is withdrawn. Then, in the same transaction, every `played`
+ * participation becomes a charge.
+ *
+ * Doing it here rather than in a later job is what makes it safe to retry. The
+ * UPDATE above re-asserts `ended`, so only one transaction can win the lock;
+ * `charges_participation_uq` refuses a second charge for the same participation
+ * even if one somehow did. Two independent guards, because the failure this
+ * prevents — sixteen people billed twice for one Tuesday — is one immutable
+ * rows make expensive to undo.
  *
  * If the host did nothing all night, nobody is charged. Failing to charge is
  * recoverable; wrongly charging sixteen people is not.
@@ -453,8 +469,14 @@ export async function lockSessionAttendance(sessionId: string, tx: Tx, now: Date
     .update(gameSessions)
     .set({ status: 'locked', lockedAt: now, updatedAt: now })
     .where(and(eq(gameSessions.id, sessionId), eq(gameSessions.status, 'ended')))
-    .returning({ id: gameSessions.id })
-  if (!rows.length) return { locked: false as const, played: 0, absent: 0 }
+    .returning({
+      id: gameSessions.id,
+      venueId: gameSessions.venueId,
+      pricePaise: gameSessions.pricePaise,
+      title: gameSessions.title,
+      startsAt: gameSessions.startsAt,
+    })
+  if (!rows.length) return { locked: false as const, played: 0, absent: 0, charged: 0, chargedPaise: 0 }
 
   const played = await tx
     .update(sessionParticipants)
@@ -483,8 +505,19 @@ export async function lockSessionAttendance(sessionId: string, tx: Tx, now: Date
     })
     .where(and(eq(sessionParticipants.sessionId, sessionId), eq(sessionParticipants.state, 'waitlisted')))
 
+  // The money, in the same transaction as the attendance it is derived from.
+  // A charge that could be raised a moment later is a charge that can be
+  // raised twice, or not at all, depending on what crashed in between.
+  const money = await raiseSessionCharges(tx, rows[0], now, { userId: null, label: 'the gate' })
+
   await bumpSessionVersion(sessionId, tx)
-  return { locked: true as const, played: played.length, absent: absent.length }
+  return {
+    locked: true as const,
+    played: played.length,
+    absent: absent.length,
+    charged: money.raised,
+    chargedPaise: money.paise,
+  }
 }
 
 // ─────────────────────────── seats & waitlist ───────────────────────────
@@ -1419,11 +1452,16 @@ export async function setPayer(participantId: string, payerPlayerId: string, act
       .limit(1)
     if (!p) return fail('That spot has gone.')
 
+    // `for update` and not a plain read: the gate locks the night in its own
+    // transaction, and without taking the row this check passes on `ended`,
+    // the lock commits, and the UPDATE lands on a night whose charges are
+    // already written — the roster says one payer, the charge says another.
     const [session] = await tx
       .select({ status: gameSessions.status })
       .from(gameSessions)
       .where(eq(gameSessions.id, p.sessionId))
       .limit(1)
+      .for('update')
     // Once the night is locked the charge carries its own payer and a change
     // here would silently re-point an immutable row. Stage 3 makes this an
     // adjustment plus a new charge instead.
@@ -1467,6 +1505,94 @@ export async function setPayer(participantId: string, payerPlayerId: string, act
       entityId: participantId,
       before: { payerPlayerId: out.before },
       after: { payerPlayerId },
+    })
+  }
+  return out
+}
+
+/**
+ * What this one person pays for this one night, when it is not the game's price
+ * — a coach who is not charged, a first-timer at half price (m5).
+ *
+ * The amount and the note travel together, always: `session_participants_override_shape`
+ * refuses one without the other, and a ₹0 charge with no reason is
+ * indistinguishable in the ledger from a billing bug. The check is made here so
+ * the host gets a sentence rather than a 500.
+ *
+ * Refused once the night is locked. By then the charge exists, carrying its own
+ * snapshot of the price and the note, and moving the override would change what
+ * a later screen claims was decided without changing a paisa of what is owed.
+ * A locked night is corrected with a charge correction.
+ */
+export async function setParticipantPrice(
+  participantId: string,
+  paise: number | null,
+  note: string | null,
+  actor: { id: string; username: string },
+) {
+  const trimmed = note?.trim().slice(0, 120) || null
+  if ((paise === null) !== (trimmed === null)) {
+    return fail('An override needs an amount and a short note together. Nothing was changed.')
+  }
+  if (paise !== null && (!Number.isSafeInteger(paise) || paise < 0 || paise > MAX_PRICE_PAISE)) {
+    return fail('That isn’t an amount this app will charge. Nothing was changed.')
+  }
+
+  const out = await transact(async (tx) => {
+    const [p] = await tx
+      .select()
+      .from(sessionParticipants)
+      .where(eq(sessionParticipants.id, participantId))
+      .limit(1)
+    if (!p) return fail('That spot has gone.')
+
+    // `for update`, for the same reason `setPresent` takes it: the gate's lock
+    // transaction holds this row, and a plain read sails past it. Without the
+    // lock, "Ravi pays ₹150" can be accepted at 20:15 and the charge written at
+    // ₹300 a second later — the screen and the money disagreeing about the same
+    // person, which is the one thing `effectivePrice` exists to prevent.
+    const [session] = await tx
+      .select({ status: gameSessions.status })
+      .from(gameSessions)
+      .where(eq(gameSessions.id, p.sessionId))
+      .limit(1)
+      .for('update')
+    if (session?.status === 'locked') {
+      return fail('That night is closed — the price is fixed now. Correct the charge instead.')
+    }
+    if (session?.status === 'cancelled') {
+      return fail('That game was called off, so there is nothing to price.')
+    }
+
+    const done = await tx
+      .update(sessionParticipants)
+      .set({
+        priceOverridePaise: paise,
+        priceNote: trimmed,
+        version: sql`${sessionParticipants.version} + 1`,
+        updatedAt: new Date(),
+      })
+      // The state is re-asserted rather than trusted: the read above is outside
+      // the row's own lock, and somebody taken off the list between the two is
+      // not somebody to price.
+      .where(and(eq(sessionParticipants.id, participantId), inArray(sessionParticipants.state, [...OCCUPYING])))
+      .returning({ id: sessionParticipants.id })
+    if (!done.length) return fail('They aren’t on this list any more. Nothing was changed.')
+
+    await bumpSessionVersion(p.sessionId, tx)
+    return { ok: true as const, before: { paise: p.priceOverridePaise, note: p.priceNote } }
+  })
+
+  if (out.ok) {
+    await recordAudit({
+      userId: actor.id,
+      actorLabel: actor.username,
+      action: 'session.price_override',
+      entity: 'session_participant',
+      entityId: participantId,
+      reason: trimmed,
+      before: out.before,
+      after: { paise, note: trimmed },
     })
   }
   return out

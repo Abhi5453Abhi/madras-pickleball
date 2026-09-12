@@ -655,9 +655,11 @@ Two things the second reviewer flagged that were **left as they are**, deliberat
   possible is not optional, and because the next person to write such an update should not
   have to discover this.
 
-  One risk goes with it, and it is worth naming because it is the one thing this project
-  said it would never take: transition tables (`REFERENCING OLD TABLE` / `NEW TABLE`) have
-  not been run against PGlite. They are core Postgres executor machinery since 10 and PGlite
+  One risk went with it, and it is worth keeping the reasoning even though the risk is now
+  discharged: transition tables (`REFERENCING OLD TABLE` / `NEW TABLE`) had not been run
+  against PGlite when this was written. **They have since been run — the whole suite passes
+  against the embedded database, so the migration applies and the laptop path is not
+  bricked.** What follows is the argument that was made before the test existed. They are core Postgres executor machinery since 10 and PGlite
   is a real Postgres 18 backend compiled to WASM, so the expectation is that they work — but
   it is an expectation, not a test, and if it is wrong the migration aborts inside its single
   transaction, `ensureReady()` throws, and the embedded database every `npm run dev` uses
@@ -668,3 +670,233 @@ Two things the second reviewer flagged that were **left as they are**, deliberat
   before that test has run.
 - `markAutoEnded` can leave `ended_at` a few minutes after `held_until`. The court going back
   to the venue on a grid boundary is the point; the attendance record is unaffected.
+
+## 14. The money model is nine tables, not five — DEVIATION
+
+The ladder says m1 is *"five objects, cleanly separated"*. Stage 3 ships nine, and the extra
+four are not scope creep — each is forced by another `[IN]` item on the same rung:
+
+- **`webhook_events`** — m22 names *"can't double-process a webhook"* as one of the five
+  constraints and says they are *"written now, before anything can violate them"*. A UNIQUE
+  index needs a table to sit on. There is no provider until stage 4; the inbox is here so
+  that the first webhook ever received arrives at a table that already refuses duplicates.
+- **`collection_attempts`** and **`collection_attempt_charges`** — m23 asks for the partial
+  unique index and the write-ahead ordering, *"built before a gateway exists so it is never
+  retrofitted"*. The index needs an attempt to belong to.
+- **`refunds`** — invariant 2 counts `refunded_paise`, and a refund with *"its own lifecycle
+  and its own provider id"* (§4) is not a negative payment.
+
+SPEC §13 already names all ten ("Charge, adjustment, payment, application, credit, refund,
+collection attempt, reservation, mandate, webhook event"). Stage 3 owns nine of them. Only
+the mandate waits for stage 5, because a lifecycle with no code to run it is a table that
+lies.
+
+### The two stored numbers that look like the thing §12 forbids
+
+`charges.applied_paise`, `charges.adjust_paise`, `payments.allocated_paise`,
+`payments.refunded_paise` and `credits.applied_paise` are stored. §12 forbids *"a stored
+balance column — a number that can silently disagree with the rows it is supposed to
+summarise"*, and m2 says a balance you store is a number that can be wrong. Both are true,
+and these are not that.
+
+The distinction the spec never draws, and which this stage depends on:
+
+- A **per-player balance** is spread across many rows in several tables, no constraint can
+  see it, and no single transaction owns it. It is derived, by exactly one function, from
+  the view `player_balances`. Nothing stores it.
+- A **per-row settlement counter** summarises the children of one row, moves in the same
+  statement sequence as the child it counts, and is guarded by the CHECK that needs it.
+  `CHECK (applied_paise <= amount_paise + adjust_paise)` cannot aggregate another table, so
+  without the counter, "can't over-settle a charge" is a habit rather than a guarantee.
+
+Because a constraint only guards a number somebody maintains, `moneyDrift()` asks the rows
+whether the counters are still telling the truth, a test asserts it after every path in the
+money module, and the day-end screen shows it when it is not empty. A counter that has
+drifted is a bug that the CHECK will happily keep passing.
+
+### Signed applications, because §4's own worked example is otherwise impossible
+
+The spec's showcase correction is Priya, over-billed ₹300, **already paid**. Written the
+obvious way it is refused by the database: `applied_paise` is 300, the −300 adjustment makes
+`amount + adjust` zero, and `applied <= amount + adjust` is false. Deleting the application
+is forbidden by §4 rule 2. Relaxing the CHECK would remove the one thing stopping a charge
+being settled twice — and that is exactly the pressure a real correction at 11pm applies.
+
+So `charge_applications.amount_paise` is **signed**. Taking a payment back off a charge is a
+new row with a negative amount pointing at the one it undoes, and `correctCharge` does the
+three steps in a fixed order so nobody has to remember them: reverse whole application rows
+until the charge fits, post the adjustment, then spread whatever came loose over whatever is
+still owed. Whole rows, never part of one, so "an application is undone once" stays true and
+the ledger reads as a sequence of complete moves. What is left sits on the player's account,
+visible, until it is refunded or used.
+
+### Three states the charge does not have
+
+SPEC §5 gives the charge `draft`, `locked`, `settled`, `waived`, `written_off`. The enum
+stores three.
+
+- **`draft`** — §2 says *"until this moment attendance is freely editable and no charge
+  exists"*. A draft row would occupy `charges_participation_uq` while attendance was still
+  moving, so correcting a tick would mean editing or deleting a charge. The provisional
+  amount m6 shows is computed, not stored.
+- **`settled`** — derived from `applied_paise` reaching `amount_paise + adjust_paise`, per
+  §5's own words. Storing it would be a second opinion about the same fact.
+- **`reserved`** — §6 argues at length against putting it on the charge: it mutates an
+  immutable row, cannot record who reserved it or for how much, and makes one of the two
+  facts unrepresentable while the other holds. The interlock is
+  `collection_attempt_charges`, and the enum must never grow this member.
+
+### Invariant 4 has a twin
+
+`UNIQUE (participation_id) WHERE origin = 'participation'` stops a night being billed twice.
+A no-show fee is also raised from a participation — the absent one — at `origin = 'policy'`,
+which that index does not reach, so a replayed lock could raise it twice.
+`charges_policy_uq` on `(participation_id, policy_kind) WHERE origin = 'policy'` closes it.
+Invariant 4 is left exactly as the spec words it, so it stays recognisable.
+
+### Money is host-only in stage 3 — DEVIATION from m6's wording
+
+m6 asks for *"₹300 for tonight — locking at 9:45pm"* shown before it locks, and §2 wants
+every player to see what they owe. §8 says balances and payment status *"never appear on any
+page reachable without a verified session"*, and verification (m12) and device sessions
+(m25) are stage 5. The only player-facing authority that exists today is the `/s/<token>`
+capability URL — and decision 8a says of it, in terms, that *"this token must not become
+what stage 3 reaches for"*: it is stored in plain text, it is designed to be forwarded into
+a WhatsApp group, and WhatsApp's own preview fetcher sees it.
+
+So m6 is delivered to the host, on the Tonight screen, where the night is being run. The
+player-facing amount waits for the verified device session it needs. `/g/[slug]` and
+`/s/[token]` gained nothing in this stage, which is checked rather than assumed.
+
+One detail m6 gets wrong on its own terms: it names a lock time during the game, and
+`lock_at` does not exist until the session ends — it is computed from the **actual** end, so
+a 7–9pm game that auto-ends at 21:30 locks at 22:15, not 21:45. The screen shows `lock_at`
+verbatim once it is set and says "about 45 minutes after the game ends" before that. A named
+time that turns out to be wrong is worse than no time on the one screen whose purpose is
+that the number is trusted enough to be disputed.
+
+### Two rules kept as triggers, because stage 4 is where they get forgotten
+
+`money_row_is_forever` refuses a DELETE on every one of the nine tables, so §4's *"nothing is
+deleted and nothing is back-dated"* is something the database does rather than something a
+tired person remembers. TRUNCATE does not fire row triggers, which is why the test harness
+can still start from nothing.
+
+`payments_state_forward` refuses a payment moving backwards: `initiated` may become anything,
+a `succeeded` payment may only be `reversed`, and nothing else moves once it has settled.
+§5 says out-of-order webhooks are *"handled by refusing backward transitions, not by trusting
+arrival order"* — and stage 4, where a provider replays a `failed` message after a `succeeded`
+one, is exactly where a convention would be forgotten. Nothing in stage 3 updates a payment's
+state at all; the guard is here so that the first code that does inherits it.
+
+### The desk is a real collection attempt
+
+m23's danger is that it ships an interlock nothing uses, so a payment link in stage 4 is its
+first execution — in production, with money moving. So taking cash at the desk goes through
+the whole shape: `openAttempt` reserves the charges and **commits**, the money is counted
+with no transaction held, and `settleAttempt` records the payment, applies it and releases
+the reservations in one transaction. There is never an instant where a charge is neither
+settled nor reserved.
+
+A throw between the two transactions is the one way a reservation is stranded, and a
+stranded reservation makes a charge permanently uncollectable and unwaivable, because
+nothing releases on a timer and that rule is not negotiable. `collectAtDesk` releases on the
+throw path as well as the refusal path.
+
+## 15. What the stage 3 reviews found
+
+Two adversarial passes, one over the money model and one over the screens, both against the
+first working version. Ordered by how badly each would have hurt.
+
+| Found | Fix |
+|---|---|
+| **Money on account was never picked up by a later charge.** `allocate`'s own doc said "the next charge raised for that player picks it up"; nothing did. Somebody who handed over ₹500 for a ₹300 night was asked for the full ₹300 again next Tuesday while the venue sat on ₹200 of theirs — and the collections screen, which nets the account off, did not list them, so two screens disagreed about the same player. | `applyOnAccount` now runs wherever the set of things owed or the set of things reachable changes: at the end of `raiseSessionCharges`, on every correction rather than only the ones that freed money, and when a reservation is released. |
+| **`setParticipantPrice` and `setPayer` read the session's status without `for update`.** The gate's lock transaction holds that row; a plain read sails past it. "Ravi pays ₹150" accepted at 20:15, the lock committing at 20:15:01, and the charge written at ₹300 — the screen and the money disagreeing about one person, which is the single failure `effectivePrice` exists to prevent. `setPresent` has carried a seven-line comment about this exact race since stage 1. | Both take the row. `setParticipantPrice` also refuses a cancelled night. |
+| **A reservation could be stranded for good.** `collectAtDesk` released the hold when `settleAttempt` *returned* a refusal, but not when it threw — a driver disconnect, a connection reset. The charge was then uncollectable (the partial index refuses a new attempt), unwaivable (waive refuses a held charge), invisible to allocation, and unreachable by any timer, by design. | Released on the throw path too, and the error still propagates. |
+| **`settleAttempt` with `method: 'gateway'` released every reservation while applying nothing** — a gateway payment is `initiated`, so `allocate` correctly did nothing, and the code released and marked the attempt succeeded anyway. Not reachable from the desk screens, and exactly the path stage 4 would have reached for. | Refused with a sentence. A gateway attempt is resolved by its webhook, in the stage that has one. |
+| **The idempotency test proved nothing.** It ran the tick twice, but the second tick never loads a `locked` session, so `on conflict do nothing` and `charges_participation_uq` were never executed. Deleting both guards left the test green. This is the same defect §12 recorded once already. | The test calls `raiseSessionCharges` directly, twice, the way a retried transaction would — and still runs the second tick as well. |
+| **`correctCharge` would move a charge that a collection was holding**, while `waiveCharge` refused to. The attempt's fixed amount silently stopped matching the charges it names, which in stage 4 is a notice bound to a number that moved. | The same refusal as waive. |
+| **A correction posted a delta computed from a read taken outside the lock.** Two hosts both correcting ₹300 to ₹150 in the same second both posted −₹150, landing on ₹0. | `correctCharge` takes an optional `expectedNetPaise` and re-checks it under the row lock: "Somebody corrected that a moment ago." |
+| **`allocate` locked the payment before the charges; `correctCharge` locks a charge and then its payment.** Two hosts correcting two charges of one player that share a payment deadlock. It degraded to "Two people saved at once", but §13 already records one deadlock that needed the lock order fixed rather than the message improved. | One order everywhere: charges, then payments. |
+| **The collections list chased gross owed, not the balance.** A player who had overpaid in August and played again in September was shown as owing the full new charge, ignoring the money the venue was already holding for them. | The headline is the balance; owed and on-account are the detail line that explains it. |
+| **The game screen counted credits as takings.** A rained-off night settled by goodwill credits read "₹4,800 in" for a night where the drawer received nothing — the exact confusion m4 exists to prevent, on a different screen. | Relabelled to what it measures: settled, not taken. |
+| **The desk could not take a part payment** on a screen that renders a "Part paid" state. Somebody handing over ₹200 of a ₹300 bill had no field, and the only alternative was to correct the charge — rewriting what they *owed* to record what they *paid*. | An amount field; blank still means the whole thing. |
+| **A fully waived night read "all settled".** Waived charges were counted as charged and excluded from owed. | The header names what happened to the money: charged, settled, waived, written off, still owed. |
+| **`Drift`'s type named three of the five counters it returns.** An unchecked cast, so `tsc` never saw the lie and a future `switch` would silently miss two. | All five, and the drift test now pokes a counter out of line and asserts the check notices — previously every assertion was `toEqual([])`, which a silently broken detector would also pass. |
+| The lock sentence kept promising a time that had passed, on the same screen that warns the gate is dead. A ₹0 coach charge read "paid" on one screen and "free" on another. "Games on this day" silently emptied on older days because it filtered a 60-row list instead of querying. A hundred debtors meant a hundred queries on a `force-dynamic` page. An unrecognised payment method defaulted into the cash line. | Each fixed; the ₹0 wording is now one shared helper so two screens cannot drift apart again. |
+| The audit row was written after the money, outside its transaction. | Every money command takes an optional `audit` and writes it with `recordAudit(…, tx)` inside. The money and the record of who moved it commit together. |
+| `cooldown_until` was written and never read. `applyOnAccount` ordered payments by timestamp with no tie-break. The balance view cast sums to `int`, which stops working at about ₹2.1 crore. | A cooldown blocks a link or a debit and never a host standing in front of the player; `asc(id)` everywhere; `bigint`. |
+
+### Proved on the engine that runs in production
+
+PGlite is a real Postgres and the test suite uses it, but production talks to Postgres through
+postgres.js, and one rule differs between the two: postgres.js uses the extended protocol and
+rejects a statement chunk holding more than one command, where PGlite accepts it — a violation
+that only shows up in production. So migration 0008 was also applied to a real PostgreSQL 16,
+one `--> statement-breakpoint` chunk at a time: **310 statements across all nine migrations,
+every one accepted on its own.**
+
+On that same database, each guarantee was then asked to fail:
+
+| Asked to do the forbidden thing | Refused by |
+|---|---|
+| Settle a ₹300 charge with ₹301 | `charges_applied_within` |
+| Allocate one payment past its own value | `payments_spent_within` |
+| Let a second attempt reserve a charge already held | `one_live_reservation_per_charge` |
+| Raise a second session charge for one participation | `charges_participation_uq` |
+| Store the same provider event twice | `webhook_events_provider_uq` |
+| Raise the same no-show fee twice | `charges_policy_uq` |
+| Delete a charge | `money_row_is_forever` |
+| Move a settled payment to `failed` | `payments_state_forward` |
+| Reverse a settled payment | *allowed, as it must be* |
+| A participation charge with no participation | `charges_origin_shape` |
+| Waive a charge without saying why | `charges_state_reason` |
+| An override amount with no note | `session_participants_override_shape` |
+| An adjustment larger than the charge | `charges_net_nonneg` / `charges_applied_within` |
+
+Then the races, on **two live connections** — something the test suite structurally cannot do,
+because PGlite is a single connection and every "concurrent" test in it is really sequential:
+
+| Two people at once | What happened |
+|---|---|
+| Both reach for the same charge to collect it | The first gets it. The second waits at the row, then is refused by `one_live_reservation_per_charge` — it never sees a moment where the charge looks free. |
+| Both correct the same charge | The second waits for the first to commit, then reads ₹150 rather than the ₹300 it started from — which is what makes `correctCharge`'s `expectedNetPaise` able to catch a stale delta instead of stacking two corrections. |
+| Two payments settle the same charge | The first settles it. The second is refused by `charges_applied_within`, and `applied_paise` ends at exactly ₹300 of ₹300. |
+
+One thing fell out of that by accident and is worth keeping: a bulk `delete from
+charge_applications` and a bulk `delete from collection_attempt_charges` are both refused too.
+The no-delete rule is not a per-row courtesy that a `where true` walks past.
+
+And `player_balances` was read back against hand-computed figures: a player whose charge is
+fully settled shows zero owed and zero open, a player with a ₹150 no-show fee shows ₹150 owed
+and one open charge, and the columns come back as `bigint`.
+
+Sixteen of sixteen. The one thing this does not cover is the TypeScript around it, which needs
+the application's own test run.
+
+### What stage 3 deliberately does not do
+
+- **No mandate, no sweep, no notice, no execution window.** Stages 5 and 6. §7's settings are
+  still marked `[confirm]`; building them now would freeze guesses as schema.
+- **No provider call, no SDK, no webhook route.** Stage 4. The inbox table exists; nothing
+  writes to it.
+- **No fee or settlement arithmetic.** §1 is explicit that the real fee is read off the
+  settlement record, never computed from a rate card.
+- **No automatic write-off.** §9 wants one eventually; §7 says never automatically at this
+  stage. A job that erases debt, running before there is any way to collect it, writes off
+  money nobody has been asked for. `written_off` is a host action with a reason and an
+  audit row.
+- **No player-facing amount.** See the deviation above.
+- **No timer that releases a reservation.** §6: "That rule is the bug this design exists to
+  prevent."
+
+Two things a reviewer raised that were **left as they are**:
+
+- **`player_balances` is `players` cross joined with `venues`.** With one venue it is one row
+  per player; the three lateral aggregates are each an index probe. It is correct rather than
+  fast, and at twenty regulars correct is the only thing that matters. If a second venue ever
+  exists, the shape is already right.
+- **Stage 3 has no screen for an attempt stuck in `unknown`.** §6 says a host with the
+  collections permission resolves it, and that permission is m25 in stage 5. Nothing in
+  stage 3 can produce an `unknown` attempt — only a provider's silence can, and there is no
+  provider — so the screen arrives with the stage that can create the state.
