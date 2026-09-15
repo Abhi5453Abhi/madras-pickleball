@@ -64,6 +64,13 @@
       "when": 1789192460115,
       "tag": "0008_money",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789472202050,
+      "tag": "0009_numerous_cobalt_man",
+      "breakpoints": true
     }
   ]
 }
