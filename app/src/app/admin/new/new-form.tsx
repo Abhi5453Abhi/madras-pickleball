@@ -79,6 +79,7 @@ export function NewForm({
   const [nameTouched, setNameTouched] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
   const [days, setDays] = useState<string>('1')
+  const [matchesPerTeam, setMatchesPerTeam] = useState<string>('')
   const [courtsFrom, setCourtsFrom] = useState<string>('')
   const [courtsUntil, setCourtsUntil] = useState<string>('')
 
@@ -235,6 +236,24 @@ export function NewForm({
         />
         <p className="text-meta text-text-3">
           If two teams tie on wins, whoever scored more points goes through. Matches are best of 3 games to 11.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="matchesPerTeam">Matches per team (optional)</Label>
+        <Input
+          id="matchesPerTeam"
+          name="matchesPerTeam"
+          type="number"
+          inputMode="numeric"
+          min={1}
+          value={matchesPerTeam}
+          onChange={(e) => setMatchesPerTeam(e.target.value)}
+          placeholder="Blank = everyone plays everyone"
+        />
+        <p className="text-meta text-text-3">
+          E.g. enter 4 so each team plays 4 opponents in the league instead of all of them. How many that leaves
+          depends on how many sign up — you can change this later, right up until the schedule is made.
         </p>
       </div>
 
