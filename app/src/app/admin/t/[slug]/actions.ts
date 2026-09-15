@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { and, eq } from 'drizzle-orm'
 import { db } from '@/db'
-import { categories, teams, tournamentPlayers } from '@/db/schema'
+import { categories, matches, teams, tournamentPlayers } from '@/db/schema'
 import { requireUser } from '@/lib/auth'
 import { recordAudit } from '@/lib/audit'
 import { venueInstant } from '@/lib/time'
@@ -17,7 +17,7 @@ import {
   withdrawTeam,
   withdrawalEffect,
 } from '@/server/chaos'
-import { deleteEvent, rescheduleEvent } from '@/server/events'
+import { deleteEvent, repairPairing, rescheduleEvent } from '@/server/events'
 import { flowTournament } from '@/server/board'
 import { settleTeams } from '@/server/teams'
 import { generateDrawForCategory, getCategory, getTournamentBySlug, listMatches } from '@/server/tournaments'
@@ -357,6 +357,46 @@ export async function rescheduleAction(formData: FormData) {
     after: { startDate: newDate, days },
   })
   done(slug, 'The date is changed, and its courts moved with it.')
+}
+
+/**
+ * Give a match two different opponents — for a draw the software made that
+ * does not match the one actually decided. The id on the wire is resolved
+ * back to this tournament first, same reason as `ownTeam`.
+ */
+export async function repairPairingAction(formData: FormData) {
+  const user = await requireUser('admin')
+  const slug = String(formData.get('slug'))
+  const matchId = String(formData.get('matchId'))
+  const teamAId = String(formData.get('teamAId') ?? '')
+  const teamBId = String(formData.get('teamBId') ?? '')
+
+  const tournament = await getTournamentBySlug(slug)
+  if (!tournament) return
+  const [row] = await db
+    .select({ id: matches.id, teamAId: matches.teamAId, teamBId: matches.teamBId })
+    .from(matches)
+    .where(and(eq(matches.id, matchId), eq(matches.tournamentId, tournament.id)))
+    .limit(1)
+  if (!row) return
+
+  if (!teamAId || !teamBId) {
+    refuse(slug, 'Pick both teams.')
+  }
+
+  const res = await repairPairing(matchId, teamAId, teamBId)
+  if (!res.ok) refuse(slug, res.error, 'board')
+
+  await recordAudit({
+    userId: user.id,
+    actorLabel: user.username,
+    action: 'match.pairing_repaired',
+    entity: 'match',
+    entityId: matchId,
+    before: { teamAId: row.teamAId, teamBId: row.teamBId },
+    after: { teamAId, teamBId },
+  })
+  done(slug, 'That match is now between the right two.')
 }
 
 /** Gone from every list, courts freed. The row stays for the record. */
