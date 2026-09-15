@@ -858,6 +858,51 @@ export async function deleteEvent(tournamentId: string) {
   return { ok: true as const }
 }
 
+/**
+ * Move a tournament to a different day (and, optionally, change how many days
+ * it runs). Every court hold it currently has is remade against the new date —
+ * without this, starting a tournament on the wrong day left it holding no
+ * court at all today, because a hold is scoped to the calendar day(s) it was
+ * made for, not "whenever this tournament happens to go live".
+ *
+ * Refused while a match is on court, the same as deleting: moving the day out
+ * from under a match in progress would either strand it or double-book its
+ * court on the new date.
+ */
+export async function rescheduleEvent(tournamentId: string, newStartDate: Date, days?: number) {
+  const [live] = await db
+    .select({ courtName: courts.name })
+    .from(matches)
+    .leftJoin(courts, eq(courts.id, matches.courtId))
+    .where(and(eq(matches.tournamentId, tournamentId), eq(matches.status, 'live')))
+    .limit(1)
+  if (live) {
+    return {
+      ok: false as const,
+      error: `There is a match on ${live.courtName ?? 'a court'} right now. Let it finish, then change the date.`,
+    }
+  }
+
+  const clampedDays = Math.min(Math.max(Math.round(days ?? 1), 1), 14)
+  const newEndDate = new Date(newStartDate.getTime() + (clampedDays - 1) * 24 * 60 * 60_000)
+
+  // The date first, so the court-hold windows computed just below are worked
+  // out against where this tournament is moving TO, not where it just was.
+  await db
+    .update(tournaments)
+    .set({ startDate: newStartDate, endDate: newEndDate, updatedAt: new Date() })
+    .where(eq(tournaments.id, tournamentId))
+
+  const mine = await myCourtsNow(tournamentId)
+  const hours = await tournamentHours(tournamentId)
+  const courtsResult = mine.length
+    ? await assignCourts(tournamentId, mine.map((c) => c.id), hours)
+    : { ok: true as const, count: 0 }
+
+  await bumpStreamVersion(tournamentId)
+  return { ok: true as const, courts: courtsResult }
+}
+
 /** Everything has a result. Close it off so it moves to "Finished". */
 export async function finishEvent(tournamentId: string) {
   const [agg] = await db

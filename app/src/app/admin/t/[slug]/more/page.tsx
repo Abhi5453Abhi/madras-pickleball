@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
 import { Card, Chevron, Notice } from '@/components/ui'
 import { estimateDay, minutesPerMatch } from '@/lib/estimate'
-import { venueTime } from '@/lib/time'
+import { venueDayKey, venueTime } from '@/lib/time'
 import { substitutionOptions, withdrawalEffect } from '@/server/chaos'
 import { myCourts, primaryCategory } from '@/server/events'
 import {
@@ -20,6 +20,7 @@ import {
   FixScore,
   MatchesPerTeam,
   Pause,
+  Reschedule,
   Shorten,
   Swap,
   Withdraw,
@@ -46,7 +47,7 @@ export async function generateMetadata(props: PageProps<'/admin/t/[slug]/more'>)
 
 export const dynamic = 'force-dynamic'
 
-type View = 'fix' | 'withdraw' | 'swap' | 'shorten' | 'matches' | 'pause' | 'delete'
+type View = 'fix' | 'withdraw' | 'swap' | 'shorten' | 'matches' | 'pause' | 'reschedule' | 'delete'
 const VIEWS: Record<View, string> = {
   fix: 'Fix a score',
   withdraw: 'Who’s pulled out?',
@@ -54,6 +55,7 @@ const VIEWS: Record<View, string> = {
   shorten: 'Shorten what’s left',
   matches: 'Matches per team',
   pause: 'Pause the tournament',
+  reschedule: 'Change the date',
   delete: 'Delete this tournament',
 }
 
@@ -140,6 +142,12 @@ export default async function MorePage(props: PageProps<'/admin/t/[slug]/more'>)
         <MatchesPerTeam slug={slug} view={await matchesPerTeamView(t.id, category)} />
       ) : view === 'pause' ? (
         <Pause slug={slug} pauseNote={t.pauseNote} />
+      ) : view === 'reschedule' ? (
+        <Reschedule
+          slug={slug}
+          currentDayKey={venueDayKey(t.startDate)}
+          days={Math.round((t.endDate.getTime() - t.startDate.getTime()) / (24 * 60 * 60_000)) + 1}
+        />
       ) : (
         <DeleteData slug={slug} tournamentId={t.id} name={t.name} />
       )}
@@ -147,7 +155,7 @@ export default async function MorePage(props: PageProps<'/admin/t/[slug]/more'>)
   )
 }
 
-// ───────────────────────────── the list ─────────────────────────────
+// ────────────────────────── the list ──────────────────────────
 
 function MoreList({
   base,
@@ -176,6 +184,7 @@ function MoreList({
     { label: 'Matches per team', href: `${more}?do=matches`, when: running },
     { label: 'Shorten what’s left', href: `${more}?do=shorten`, when: running },
     { label: paused ? 'Start again' : 'Pause the tournament', href: `${more}?do=pause`, when: running },
+    { label: 'Change the date', href: `${more}?do=reschedule`, when: running },
     { label: 'Add or remove players', href: `${base}/registration`, when: running },
   ].filter((r) => r.when !== false)
   return (
@@ -216,7 +225,7 @@ function MoreList({
   )
 }
 
-// ───────────────────────────── the data behind each screen ─────────────────────────────
+// ────────────────────────── the data behind each screen ──────────────────────────
 
 /** Newest first: a score that needs correcting was almost always just entered. */
 async function playedMatches(tournamentId: string): Promise<PlayedMatch[]> {
