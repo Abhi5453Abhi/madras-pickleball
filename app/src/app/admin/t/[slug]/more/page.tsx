@@ -20,12 +20,15 @@ import {
   FixScore,
   MatchesPerTeam,
   Pause,
+  RepairPairing,
   Reschedule,
   Shorten,
   Swap,
   Withdraw,
   type MatchesPerTeamView,
   type PlayedMatch,
+  type RepairableMatch,
+  type RepairView,
   type ShortenView,
   type WithdrawDetail,
   type WithdrawRow,
@@ -47,7 +50,7 @@ export async function generateMetadata(props: PageProps<'/admin/t/[slug]/more'>)
 
 export const dynamic = 'force-dynamic'
 
-type View = 'fix' | 'withdraw' | 'swap' | 'shorten' | 'matches' | 'pause' | 'reschedule' | 'delete'
+type View = 'fix' | 'withdraw' | 'swap' | 'shorten' | 'matches' | 'pause' | 'reschedule' | 'repair' | 'delete'
 const VIEWS: Record<View, string> = {
   fix: 'Fix a score',
   withdraw: 'Who’s pulled out?',
@@ -56,6 +59,7 @@ const VIEWS: Record<View, string> = {
   matches: 'Matches per team',
   pause: 'Pause the tournament',
   reschedule: 'Change the date',
+  repair: 'Fix a pairing',
   delete: 'Delete this tournament',
 }
 
@@ -78,6 +82,7 @@ export default async function MorePage(props: PageProps<'/admin/t/[slug]/more'>)
   const q = await props.searchParams
   const view = (typeof q.do === 'string' && q.do in VIEWS ? q.do : null) as View | null
   const teamParam = typeof q.team === 'string' ? q.team : null
+  const matchParam = typeof q.match === 'string' ? q.match : null
 
   const t = await getTournamentBySlug(slug)
   if (!t) notFound()
@@ -148,6 +153,8 @@ export default async function MorePage(props: PageProps<'/admin/t/[slug]/more'>)
           currentDayKey={venueDayKey(t.startDate)}
           days={Math.round((t.endDate.getTime() - t.startDate.getTime()) / (24 * 60 * 60_000)) + 1}
         />
+      ) : view === 'repair' ? (
+        <RepairPairing slug={slug} view={await repairView(t.id, category.id, matchParam)} />
       ) : (
         <DeleteData slug={slug} tournamentId={t.id} name={t.name} />
       )}
@@ -185,6 +192,7 @@ function MoreList({
     { label: 'Shorten what’s left', href: `${more}?do=shorten`, when: running },
     { label: paused ? 'Start again' : 'Pause the tournament', href: `${more}?do=pause`, when: running },
     { label: 'Change the date', href: `${more}?do=reschedule`, when: running },
+    { label: 'Fix a pairing', href: `${more}?do=repair`, when: running },
     { label: 'Add or remove players', href: `${base}/registration`, when: running },
   ].filter((r) => r.when !== false)
   return (
@@ -367,6 +375,41 @@ async function matchesPerTeamView(
     teams: teams.filter((t) => t.status !== 'withdrawn').length,
     started: all.some((m) => m.resultState !== 'none'),
     live: all.some((m) => m.status === 'live'),
+  }
+}
+
+/**
+ * Every match in the category that has no result yet — that's the whole set
+ * a pairing can still be corrected on. `matches.teamAId`/`teamBId` is the
+ * source of truth once a round-robin match's teams are resolved, so the
+ * names come from there via `teamNameMap`, same as everywhere else on this
+ * page.
+ */
+async function repairView(
+  tournamentId: string,
+  categoryId: string,
+  matchParam: string | null,
+): Promise<RepairView> {
+  const [all, teams, names] = await Promise.all([
+    listMatches(tournamentId),
+    listTeams(categoryId),
+    teamNameMap(tournamentId),
+  ])
+  const matches: RepairableMatch[] = all
+    .filter((m) => m.resultState === 'none' && m.status !== 'cancelled' && m.teamAId && m.teamBId)
+    .map((m) => ({
+      id: m.id,
+      roundName: m.roundName,
+      teamAId: m.teamAId,
+      teamBId: m.teamBId,
+      teamAName: names.get(m.teamAId ?? '') ?? '—',
+      teamBName: names.get(m.teamBId ?? '') ?? '—',
+    }))
+  const selected = matches.find((m) => m.id === matchParam) ?? null
+  return {
+    matches,
+    teams: teams.filter((t) => t.status !== 'withdrawn').map((t) => ({ id: t.id, name: t.name })),
+    selected,
   }
 }
 
