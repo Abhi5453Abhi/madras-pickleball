@@ -7,6 +7,7 @@ import {
   deleteEventAction,
   pauseDayAction,
   reinstateTeamAction,
+  repairPairingAction,
   rescheduleAction,
   resumeDayAction,
   setMatchesPerTeamAction,
@@ -507,6 +508,117 @@ export function Reschedule({
         <button className={INK_BUTTON}>Change the date</button>
       </form>
     </div>
+  )
+}
+
+// ───────────────── fix a pairing ─────────────────────
+
+export type RepairableMatch = {
+  id: string
+  roundName: string | null
+  teamAId: string | null
+  teamBId: string | null
+  teamAName: string
+  teamBName: string
+}
+
+export type RepairView = {
+  matches: RepairableMatch[]
+  teams: Array<{ id: string; name: string }>
+  selected: RepairableMatch | null
+}
+
+/**
+ * The schedule the software drew and the schedule actually played on the day
+ * can drift apart — the organiser ran a different rotation on paper. This is
+ * the only screen that lets a match's two teams change after the draw; it is
+ * refused the moment a result exists, same as everywhere else that touches a
+ * match's identity.
+ */
+export function RepairPairing({ slug, view }: { slug: string; view: RepairView }) {
+  const here = `/admin/t/${slug}/more?do=repair`
+  if (!view.matches.length) {
+    return <p className="text-body text-text-2">Nothing left unplayed — there is no pairing to fix.</p>
+  }
+  return (
+    <>
+      <p className="text-meta text-text-3">Pick the match that has the wrong two sides.</p>
+      <Card>
+        <ul className="divide-y divide-line">
+          {view.matches.map((m) => (
+            <li key={m.id}>
+              <Link
+                href={`${here}&match=${m.id}` as never}
+                aria-current={view.selected?.id === m.id ? 'true' : undefined}
+                className={clsx(
+                  'tap-lg flex items-center gap-3 px-4 py-2',
+                  view.selected?.id === m.id && 'bg-sunken',
+                )}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block text-row text-text">
+                    {m.teamAName} v {m.teamBName}
+                  </span>
+                  {m.roundName ? <span className="block text-meta text-text-3">{m.roundName}</span> : null}
+                </span>
+                <span aria-hidden className="text-text-3">
+                  <Chevron className="-rotate-90" />
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </Card>
+
+      {view.selected ? (
+        <div className="rounded-card border border-line-strong bg-paper p-4 shadow-card">
+          <p className="text-body text-text-2">
+            Changing this only moves who is playing — the round and the court, if any, stay put.
+          </p>
+          <form action={repairPairingAction} className="mt-4 flex flex-col gap-4">
+            <input type="hidden" name="slug" value={slug} />
+            <input type="hidden" name="matchId" value={view.selected.id} />
+            <div className="flex flex-col gap-2">
+              <label htmlFor="repair-a" className="block text-row text-text">
+                Side A
+              </label>
+              <select
+                id="repair-a"
+                name="teamAId"
+                required
+                defaultValue={view.selected.teamAId ?? ''}
+                className={FIELD}
+              >
+                {view.teams.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-2">
+              <label htmlFor="repair-b" className="block text-row text-text">
+                Side B
+              </label>
+              <select
+                id="repair-b"
+                name="teamBId"
+                required
+                defaultValue={view.selected.teamBId ?? ''}
+                className={FIELD}
+              >
+                {view.teams.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button className={INK_BUTTON}>Fix it</button>
+          </form>
+        </div>
+      ) : null}
+    </>
   )
 }
 
