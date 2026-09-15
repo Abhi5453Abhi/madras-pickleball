@@ -85,6 +85,8 @@ export type CreateInput = {
   courtIds: string[]
   /** Null, or left out, holds the courts for the whole day. */
   hours?: Hours | null
+  /** How many opponents each team faces in the league phase. Null/left out is everyone plays everyone. */
+  matchesPerTeam?: number | null
 }
 
 export async function createEvent(input: CreateInput) {
@@ -103,6 +105,7 @@ export async function createEvent(input: CreateInput) {
     discipline: input.discipline,
     gender: input.gender,
     finalsStage: input.finalsStage,
+    matchesPerTeam: input.matchesPerTeam,
   })
   const courtsResult = await assignCourts(tournament.id, input.courtIds, input.hours ?? null)
   // Sign-ups open the moment it exists: the link is the first thing the
@@ -639,7 +642,7 @@ export async function dashboard(): Promise<{
   return { today, upcoming, finished }
 }
 
-// ──────────────────────────── the hub ────────────────────────────
+// ────────────────────────── the hub ────────────────────────────
 
 export type Step = {
   key: 'registration' | 'teams' | 'schedule' | 'start'

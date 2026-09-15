@@ -51,6 +51,17 @@ export async function createTournamentAction(_prev: NewState, formData: FormData
   const hours = readHours(formData)
   if (hours === 'bad') return { error: 'Those court hours don’t read as a start and a finish.' }
 
+  // Blank is everyone plays everyone — nobody has signed up yet, so there is
+  // no upper bound to check here the way the Schedule page checks one once
+  // teams exist.
+  const matchesPerTeamRaw = String(formData.get('matchesPerTeam') ?? '').trim()
+  let matchesPerTeam: number | null = null
+  if (matchesPerTeamRaw) {
+    const n = Number(matchesPerTeamRaw)
+    if (!Number.isInteger(n) || n < 1) return { error: 'Matches per team should be a whole number, 1 or more.' }
+    matchesPerTeam = n
+  }
+
   if (!name) return { error: 'Give it a name — you can change it later.' }
   const date = dateFromDayKey(dayKey)
   if (!date) return { error: 'Pick the day it is on.' }
@@ -60,7 +71,7 @@ export async function createTournamentAction(_prev: NewState, formData: FormData
   if (!FORMATS.includes(finalsStage)) return { error: 'Pick a format.' }
 
   if (!Number.isFinite(days) || days < 1 || days > 14) return { error: 'A tournament runs between one and fourteen days.' }
-  const made = await createEvent({ name, date, gender, discipline, finalsStage, courtIds, hours, days })
+  const made = await createEvent({ name, date, gender, discipline, finalsStage, courtIds, hours, days, matchesPerTeam })
   if (!made.courts.ok) {
     // The tournament exists and its courts do not — better than the reverse.
     // The hub says so and the courts screen fixes it.
@@ -73,7 +84,7 @@ export async function createTournamentAction(_prev: NewState, formData: FormData
     action: 'tournament.create',
     entity: 'tournament',
     entityId: made.tournament.id,
-    after: { name, dayKey, days, gender, discipline, finalsStage, courts: courtIds.length },
+    after: { name, dayKey, days, gender, discipline, finalsStage, matchesPerTeam, courts: courtIds.length },
   })
 
   redirect(`/admin/t/${made.tournament.slug}`)
