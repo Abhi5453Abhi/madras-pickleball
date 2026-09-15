@@ -1,4 +1,5 @@
 import { clsx } from 'clsx'
+import Link from 'next/link'
 import type { ReactNode } from 'react'
 import { CourtMark, NetRule, TeamName, Wordmark } from '@/components/ui'
 
@@ -66,13 +67,30 @@ export function CourtCard({
   )
 }
 
-/** The band. Brand, a title, one line under it — and the paused notice slot. */
+/**
+ * The band. Brand, a title, one line under it — and the paused notice slot.
+ *
+ * The wordmark is a link back to the front door, and the top-right corner is
+ * always the one way in for the person running the venue — every public page
+ * carries it, so "how do I get to the admin side" never depends on which page
+ * a link happened to drop someone on.
+ */
 export function Masthead({ title, sub }: { title: ReactNode; sub: ReactNode }) {
   return (
     <header className="masthead relative overflow-hidden bg-ink px-4 pt-5 pb-5 text-white">
       <CourtMark className="pointer-events-none absolute -right-8 -bottom-12 w-56 text-white opacity-[0.07] print:hidden" />
       <div className="mx-auto w-full max-w-3xl">
-        <Wordmark />
+        <div className="flex items-start justify-between gap-3">
+          <Link href="/" className="tap -ml-1 rounded px-1">
+            <Wordmark />
+          </Link>
+          <Link
+            href="/login"
+            className="tap shrink-0 rounded-full border border-white/25 px-3 py-1.5 text-[13px] font-semibold whitespace-nowrap text-white/90"
+          >
+            Organiser sign in
+          </Link>
+        </div>
         <h1 className="mt-2 text-hero">{title}</h1>
         <p className="num mt-1 text-body text-on-ink-2">{sub}</p>
       </div>

@@ -1,141 +1,88 @@
 import Link from 'next/link'
-import { Card, Chevron, Notice } from '@/components/ui'
+import { Chevron, Notice, StatusPill } from '@/components/ui'
 import { venueDate } from '@/lib/time'
 import { ensureReady } from '@/server/bootstrap'
 import { publicToday } from '@/server/public'
 import { publicSessions } from '@/server/daily-public'
-import { CourtCard, Masthead } from './t/court-card'
-import { LiveRefresh } from './t/[slug]/live-refresh'
+import { Masthead } from './t/court-card'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * The front door: the venue's day. Someone at the gate sees every court
- * regardless of which tournament it belongs to, then a link to each
- * tournament's own page. Same data as the tournament pages, no extra work.
+ * The front door: a choice, not a dashboard.
+ *
+ * Tournaments and open play are different things run on different days for
+ * different people — a spectator wanting Saturday's bracket and a regular
+ * wanting Tuesday's game are never looking for the same list. Each gets its
+ * own card here and its own page behind it; neither is folded into the other.
  *
  * Cookie-free, like everything public.
  */
 export default async function Home() {
   await ensureReady()
-  const day = await publicToday()
-  const games = await publicSessions()
+  const [day, games] = await Promise.all([publicToday(), publicSessions()])
   const { today, upcoming } = day
   const anyLive = day.courts.some((c) => c.live)
   const paused = today.filter((t) => t.pauseNote)
   const next = upcoming[0] ?? null
 
-  const sub = today.length
-    ? [venueDate(new Date()), ...today.map((t) => t.name)].join(' · ')
-    : next
-      ? `Nothing on today · next is ${next.name}, ${venueDate(next.startDate)}`
-      : 'Nothing on today'
+  const tSub = anyLive
+    ? `Live now · ${today.map((t) => t.name).join(', ')}`
+    : today.length
+      ? today.map((t) => t.name).join(', ')
+      : next
+        ? `Next: ${next.name}, ${venueDate(next.startDate)}`
+        : 'Nothing on right now'
+
+  const gSub = games.length
+    ? `${games.length} coming up · join with a name and a phone`
+    : 'Open play — nothing listed right now'
+
+  const heroSub = anyLive
+    ? 'A tournament is live right now.'
+    : today.length || games.length
+      ? 'Something is on today.'
+      : 'Tournaments and open play, one venue.'
 
   return (
     <div className="min-h-dvh bg-ground pb-16">
-      <LiveRefresh
-        endpoint="/api/public/today/version"
-        version={day.version}
-        mode={anyLive ? 'live' : 'idle'}
-      />
-      <Masthead title="Today" sub={sub} />
+      <Masthead title="Welcome" sub={heroSub} />
 
-      <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 pt-5">
+      <main className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 pt-5">
         {paused.map((t) => (
           <Notice key={t.slug} tone="waiting" title="Paused">
             {t.name} — {t.pauseNote}
           </Notice>
         ))}
 
-        {today.length ? (
-          <div className="flex flex-col gap-2">
-            {day.courts.map((c) => (
-              <CourtCard
-                key={c.id}
-                name={c.name}
-                colorKey={c.colorKey}
-                label={c.tournament?.name ?? ''}
-                live={c.live}
-              />
-            ))}
-          </div>
-        ) : null}
-
-        {today.length || upcoming.length ? (
-          <Card>
-            <ul className="divide-y divide-line">
-              {today.map((t) => (
-                <li key={t.slug}>
-                  <Link href={`/t/${t.slug}`} className="tap-lg flex items-center gap-3 px-4">
-                    <span className="min-w-0 flex-1 text-row text-text">
-                      {t.name} —{' '}
-                      {t.status === 'completed'
-                        ? 'final table & results'
-                        : t.status === 'live'
-                          ? 'table & results'
-                          : t.registrationOpen
-                            ? 'sign-ups open'
-                            : 'not started yet'}
-                    </span>
-                    <span aria-hidden className="text-text-3">
-                      <Chevron className="-rotate-90" />
-                    </span>
-                  </Link>
-                </li>
-              ))}
-              {upcoming.map((t) => (
-                <li key={t.slug}>
-                  <Link href={`/t/${t.slug}`} className="tap-lg flex items-center gap-3 px-4">
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-row text-text">{t.name}</span>
-                      <span className="num block text-meta text-text-3">
-                        {venueDate(t.startDate)}
-                        {t.registrationOpen ? ' — sign-ups open' : ''}
-                      </span>
-                    </span>
-                    <span aria-hidden className="text-text-3">
-                      <Chevron className="-rotate-90" />
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        ) : (
-          <p className="text-body text-text-2">
-            {games.length
-              ? // A games-only evening is a real evening. "Nothing on today"
-                // above a card naming tonight's game was simply false.
-                'No tournament today — there is open play below.'
-              : 'Nothing on today. When a tournament is on, every court and every score shows up here.'}
-          </p>
-        )}
-
-        {/* Open play is the other half of the week. It has its own list rather
-            than being folded into the tournament cards above — they are
-            different things and a visitor is looking for one of them. */}
         <Link
-          href="/games"
-          className="tap-lg mt-2 flex items-center gap-3 rounded-card border border-line-key bg-paper px-4 shadow-card"
+          href="/t"
+          className="tap-lg flex items-center gap-3 rounded-card border border-line-key bg-paper px-4 py-3.5 shadow-card"
         >
           <span className="min-w-0 flex-1">
-            <span className="block text-row font-semibold text-text">Games</span>
-            <span className="block text-meta text-text-3">
-              {games.length
-                ? `${games.length} coming up · join with a name and a phone`
-                : 'Open play — nothing listed right now'}
+            <span className="flex items-center gap-2">
+              <span className="text-row font-semibold text-text">Tournaments</span>
+              {anyLive ? <StatusPill state="live">Live</StatusPill> : null}
             </span>
+            <span className="block text-meta text-text-3">{tSub}</span>
           </span>
           <span aria-hidden className="text-text-3">
             <Chevron className="-rotate-90" />
           </span>
         </Link>
 
-        <p className="mt-6 border-t border-line pt-4 text-center text-meta text-text-3">
-          <Link href="/login" className="font-semibold text-link">
-            Organiser sign in
-          </Link>
-        </p>
+        <Link
+          href="/games"
+          className="tap-lg flex items-center gap-3 rounded-card border border-line-key bg-paper px-4 py-3.5 shadow-card"
+        >
+          <span className="min-w-0 flex-1">
+            <span className="block text-row font-semibold text-text">Daily games</span>
+            <span className="block text-meta text-text-3">{gSub}</span>
+          </span>
+          <span aria-hidden className="text-text-3">
+            <Chevron className="-rotate-90" />
+          </span>
+        </Link>
       </main>
     </div>
   )
