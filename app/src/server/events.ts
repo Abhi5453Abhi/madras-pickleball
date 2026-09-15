@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, asc, desc, eq, gt, inArray, isNull, ne, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm'
 import { db, transact } from '@/db'
 import {
   categories,
@@ -7,6 +7,7 @@ import {
   courtHolds,
   courts,
   matches,
+  matchSlots,
   pendingRegistrations,
   teamPlayers,
   teams,
@@ -901,6 +902,77 @@ export async function rescheduleEvent(tournamentId: string, newStartDate: Date, 
 
   await bumpStreamVersion(tournamentId)
   return { ok: true as const, courts: courtsResult }
+}
+
+/**
+ * Give a match two different opponents. For when the draw the software made
+ * does not match the draw that was actually decided — a pairing list agreed
+ * on paper before the schedule existed, say. Refused once a result is in:
+ * changing who a played match was between would rewrite history rather than
+ * correct a fixture, which is a different, much bigger thing to ask for.
+ *
+ * Works on a match that is on court right now, same as everywhere else a
+ * court is only ever a place a match happens to be, not a reason to refuse a
+ * fix that a score hasn't landed yet — the organiser's next step, entering
+ * the score this pairing actually produced, is what takes it off court.
+ */
+export async function repairPairing(matchId: string, teamAId: string, teamBId: string) {
+  const [match] = await db.select().from(matches).where(eq(matches.id, matchId)).limit(1)
+  if (!match) return { ok: false as const, error: 'That match no longer exists.' }
+  if (match.resultState !== 'none') {
+    return { ok: false as const, error: 'That match already has a result — its teams can’t be changed now.' }
+  }
+  if (teamAId === teamBId) {
+    return { ok: false as const, error: 'A team can’t play itself.' }
+  }
+
+  const inDraw = await db
+    .select({ id: teams.id })
+    .from(teams)
+    .where(and(inArray(teams.id, [teamAId, teamBId]), eq(teams.categoryId, match.categoryId)))
+  if (inDraw.length !== 2) {
+    return { ok: false as const, error: 'Both of them have to be in this tournament’s draw.' }
+  }
+
+  // The same two cannot already have a match elsewhere in the category — a
+  // draw where a pair meets itself twice is not one this fix should produce.
+  const [dup] = await db
+    .select({ id: matches.id })
+    .from(matches)
+    .where(
+      and(
+        eq(matches.categoryId, match.categoryId),
+        ne(matches.id, matchId),
+        ne(matches.status, 'cancelled'),
+        or(
+          and(eq(matches.teamAId, teamAId), eq(matches.teamBId, teamBId)),
+          and(eq(matches.teamAId, teamBId), eq(matches.teamBId, teamAId)),
+        ),
+      ),
+    )
+    .limit(1)
+  if (dup) return { ok: false as const, error: 'Those two already have a match between them.' }
+
+  await transact(async (tx) => {
+    await tx
+      .update(matches)
+      .set({ teamAId, teamBId, version: sql`${matches.version} + 1`, updatedAt: new Date() })
+      .where(eq(matches.id, matchId))
+    // Kept in step with the match row: a slot already resolved to a team
+    // (never a bracket source for a round-robin match) says which team by
+    // repeating it here, and a stale copy is a trap for whatever reads this
+    // table next.
+    await tx
+      .update(matchSlots)
+      .set({ resolvedTeamId: teamAId, resolvedAt: new Date() })
+      .where(and(eq(matchSlots.matchId, matchId), eq(matchSlots.slot, 'A')))
+    await tx
+      .update(matchSlots)
+      .set({ resolvedTeamId: teamBId, resolvedAt: new Date() })
+      .where(and(eq(matchSlots.matchId, matchId), eq(matchSlots.slot, 'B')))
+  })
+  await bumpStreamVersion(match.tournamentId)
+  return { ok: true as const }
 }
 
 /** Everything has a result. Close it off so it moves to "Finished". */
