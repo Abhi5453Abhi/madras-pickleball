@@ -7,6 +7,7 @@ import {
   deleteEventAction,
   pauseDayAction,
   reinstateTeamAction,
+  rescheduleAction,
   resumeDayAction,
   setMatchesPerTeamAction,
   shortenFormatAction,
@@ -51,7 +52,7 @@ function ConfirmCard({
   )
 }
 
-// ───────────────────────── fix a score ─────────────────────────
+// ───────────────────── fix a score ─────────────────────
 
 export type PlayedMatch = {
   id: string
@@ -101,7 +102,7 @@ export function FixScore({ played }: { played: PlayedMatch[] }) {
   )
 }
 
-// ───────────────────────── a pair has pulled out ─────────────────────────
+// ───────────────── a pair has pulled out ─────────────────────
 
 export type WithdrawRow = {
   teamId: string
@@ -239,7 +240,7 @@ export function Withdraw({
   )
 }
 
-// ───────────────────────── swap a player ─────────────────────────
+// ───────────────── swap a player ─────────────────────
 
 export function Swap({
   slug,
@@ -317,7 +318,7 @@ export function Swap({
   )
 }
 
-// ───────────────────────── shorten what's left ─────────────────────────
+// ───────────────── shorten what's left ─────────────────────
 
 export type ShortenOption = {
   bestOf: number
@@ -384,7 +385,7 @@ export function Shorten({ slug, view }: { slug: string; view: ShortenView }) {
   )
 }
 
-// ───────────────────────── matches per team ─────────────────────────
+// ───────────────── matches per team ─────────────────────
 
 export type MatchesPerTeamView = {
   categoryId: string
@@ -449,7 +450,65 @@ export function MatchesPerTeam({ slug, view }: { slug: string; view: MatchesPerT
   )
 }
 
-// ───────────────────────── pause / start again ─────────────────────────
+// ───────────────── pause / start again ─────────────────────
+
+// ───────────────── reschedule ─────────────────────
+
+/**
+ * A court hold is scoped to the calendar day(s) the tournament was created
+ * for. Start it on any other day and it holds no court at all — the live
+ * board has nothing "right now" to show, even though Schedule & courts still
+ * says it owns one. This is the only way to move the day; there is no other
+ * screen that touches it.
+ */
+export function Reschedule({
+  slug,
+  currentDayKey,
+  days,
+}: {
+  slug: string
+  currentDayKey: string
+  days: number
+}) {
+  return (
+    <div className="rounded-card border border-line-strong bg-paper p-4 shadow-card">
+      <p className="text-body text-text-2">
+        Every court it currently holds moves to the new date with it — nothing is left behind on the old
+        one, and nothing needs redoing under Schedule &amp; courts afterward.
+      </p>
+      <form action={rescheduleAction} className="mt-4 flex flex-col gap-3">
+        <input type="hidden" name="slug" value={slug} />
+        <div>
+          <label htmlFor="reschedule-date" className="block text-row text-text">
+            New date
+          </label>
+          <input
+            id="reschedule-date"
+            name="date"
+            type="date"
+            defaultValue={currentDayKey}
+            className={`${FIELD} mt-2`}
+          />
+        </div>
+        <div>
+          <label htmlFor="reschedule-days" className="block text-row text-text">
+            Days
+          </label>
+          <input
+            id="reschedule-days"
+            name="days"
+            type="number"
+            min={1}
+            max={14}
+            defaultValue={days}
+            className={`${FIELD} mt-2 w-24`}
+          />
+        </div>
+        <button className={INK_BUTTON}>Change the date</button>
+      </form>
+    </div>
+  )
+}
 
 export function Pause({ slug, pauseNote }: { slug: string; pauseNote: string | null }) {
   if (pauseNote) {
@@ -487,7 +546,7 @@ export function Pause({ slug, pauseNote }: { slug: string; pauseNote: string | n
   )
 }
 
-// ───────────────────────── delete ─────────────────────────
+// ───────────────── delete ─────────────────────
 
 export function DeleteTournament({
   slug,
