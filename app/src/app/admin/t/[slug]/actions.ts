@@ -7,6 +7,7 @@ import { db } from '@/db'
 import { categories, teams, tournamentPlayers } from '@/db/schema'
 import { requireUser } from '@/lib/auth'
 import { recordAudit } from '@/lib/audit'
+import { venueInstant } from '@/lib/time'
 import {
   pauseDay,
   reinstateTeam,
@@ -16,7 +17,7 @@ import {
   withdrawTeam,
   withdrawalEffect,
 } from '@/server/chaos'
-import { deleteEvent } from '@/server/events'
+import { deleteEvent, rescheduleEvent } from '@/server/events'
 import { flowTournament } from '@/server/board'
 import { settleTeams } from '@/server/teams'
 import { generateDrawForCategory, getCategory, getTournamentBySlug, listMatches } from '@/server/tournaments'
@@ -318,6 +319,44 @@ export async function setMatchesPerTeamAction(formData: FormData) {
       ? `Each team now plays ${matchesPerTeam} ${matchesPerTeam === 1 ? 'match' : 'matches'}. The order of play was made again.`
       : 'Everyone plays everyone again. The order of play was made again.',
   )
+}
+
+/**
+ * Move the tournament to a different day. Its courts move with it — see
+ * `rescheduleEvent` for why that has to happen in the same step rather than
+ * being left for the organiser to redo under Schedule & courts.
+ */
+export async function rescheduleAction(formData: FormData) {
+  const user = await requireUser('admin')
+  const slug = String(formData.get('slug'))
+
+  const tournament = await getTournamentBySlug(slug)
+  if (!tournament) return
+
+  const dayKey = String(formData.get('date') ?? '')
+  const newDate = venueInstant(dayKey, '08:00')
+  if (!newDate) refuse(slug, 'Pick a real day.')
+
+  // `||`, not `??`: an emptied number input submits '', and Number('') is 0.
+  const days = Number(formData.get('days') || 1)
+  if (!Number.isFinite(days) || days < 1 || days > 14) {
+    refuse(slug, 'A tournament runs between one and fourteen days.')
+  }
+
+  const before = { startDate: tournament.startDate }
+  const res = await rescheduleEvent(tournament.id, newDate, days)
+  if (!res.ok) refuse(slug, res.error, 'board')
+
+  await recordAudit({
+    userId: user.id,
+    actorLabel: user.username,
+    action: 'tournament.rescheduled',
+    entity: 'tournament',
+    entityId: tournament.id,
+    before,
+    after: { startDate: newDate, days },
+  })
+  done(slug, 'The date is changed, and its courts moved with it.')
 }
 
 /** Gone from every list, courts freed. The row stays for the record. */
