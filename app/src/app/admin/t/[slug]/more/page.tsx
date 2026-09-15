@@ -18,10 +18,12 @@ import { SECONDARY_LINK } from '../../../_ui'
 import {
   DeleteTournament,
   FixScore,
+  MatchesPerTeam,
   Pause,
   Shorten,
   Swap,
   Withdraw,
+  type MatchesPerTeamView,
   type PlayedMatch,
   type ShortenView,
   type WithdrawDetail,
@@ -44,12 +46,13 @@ export async function generateMetadata(props: PageProps<'/admin/t/[slug]/more'>)
 
 export const dynamic = 'force-dynamic'
 
-type View = 'fix' | 'withdraw' | 'swap' | 'shorten' | 'pause' | 'delete'
+type View = 'fix' | 'withdraw' | 'swap' | 'shorten' | 'matches' | 'pause' | 'delete'
 const VIEWS: Record<View, string> = {
   fix: 'Fix a score',
   withdraw: 'Who’s pulled out?',
   swap: 'Swap a player',
   shorten: 'Shorten what’s left',
+  matches: 'Matches per team',
   pause: 'Pause the tournament',
   delete: 'Delete this tournament',
 }
@@ -133,6 +136,8 @@ export default async function MorePage(props: PageProps<'/admin/t/[slug]/more'>)
             sunsetAt: t.sunsetAt,
           })}
         />
+      ) : view === 'matches' ? (
+        <MatchesPerTeam slug={slug} view={await matchesPerTeamView(t.id, category)} />
       ) : view === 'pause' ? (
         <Pause slug={slug} pauseNote={t.pauseNote} />
       ) : (
@@ -168,6 +173,7 @@ function MoreList({
     { label: `A ${unit} has pulled out`, href: `${more}?do=withdraw`, when: running },
     { label: 'Swap a player', href: `${more}?do=swap`, when: running },
     { label: 'Change the courts', href: `${base}/schedule`, when: running },
+    { label: 'Matches per team', href: `${more}?do=matches`, when: running },
     { label: 'Shorten what’s left', href: `${more}?do=shorten`, when: running },
     { label: paused ? 'Start again' : 'Pause the tournament', href: `${more}?do=pause`, when: running },
     { label: 'Add or remove players', href: `${base}/registration`, when: running },
@@ -338,6 +344,20 @@ async function shortenView(
         savedMinutes: baseline.minutes - est.minutes,
       }
     }),
+  }
+}
+
+async function matchesPerTeamView(
+  tournamentId: string,
+  category: { id: string; matchesPerTeam: number | null },
+): Promise<MatchesPerTeamView> {
+  const [all, teams] = await Promise.all([listMatches(tournamentId), listTeams(category.id)])
+  return {
+    categoryId: category.id,
+    current: category.matchesPerTeam,
+    teams: teams.filter((t) => t.status !== 'withdrawn').length,
+    started: all.some((m) => m.resultState !== 'none'),
+    live: all.some((m) => m.status === 'live'),
   }
 }
 

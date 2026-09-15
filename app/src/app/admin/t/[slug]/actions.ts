@@ -18,7 +18,8 @@ import {
 } from '@/server/chaos'
 import { deleteEvent } from '@/server/events'
 import { flowTournament } from '@/server/board'
-import { getCategory, getTournamentBySlug } from '@/server/tournaments'
+import { settleTeams } from '@/server/teams'
+import { generateDrawForCategory, getCategory, getTournamentBySlug, listMatches } from '@/server/tournaments'
 
 /**
  * The actions behind More. Every id below arrives on the wire from a form, and
@@ -256,6 +257,66 @@ export async function shortenFormatAction(formData: FormData) {
   done(
     slug,
     `What is left is now ${bestOf === 1 ? `one game to ${pointsToWin}` : `best of ${bestOf} to ${pointsToWin}`}.`,
+  )
+}
+
+/**
+ * Everyone plays everyone, or a capped number each — the same choice the
+ * schedule screen offers before the day starts, reachable here too because
+ * an organiser realising the round robin is too long does not think to go
+ * back to Schedule for it. Refused the moment a result is in, same as
+ * remaking the schedule there: changing this deletes every match and writes
+ * new ones, which cannot be done to a day that has already been played.
+ */
+export async function setMatchesPerTeamAction(formData: FormData) {
+  const user = await requireUser('admin')
+  const slug = String(formData.get('slug'))
+
+  const tournament = await getTournamentBySlug(slug)
+  if (!tournament) return
+  const category = await getCategory(String(formData.get('categoryId')))
+  if (!category || category.tournamentId !== tournament.id) return
+
+  const raw = String(formData.get('matchesPerTeam') ?? '').trim()
+  let matchesPerTeam: number | null = null
+  if (raw) {
+    const n = Number(raw)
+    if (!Number.isInteger(n) || n < 1) {
+      refuse(slug, 'Matches per team should be a whole number, 1 or more.')
+    }
+    matchesPerTeam = n
+  }
+
+  const all = await listMatches(tournament.id)
+  if (all.some((m) => m.resultState !== 'none')) {
+    refuse(slug, 'Results are already in — this can’t be changed now.')
+  }
+  if (all.some((m) => m.status === 'live')) {
+    refuse(slug, 'A match is on court. Change it when that one finishes.', 'board')
+  }
+
+  const before = category.matchesPerTeam
+  try {
+    await settleTeams(tournament.id)
+    await generateDrawForCategory(category.id, matchesPerTeam)
+  } catch {
+    refuse(slug, 'You need at least two pairs before there is a schedule to make.')
+  }
+
+  await recordAudit({
+    userId: user.id,
+    actorLabel: user.username,
+    action: 'category.matches_per_team',
+    entity: 'category',
+    entityId: category.id,
+    before: { matchesPerTeam: before },
+    after: { matchesPerTeam },
+  })
+  done(
+    slug,
+    matchesPerTeam
+      ? `Each team now plays ${matchesPerTeam} ${matchesPerTeam === 1 ? 'match' : 'matches'}. The order of play was made again.`
+      : 'Everyone plays everyone again. The order of play was made again.',
   )
 }
 

@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, asc, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, ne, sql } from 'drizzle-orm'
 import { db, transact } from '@/db'
 import {
   categories,
@@ -419,6 +419,15 @@ export async function myCourts(tournamentId: string) {
   return courtsHeldBy({ kind: 'tournament', tournamentId })
 }
 
+/**
+ * The courts this tournament still has from here — a court it let go of
+ * earlier does not count. Use this before adding to what it already holds,
+ * so a court released an hour ago is not silently taken back.
+ */
+export async function myCourtsNow(tournamentId: string, asOf: Date = new Date()) {
+  return courtsHeldBy({ kind: 'tournament', tournamentId }, { asOf })
+}
+
 // ─────────────────────────── registration ───────────────────────────
 
 export async function closeRegistration(tournamentId: string) {
@@ -477,6 +486,7 @@ export async function dashboard(): Promise<{
   if (rows.length === 0) return { today: [], upcoming: [], finished: [] }
 
   const ids = rows.map((r) => r.t.id)
+  const now = new Date()
   const [matchAgg, playerAgg, teamAgg, courtRows, signupAgg, finals] = await Promise.all([
     db
       .select({
@@ -506,7 +516,11 @@ export async function dashboard(): Promise<{
       .where(and(inArray(categories.tournamentId, ids), ne(teams.status, 'withdrawn')))
       .groupBy(categories.tournamentId),
     // Distinct: a tournament that runs two days holds each court twice, and
-    // the row on the dashboard wants the court once.
+    // the row on the dashboard wants the court once. And only a hold still
+    // running or still to come — a court let go of an hour ago (shortened,
+    // reassigned, or simply finished with) is not a court this row should
+    // keep claiming, or the list says something the live board already
+    // disagrees with.
     db
       .selectDistinct({
         tournamentId: courtHolds.tournamentId,
@@ -517,7 +531,7 @@ export async function dashboard(): Promise<{
       })
       .from(courtHolds)
       .innerJoin(courts, eq(courts.id, courtHolds.courtId))
-      .where(inArray(courtHolds.tournamentId, ids))
+      .where(and(inArray(courtHolds.tournamentId, ids), gt(courtHolds.heldUntil, now)))
       .orderBy(asc(courts.sortOrder)),
     db
       .select({
