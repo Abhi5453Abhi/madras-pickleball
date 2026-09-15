@@ -8,6 +8,7 @@ import {
   pauseDayAction,
   reinstateTeamAction,
   resumeDayAction,
+  setMatchesPerTeamAction,
   shortenFormatAction,
   substituteAction,
   withdrawTeamAction,
@@ -380,6 +381,71 @@ export function Shorten({ slug, view }: { slug: string; view: ShortenView }) {
         ))}
       </div>
     </>
+  )
+}
+
+// ───────────────────────── matches per team ─────────────────────────
+
+export type MatchesPerTeamView = {
+  categoryId: string
+  current: number | null
+  teams: number
+  started: boolean
+  live: boolean
+}
+
+/**
+ * Everyone plays everyone, or a capped number each — the same choice the
+ * schedule screen asks before the day starts, offered here too because
+ * changing your mind about it does not always happen while you are looking
+ * at Schedule. Changing it remakes the order of play, so it is refused the
+ * moment a result is in or a match is out on a court, same as remaking it
+ * there.
+ */
+export function MatchesPerTeam({ slug, view }: { slug: string; view: MatchesPerTeamView }) {
+  if (view.started) {
+    return <p className="text-body text-text-2">Results are already in — the order of play can’t be remade now.</p>
+  }
+  if (view.live) {
+    return (
+      <Notice tone="waiting" title="Not yet">
+        A match is on court. Change it when that one finishes.
+      </Notice>
+    )
+  }
+  if (view.teams < 2) {
+    return (
+      <p className="text-body text-text-2">
+        Need at least two {view.teams === 1 ? 'pair' : 'pairs'} before there is a schedule to make.
+      </p>
+    )
+  }
+  return (
+    <div className="rounded-card border border-line-strong bg-paper p-4 shadow-card">
+      <p className="text-body text-text-2">
+        {view.current
+          ? `Right now each team plays ${view.current} ${view.current === 1 ? 'match' : 'matches'}.`
+          : 'Right now everyone plays everyone.'}{' '}
+        Changing this makes the order of play again — nothing has been reported yet, so nothing is lost.
+      </p>
+      <form action={setMatchesPerTeamAction} className="mt-4 flex flex-col gap-2">
+        <input type="hidden" name="slug" value={slug} />
+        <input type="hidden" name="categoryId" value={view.categoryId} />
+        <label htmlFor="matchesPerTeam" className="block text-row text-text">
+          Matches per team — blank for everyone plays everyone
+        </label>
+        <input
+          id="matchesPerTeam"
+          name="matchesPerTeam"
+          type="number"
+          min={1}
+          inputMode="numeric"
+          defaultValue={view.current ?? ''}
+          className={FIELD}
+        />
+        <button className={INK_BUTTON}>Make it again</button>
+      </form>
+    </div>
   )
 }
 

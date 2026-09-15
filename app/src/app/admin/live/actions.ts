@@ -10,7 +10,7 @@ import { recordAudit } from '@/lib/audit'
 import { flowTournament, sendToCourt } from '@/server/board'
 import { resumeDay } from '@/server/chaos'
 import { unblockCourt } from '@/server/courts'
-import { assignCourts, myCourts } from '@/server/events'
+import { assignCourts, myCourtsNow } from '@/server/events'
 
 /**
  * The board's own buttons. Each one is a fix on the card it belongs to: a
@@ -58,7 +58,10 @@ export async function addCourtFromBoard(formData: FormData) {
   if (!t) fail('That tournament no longer exists.')
   if (!courtId) fail('Which court?')
 
-  const mine = await myCourts(t.id)
+  // Not `myCourts`: a court let go of earlier today still shows up there,
+  // and this list becomes exactly what the tournament ends up holding — an
+  // old, already-released court would come right back with it.
+  const mine = await myCourtsNow(t.id)
   const res = await assignCourts(t.id, [...mine.map((c) => c.id), courtId])
   if (!res.ok) fail(res.error)
 

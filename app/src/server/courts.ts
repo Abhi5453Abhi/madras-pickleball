@@ -253,11 +253,19 @@ export async function holdsFor(holder: Holder): Promise<HoldRow[]> {
  * The courts a holder has, once each, in venue order — the replacement for
  * `myCourts`, which could not have said "once each" because a hold per day
  * did not exist.
+ *
+ * Every hold ever taken, by default — including one already truncated down
+ * to a few minutes past. That is right for a screen explaining what a court
+ * was used for. Pass `asOf` when the question is instead "what do we still
+ * have from here" (deciding what to add to, say): a hold that has already
+ * ended by then does not count.
  */
-export async function courtsHeldBy(holder: Holder) {
+export async function courtsHeldBy(holder: Holder, opts?: { asOf?: Date }) {
   const held = await holdsFor(holder)
+  const cutoff = opts?.asOf
+  const relevant = cutoff ? held.filter((h) => h.heldUntil.getTime() > cutoff.getTime()) : held
   const seen = new Map<string, { id: string; name: string; colorKey: string; sortOrder: number }>()
-  for (const h of held) {
+  for (const h of relevant) {
     if (!seen.has(h.courtId)) {
       seen.set(h.courtId, { id: h.courtId, name: h.courtName, colorKey: h.colorKey, sortOrder: h.sortOrder })
     }
