@@ -733,7 +733,7 @@ export async function setHolds(
     await tx
       .update(courtHolds)
       .set({
-        heldUntil: sql`greatest(${edge}::timestamptz, date_bin(interval '15 minutes', ${courtHolds.heldFrom}, timestamptz '2000-01-01 00:00:00+00') + interval '15 minutes')`,
+        heldUntil: sql`greatest(${edge.toISOString()}::timestamptz, date_bin(interval '15 minutes', ${courtHolds.heldFrom}, timestamptz '2000-01-01 00:00:00+00') + interval '15 minutes')`,
         releasedAt: now,
         updatedAt: now,
       })
@@ -800,7 +800,7 @@ export async function endHoldsAt(tx: Tx, holder: Holder, at: Date) {
   await tx
     .update(courtHolds)
     .set({
-      heldUntil: sql`greatest(${edge}::timestamptz, date_bin(interval '15 minutes', ${courtHolds.heldFrom}, timestamptz '2000-01-01 00:00:00+00') + interval '15 minutes')`,
+      heldUntil: sql`greatest(${edge.toISOString()}::timestamptz, date_bin(interval '15 minutes', ${courtHolds.heldFrom}, timestamptz '2000-01-01 00:00:00+00') + interval '15 minutes')`,
       releasedAt: at,
       updatedAt: new Date(),
     })
