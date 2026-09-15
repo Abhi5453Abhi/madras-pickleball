@@ -140,7 +140,7 @@ export default async function TournamentHub(props: PageProps<'/admin/t/[slug]'>)
   )
 }
 
-// ───────────────────────────── setup ─────────────────────────────
+// ───────────────────────── setup ─────────────────────────
 
 function SetupChecklist({
   steps,
@@ -213,7 +213,7 @@ function SetupChecklist({
   )
 }
 
-// ──────────────────────────── running / finished ────────────────────────────
+// ────────────────── running / finished ────────────────────
 
 async function Running({
   slug,
@@ -423,10 +423,19 @@ async function Running({
               })}
             </ul>
           </Panel>
-          <Link href={`${base}/results` as never} className={SECONDARY_LINK}>
-            All {played.length} result{played.length === 1 ? '' : 's'}
-          </Link>
         </section>
+      ) : null}
+
+      {/* The only way off this page to the full order of play — every match,
+          played or not, in round order. Gated on `played.length` before, so a
+          tournament that had just started with nothing played yet had no link
+          to its own fixtures at all: Table and Live board, and nothing else. */}
+      {totalMatches > 0 ? (
+        <Link href={`${base}/results` as never} className={SECONDARY_LINK}>
+          {played.length
+            ? `All ${played.length} result${played.length === 1 ? '' : 's'}`
+            : `See the fixtures · ${totalMatches} matches`}
+        </Link>
       ) : null}
     </>
   )
