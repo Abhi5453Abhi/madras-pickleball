@@ -189,8 +189,27 @@ export default async function SchedulePage(props: PageProps<'/admin/t/[slug]/sch
             ) : null}
           </h2>
           {all.length === 0 ? (
-            <form action={makeScheduleAction} className="flex flex-col gap-2">
+            <form action={makeScheduleAction} className="flex flex-col gap-3">
               <input type="hidden" name="slug" value={slug} />
+              {h.teamsMade >= 2 ? (
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="matchesPerTeam">Matches per team (optional)</Label>
+                  <Input
+                    id="matchesPerTeam"
+                    name="matchesPerTeam"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={Math.max(h.teamsMade - 1, 1)}
+                    defaultValue={category.matchesPerTeam ?? ''}
+                    placeholder={`Blank = everyone plays everyone (${h.teamsMade - 1} each)`}
+                  />
+                  <p className="text-meta text-text-3">
+                    E.g. with {h.teamsMade} teams, enter 4 so each plays 4 of the other {h.teamsMade - 1} instead
+                    of all of them. Leave blank for a full round robin.
+                  </p>
+                </div>
+              ) : null}
               <button className={PRIMARY_LINK} disabled={h.teamsMade < 2}>
                 Make the schedule
               </button>
@@ -229,8 +248,21 @@ export default async function SchedulePage(props: PageProps<'/admin/t/[slug]/sch
                 </ol>
               </Panel>
               {!locked ? (
-                <form action={makeScheduleAction}>
+                <form action={makeScheduleAction} className="flex flex-col gap-2">
                   <input type="hidden" name="slug" value={slug} />
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="matchesPerTeamAgain">Matches per team (optional)</Label>
+                    <Input
+                      id="matchesPerTeamAgain"
+                      name="matchesPerTeam"
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={Math.max(h.teamsMade - 1, 1)}
+                      defaultValue={category.matchesPerTeam ?? ''}
+                      placeholder={`Blank = everyone plays everyone (${h.teamsMade - 1} each)`}
+                    />
+                  </div>
                   <button className={SECONDARY_LINK + ' w-full'}>Make it again</button>
                 </form>
               ) : null}

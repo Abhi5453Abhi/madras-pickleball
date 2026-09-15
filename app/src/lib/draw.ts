@@ -102,15 +102,27 @@ function knockoutRoundName(teamsInRound: number): string {
 /**
  * League: one group, everyone plays everyone, then an optional finals stage.
  * Four teams is the worked example — three matches each, top two to the final.
+ * `matchesPerTeam` caps that below the full round robin — e.g. 6 teams with a
+ * cap of 4 means each plays 4 of the other 5, not all 5.
  */
-export function buildLeague(seedOrder: string[], finalsStage: FinalsStage): DrawPlan {
+export function buildLeague(
+  seedOrder: string[],
+  finalsStage: FinalsStage,
+  /** Cap on matches per team; null/undefined/0 = full round robin. */
+  matchesPerTeam?: number | null,
+): DrawPlan {
   const advanceCount = finalsStage === 'none' ? 0 : finalsStage === 'final_only' ? 2 : 4
   const groups: GroupPlan[] = [
     { name: 'League', teamIds: [...seedOrder], advanceCount: Math.min(advanceCount, seedOrder.length) },
   ]
 
   const matches: MatchPlan[] = []
-  const rounds = roundRobinRounds(seedOrder)
+  const allRounds = roundRobinRounds(seedOrder)
+  // The circle method never repeats a pairing, so taking just the first N of
+  // its rounds is enough on its own to give every team N distinct opponents —
+  // no separate scheduling is needed for "4 matches each" out of a full league.
+  const rounds =
+    matchesPerTeam && matchesPerTeam > 0 ? allRounds.slice(0, Math.min(matchesPerTeam, allRounds.length)) : allRounds
   rounds.forEach((round, roundIndex) => {
     round.forEach(([a, b], i) => {
       matches.push({
@@ -177,7 +189,11 @@ export function buildLeague(seedOrder: string[], finalsStage: FinalsStage): Draw
  * always exactly 4 or 8. Cross-pool pairing keeps pool winners apart in the
  * first knockout round.
  */
-export function buildGroupsKnockout(seedOrder: string[], poolCount: number): DrawPlan {
+export function buildGroupsKnockout(
+  seedOrder: string[],
+  poolCount: number,
+  matchesPerTeam?: number | null,
+): DrawPlan {
   const pools = serpentineSplit(seedOrder, poolCount)
   const groups: GroupPlan[] = pools.map((teamIds, i) => ({
     name: `Group ${String.fromCharCode(65 + i)}`,
@@ -189,7 +205,11 @@ export function buildGroupsKnockout(seedOrder: string[], poolCount: number): Dra
   let maxGroupRounds = 0
 
   groups.forEach((group, gi) => {
-    const rounds = roundRobinRounds(group.teamIds)
+    const allGroupRounds = roundRobinRounds(group.teamIds)
+    const rounds =
+      matchesPerTeam && matchesPerTeam > 0
+        ? allGroupRounds.slice(0, Math.min(matchesPerTeam, allGroupRounds.length))
+        : allGroupRounds
     maxGroupRounds = Math.max(maxGroupRounds, rounds.length)
     rounds.forEach((round, roundIndex) => {
       round.forEach(([a, b], i) => {
@@ -249,9 +269,10 @@ export function buildDraw(
   seedOrder: string[],
   drawType: 'league' | 'groups_knockout',
   finalsStage: FinalsStage,
+  matchesPerTeam?: number | null,
 ): DrawPlan {
-  if (drawType === 'league') return buildLeague(seedOrder, finalsStage)
-  return buildGroupsKnockout(seedOrder, poolCountFor(seedOrder.length))
+  if (drawType === 'league') return buildLeague(seedOrder, finalsStage, matchesPerTeam)
+  return buildGroupsKnockout(seedOrder, poolCountFor(seedOrder.length), matchesPerTeam)
 }
 
 /** Deterministic shuffle from a stored seed, so a random draw is reproducible. */

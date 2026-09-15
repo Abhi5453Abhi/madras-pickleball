@@ -127,8 +127,8 @@ export default async function AdminHome(props: PageProps<'/admin'>) {
           <Card>
             <ul className="divide-y divide-line">
               {finished.map((t) => (
-                <li key={t.id}>
-                  <Link href={`/admin/t/${t.slug}`} className="tap-lg flex items-center gap-3 px-4">
+                <li key={t.id} className="flex items-center">
+                  <Link href={`/admin/t/${t.slug}`} className="tap-lg flex flex-1 items-center gap-3 px-4">
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-row text-text">{t.name}</span>
                       <span className="num block text-meta text-text-3">
@@ -137,6 +137,12 @@ export default async function AdminHome(props: PageProps<'/admin'>) {
                       </span>
                     </span>
                     <StatusPill state="done">Done</StatusPill>
+                  </Link>
+                  <Link
+                    href={`/admin/t/${t.slug}/more?do=delete`}
+                    className="tap mr-3 shrink-0 px-2 text-meta font-semibold text-text-3 hover:text-alert"
+                  >
+                    Delete
                   </Link>
                 </li>
               ))}
@@ -196,8 +202,8 @@ function TodayCard({ row: t }: { row: DashboardRow }) {
   const live = t.status === 'live'
   const done = t.status === 'completed'
   return (
-    <Link href={`/admin/t/${t.slug}`} className="block">
-      <Card className="p-4">
+    <Card className="p-4">
+      <Link href={`/admin/t/${t.slug}`} className="block">
         <div className="flex items-start justify-between gap-3">
           <h3 className="text-section text-text">{t.name}</h3>
           {live ? (
@@ -233,15 +239,25 @@ function TodayCard({ row: t }: { row: DashboardRow }) {
             {t.registrationOpen ? 'Sign-ups open' : 'Sign-ups closed'} · schedule not made yet
           </p>
         )}
-      </Card>
-    </Link>
+      </Link>
+      {/* Live means someone is standing on a court right now — no delete link
+          shown; the More screen's own guard still refuses a live match either way. */}
+      {live ? null : (
+        <Link
+          href={`/admin/t/${t.slug}/more?do=delete`}
+          className="tap mt-3 inline-flex items-center px-1 text-meta font-semibold text-text-3 hover:text-alert"
+        >
+          Delete
+        </Link>
+      )}
+    </Card>
   )
 }
 
 function UpcomingCard({ row: t }: { row: DashboardRow }) {
   return (
-    <Link href={`/admin/t/${t.slug}`} className="block">
-      <Card className="p-4">
+    <Card className="p-4">
+      <Link href={`/admin/t/${t.slug}`} className="block">
         <div className="flex items-start justify-between gap-3">
           <h3 className="text-section text-text">{t.name}</h3>
           <StatusPill state="waiting">{venueDate(t.startDate)}</StatusPill>
@@ -258,7 +274,13 @@ function UpcomingCard({ row: t }: { row: DashboardRow }) {
             ? t.courts.map((c) => c.name).join(', ')
             : 'no courts assigned yet'}
         </p>
-      </Card>
-    </Link>
+      </Link>
+      <Link
+        href={`/admin/t/${t.slug}/more?do=delete`}
+        className="tap mt-3 inline-flex items-center px-1 text-meta font-semibold text-text-3 hover:text-alert"
+      >
+        Delete
+      </Link>
+    </Card>
   )
 }

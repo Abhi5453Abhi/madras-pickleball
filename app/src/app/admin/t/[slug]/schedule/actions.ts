@@ -74,9 +74,22 @@ export async function makeScheduleAction(formData: FormData) {
     redirect(`${back}?err=${encodeURIComponent('Results are already in — the schedule can’t be remade now.')}` as never)
   }
 
+  // Blank means "everyone plays everyone" — the long-standing default. Typed
+  // and out of range is refused rather than silently clamped, so an organiser
+  // who means 4 out of 5 teams never gets a schedule for a 6-team night instead.
+  const matchesPerTeamRaw = String(formData.get('matchesPerTeam') ?? '').trim()
+  let matchesPerTeam: number | null = null
+  if (matchesPerTeamRaw) {
+    const n = Number(matchesPerTeamRaw)
+    if (!Number.isInteger(n) || n < 1) {
+      redirect(`${back}?err=${encodeURIComponent('Matches per team should be a whole number, 1 or more.')}` as never)
+    }
+    matchesPerTeam = n
+  }
+
   try {
     await settleTeams(tournament.id)
-    await generateDrawForCategory(category.id)
+    await generateDrawForCategory(category.id, matchesPerTeam)
   } catch {
     redirect(`${back}?err=${encodeURIComponent('You need at least two pairs before there is a schedule to make.')}` as never)
   }

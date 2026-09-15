@@ -19,7 +19,7 @@ import {
   check,
 } from 'drizzle-orm/pg-core'
 
-// ───────────────────────────── enums ─────────────────────────────
+// ──────────────────────── enums ─────────────────────────
 
 export const roleEnum = pgEnum('role', ['super_admin', 'admin', 'umpire'])
 
@@ -163,7 +163,7 @@ export const slotSourceEnum = pgEnum('slot_source', [
   'bye',
 ])
 
-// ───────────────────────── people & access ─────────────────────────
+// ─────────────── people & access ─────────────────
 
 export const users = pgTable(
   'users',
@@ -242,7 +242,7 @@ export const loginAttempts = pgTable(
   (t) => [index('login_attempts_idx').on(t.identifier, t.at)],
 )
 
-// ─────────────────────────────  venue  ─────────────────────────────
+// ───────────────  venue  ─────────────────
 
 export const venues = pgTable(
   'venues',
@@ -373,7 +373,7 @@ export const courtHoldSlots = pgTable(
   ],
 )
 
-// ──────────────────────────  club roster  ──────────────────────────
+// ────────────────  club roster  ───────────────────
 
 export const players = pgTable(
   'players',
@@ -401,7 +401,7 @@ export const players = pgTable(
   ],
 )
 
-// ───────────────────────────  tournament  ───────────────────────────
+// ─────────────────  tournament  ──────────────────
 
 export const tournaments = pgTable(
   'tournaments',
@@ -546,7 +546,7 @@ export const pendingRegistrations = pgTable(
   ],
 )
 
-// ────────────────────────────  category  ────────────────────────────
+// ──────────────────  category  ────────────────────
 
 /** Called "Event" in the first draft; renamed — in a club the event is Sunday (SPEC A2). */
 export const categories = pgTable(
@@ -581,6 +581,14 @@ export const categories = pgTable(
 
     groupCount: integer('group_count').notNull().default(1),
     advancePerGroup: integer('advance_per_group').notNull().default(2),
+    /**
+     * Caps the league below a full round robin — e.g. 4 for a 6-team league
+     * so nobody plays all 5 others. Null means everyone plays everyone, the
+     * long-standing default. Taking the first N rounds of the circle-method
+     * schedule (draw.ts) gives every team exactly N distinct opponents, so
+     * this is just where that cap is read from.
+     */
+    matchesPerTeam: integer('matches_per_team'),
 
     /** Reproducibility for random pairing and unseeded placement (SPEC A2). */
     rngSeed: text('rng_seed'),
@@ -706,7 +714,7 @@ export const teamPlayerChanges = pgTable(
   (t) => [index('team_player_changes_idx').on(t.teamId, t.at)],
 )
 
-// ─────────────────────────────  matches  ─────────────────────────────
+// ─────────────────  matches  ───────────────────
 
 export const matches = pgTable(
   'matches',
@@ -886,7 +894,7 @@ export const matchEvents = pgTable(
   ],
 )
 
-// ──────────────────────────  result inbox  ──────────────────────────
+// ────────────────  result inbox  ──────────────────
 
 /** The inbox. `games` is the ledger; only a confirmation clears provisional (SPEC A9). */
 export const resultSubmissions = pgTable(
@@ -990,7 +998,7 @@ export const syncConflicts = pgTable(
   (t) => [index('sync_conflicts_idx').on(t.matchId, t.at)],
 )
 
-// ───────────────────────────  court access  ───────────────────────────
+// ───────────────  court access  ──────────────────
 
 export const courtTokens = pgTable(
   'court_tokens',
@@ -1084,7 +1092,7 @@ export const tokenAttempts = pgTable(
   ],
 )
 
-// ──────────────────────────────  audit  ──────────────────────────────
+// ──────────────────  audit  ─────────────────────
 
 export const auditLog = pgTable(
   'audit_log',
@@ -1104,7 +1112,7 @@ export const auditLog = pgTable(
   (t) => [index('audit_entity_idx').on(t.entity, t.entityId, t.at), index('audit_at_idx').on(t.at)],
 )
 
-// ═══════════════════════════ daily games ═══════════════════════════
+// ═══════════════════════ daily games ═══════════════════════
 //
 // Open-play sessions: the host hosts, players join with a name and a phone and
 // no login, they play, and the money follows afterwards. Sessions are their own
@@ -1416,7 +1424,7 @@ export const schedulerRuns = pgTable(
   (t) => [index('scheduler_runs_name_idx').on(t.name, t.startedAt)],
 )
 
-// ═════════════════════════════ the money ═════════════════════════════
+// ═════════════════════════ the money ═════════════════════════
 //
 // SPEC-v4 §4. Nine tables, and the reason there are nine rather than the five
 // the ladder names is written down in docs/ADR-daily-games.md decision 14: the

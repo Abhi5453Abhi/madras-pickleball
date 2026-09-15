@@ -28,7 +28,7 @@ import { standings, tallyRows, type StandingsMatch } from '../standings'
 import { winnerChips, loserChips } from '../chips'
 import { estimateDay, leagueMatchCount, groupsKnockoutMatchCount, minutesPerMatch } from '../estimate'
 
-// ─────────────────────────────── rules ───────────────────────────────
+// ──────────────────────────── rules ────────────────────────────
 
 describe('game winner', () => {
   it('needs the target score and the winning margin', () => {
@@ -194,6 +194,29 @@ describe('league', () => {
     expect(plan.matches.every((m) => m.stage === 'group')).toBe(true)
     expect(plan.matches).toHaveLength(3)
   })
+
+  it('caps a 6-team league to 4 matches each instead of the full 5', () => {
+    const teams = ['a', 'b', 'c', 'd', 'e', 'f']
+    const plan = buildLeague(teams, 'none', 4)
+    const group = plan.matches.filter((m) => m.stage === 'group')
+    // 6 teams * 4 matches / 2 (each match counts for both sides) = 12 matches.
+    expect(group).toHaveLength(12)
+    const played = new Map<string, Set<string>>(teams.map((t) => [t, new Set<string>()]))
+    for (const m of group) {
+      const a = m.slotA.type === 'entry' ? m.slotA.teamId : ''
+      const b = m.slotB.type === 'entry' ? m.slotB.teamId : ''
+      played.get(a)!.add(b)
+      played.get(b)!.add(a)
+    }
+    // Every team plays exactly 4 distinct opponents, never itself, never a repeat.
+    for (const t of teams) expect(played.get(t)!.size).toBe(4)
+  })
+
+  it('ignores a cap at or above the full round robin', () => {
+    const full = buildLeague(['a', 'b', 'c', 'd'], 'none')
+    const capped = buildLeague(['a', 'b', 'c', 'd'], 'none', 99)
+    expect(capped.matches).toHaveLength(full.matches.length)
+  })
 })
 
 describe('pools', () => {
@@ -247,7 +270,7 @@ describe('seeded shuffle', () => {
   })
 })
 
-// ────────────────────────────── standings ──────────────────────────────
+// ────────────────────────────── standings ───────────────────────────
 
 const won = (
   matchId: string,
@@ -412,8 +435,7 @@ describe('standings', () => {
   })
 })
 
-// ────────────────────────────── estimates ──────────────────────────────
-
+// ────────────────────────── estimates ──────────────────────────
 describe('day estimate', () => {
   it('reproduces the worked example in the spec', () => {
     const est = estimateDay({
@@ -465,8 +487,7 @@ describe('day estimate', () => {
   })
 })
 
-// ──────────────────────────── score chips ────────────────────────────
-
+// ────────────────── score chips ────────────────────
 describe('score chips', () => {
   const to11: ScoringRules = { bestOf: 3, pointsToWin: 11, winBy: 2, hardCap: null }
   const to11cap15: ScoringRules = { ...to11, hardCap: 15 }
@@ -513,7 +534,7 @@ describe('score chips', () => {
   })
 })
 
-// ── the horn ──────────────────────────────────────────────────────────────
+// ── the horn ────────────────────────────────────────────────────────
 describe('hornOutcome', () => {
   const rules = { bestOf: 3, pointsToWin: 11, winBy: 2, hardCap: null }
 

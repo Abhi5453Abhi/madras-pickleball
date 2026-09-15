@@ -158,6 +158,8 @@ export async function createCategory(input: {
   discipline: 'singles' | 'doubles'
   gender: 'mens' | 'womens' | 'mixed' | 'any'
   finalsStage?: 'none' | 'final_only' | 'semis_and_final'
+  /** Null/undefined = everyone plays everyone. */
+  matchesPerTeam?: number | null
 }) {
   const id = newId('cat')
   await transact(async (tx) => {
@@ -168,6 +170,7 @@ export async function createCategory(input: {
       discipline: input.discipline,
       gender: input.gender,
       finalsStage: input.finalsStage ?? 'final_only',
+      matchesPerTeam: input.matchesPerTeam ?? null,
       // Counted inside the insert rather than read first: one round trip
       // instead of two, and two admins adding a category at once can no longer
       // both be told they are number three.
@@ -450,7 +453,16 @@ export async function clearDraw(categoryId: string) {
   })
 }
 
-export async function generateDrawForCategory(categoryId: string) {
+export async function generateDrawForCategory(
+  categoryId: string,
+  /**
+   * When passed (including explicit null), overrides and persists the
+   * category's saved matches-per-team cap — the organiser setting this at
+   * schedule time, once the real team count is known. Omit to just use
+   * whatever the category already has saved.
+   */
+  matchesPerTeamOverride?: number | null,
+) {
   const category = await getCategory(categoryId)
   if (!category) throw new Error('Category not found')
   // A pair that pulled out before the schedule was made is out of the day:
@@ -458,11 +470,20 @@ export async function generateDrawForCategory(categoryId: string) {
   const teamRows = (await listTeams(categoryId)).filter((t) => t.status !== 'withdrawn')
   if (teamRows.length < 2) throw new Error('Need at least two teams')
 
+  const matchesPerTeam = matchesPerTeamOverride !== undefined ? matchesPerTeamOverride : category.matchesPerTeam
+  if (matchesPerTeamOverride !== undefined && matchesPerTeamOverride !== category.matchesPerTeam) {
+    await db
+      .update(categories)
+      .set({ matchesPerTeam: matchesPerTeamOverride, updatedAt: new Date() })
+      .where(eq(categories.id, categoryId))
+  }
+
   const seedOrder = teamRows.map((t) => t.id)
   const plan = buildDraw(
     seedOrder,
     category.drawType === 'groups_knockout' ? 'groups_knockout' : 'league',
     category.finalsStage === 'quarters_onward' ? 'semis_and_final' : category.finalsStage,
+    matchesPerTeam,
   )
   return persistDraw(categoryId, category.tournamentId, plan)
 }
